@@ -1,0 +1,14 @@
+# Normalize to LF in the repository. Development happens on Windows, but every
+# workload and experiment executes inside a Linux container (E2) — a CRLF shell
+# script or entrypoint fails there with an unhelpful error.
+* text=auto eol=lf
+
+# Binary
+*.png binary
+*.jpg binary
+*.gz  binary
+*.zip binary
+*.db  binary
+
+# Generated; keep out of diffs and language stats
+uv.lock linguist-generated=true
