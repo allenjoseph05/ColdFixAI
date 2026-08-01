@@ -1,0 +1,34 @@
+# Throwaway Postgres for the S-0.3 grounding spike.
+#
+# One instance, three databases — one per candidate repository. Database setup
+# is not the friction under test; the repositories are. Removing this yak is
+# legitimate, removing theirs is not.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: coldfix-spike-db
+    environment:
+      POSTGRES_USER: coldfix_test
+      POSTGRES_PASSWORD: coldfix_test
+      POSTGRES_DB: coldfix_test
+    ports:
+      # Deliberately not 5432. A local Postgres already listening there produces
+      # a connection that succeeds against the wrong database, which is a far
+      # worse failure than one that is refused.
+      - "55432:5432"
+    volumes:
+      - spike-pgdata:/var/lib/postgresql/data
+      - ./init-databases.sh:/docker-entrypoint-initdb.d/10-init-databases.sh:ro
+    healthcheck:
+      # "started" and "accepting connections" are different states, and telling
+      # them apart by hand here is the same problem S-7.2 gives the Explorer
+      # `logs()` and `ps()` to solve.
+      test: ["CMD-SHELL", "pg_isready -U coldfix_test -d coldfix_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  spike-pgdata:

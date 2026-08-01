@@ -63,6 +63,7 @@ done.
 | `src/coldfix/eval/` | benchmark runners, agreement harness, cost reporting |
 | `docs/` | design documents — start with `docs/00-BRIEF.md` |
 | `docs/adr/` | architecture decision records |
+| `spikes/` | timeboxed experiments that produce a finding, not shippable code |
 
 ---
 
