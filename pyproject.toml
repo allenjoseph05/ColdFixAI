@@ -1,0 +1,96 @@
+[project]
+name = "coldfix"
+version = "0.1.0"
+description = "Finds software performance problems by running experiments, not by reading code."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = [
+    "pydantic>=2.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/coldfix"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+# ---------------------------------------------------------------------------
+# ruff
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+# The design documents contain illustrative Python in fenced blocks whose
+# alignment is deliberate. Recent ruff formats embedded code in Markdown, which
+# would rewrite them. Documents are prose.
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = [
+    "A",    # shadowed builtins
+    "ANN",  # missing type annotations
+    "B",    # bugbear
+    "BLE",  # blind except
+    "C4",   # comprehensions
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # import sorting
+    "N",    # naming
+    "PL",   # pylint
+    "PTH",  # pathlib over os.path
+    "RET",  # return simplification
+    "RUF",  # ruff-specific
+    "SIM",  # simplification
+    "TRY",  # exception antipatterns
+    "UP",   # pyupgrade
+    "W",    # pycodestyle warnings
+]
+
+# ANN401 (no bare `Any`) is deliberately left on. CLAUDE.md permits `Any` only
+# with a comment explaining why; a `# noqa: ANN401` IS that comment, so the rule
+# enforces the policy rather than fighting it.
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN", "PLR2004", "S101"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+# ---------------------------------------------------------------------------
+# mypy
+# ---------------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "tests"]
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"
+markers = [
+    "slow: takes long enough to exclude from the fast subset (`-m 'not slow'`)",
+]
