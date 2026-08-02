@@ -1,6 +1,6 @@
 # S-0.3 — Can we ground real repositories?
 
-**Status:** A grounded — B and C not started
+**Status:** A and B grounded — C not started
 **Run by:** Claude Opus 5, driving a Linux container (see *Where these runs happened*)
 **Dates:** candidates selected 2026-08-02; grounding runs 2026-08-02
 **Timebox:** ~1 day
@@ -244,51 +244,114 @@ another repo with a planted defect. Recorded here; the decision belongs to S-0.6
 
 ### Repository B — `django-helpdesk`
 
-**Wall clock:** start `__:__` → end `__:__` = **__ min**
-**Outcome:** grounded / partially grounded / failed
-**Where it stopped** (if not grounded):
+Pinned at `3a22901` (merge of PR #1362, committed 2026-07-31; shallow clone of
+`main` taken 2026-08-02).
+
+**Wall clock:** start `07:35:58Z` → end `07:40:54Z` = **5 min**
+**Outcome:** **grounded**
+**Where it stopped** (if not grounded): n/a
 
 #### Stage log
 
 | Stage | Time | Notes |
 |---|---|---|
-| Clone and read the README | | |
-| Resolve dependencies / build environment | | |
-| Configure settings (env vars, secrets, `settings.py`) | | |
-| Connect to Postgres | | |
-| Run migrations | | |
-| Create a user / resolve auth | | |
-| Seed data | | |
-| Find a candidate endpoint | | |
-| Get real data out of that endpoint | | |
+| Clone and read the README | ~1 min | **The selection-time assumption about this repo was wrong** — see the correction below. |
+| Resolve dependencies / build environment | 39 s | `pip install -e .`. All dependencies float (`django>=4.2`, the rest unpinned) and resolved to Django 6.0.7, the newest release. Nothing broke, but nothing was pinned either — see finding B-ii. |
+| Configure settings (env vars, secrets, `settings.py`) | ~2 min | **Obstacle B-1**, the significant one on this repo. |
+| Connect to Postgres | ~30 s | **Obstacle B-2** — no driver is declared anywhere. |
+| Run migrations | 10 s | 39 helpdesk migrations plus contrib, clean on an empty database. |
+| Create a user / resolve auth | ~1 min | Not created — the fixture ships a superuser. Recovering its password is **obstacle B-3**. |
+| Seed data | 3 s | `loaddata demodesk/fixtures/demo.json`, 18 objects, **first attempt, no edits**. |
+| Find a candidate endpoint | ~1 min | DRF router at `src/helpdesk/urls.py:225-235`, gated on `HELPDESK_API_ENABLED`, which defaults to `True` (`src/helpdesk/settings.py:534`). `/api/tickets/` was the obvious list route. |
+| Get real data out of that endpoint | ~30 s | HTTP 200 with fixture rows, first attempt. |
+
+#### Correction to the selection note
+
+The candidate table above claims "the runnable project is `demodesk/`, not the
+repo root, and nothing at the top level says so." **That is wrong, and it was
+wrong when written.** The repo root has a `manage.py` whose second line reads
+`os.environ.setdefault("DJANGO_SETTINGS_MODULE", "demodesk.config.settings")`.
+The project structure announces itself in the most conventional place possible.
+
+Recorded rather than quietly fixed, because the error is itself a data point:
+the shape of a repository was mis-predicted from its *file listing* without
+opening the entry point. That is precisely the failure mode an Explorer running
+on a directory tree would have, and it argues for reading `manage.py` first as a
+cheap, high-information move rather than inferring layout from directory names.
 
 #### Fixtures — did they already exist?
 
-- [ ] `factory_boy` factories present
+- [ ] `factory_boy` factories present — **declared but not what it looks like.** `factory-boy` is in the `test` dependency group and `tests/utils.py` does `import factory`, but every use is `factory.Faker(...).evaluate(...)` for random text. There is no `DjangoModelFactory` anywhere in the tree, so nothing constructs a model. A dependency-manifest scan would report factories here and be wrong.
 - [ ] pytest fixtures that create model instances
-- [ ] a seed / demo-data management command
-- [ ] Django fixture files (`.json` / `.yaml`)
+- [ ] a seed / demo-data management command — five management commands exist (`create_queue_permissions`, `escalate_tickets`, `get_email`, …), all operational, none seeding.
+- [x] **Django fixture files (`.json` / `.yaml`)** — `demodesk/fixtures/demo.json` (18 objects) and `src/helpdesk/fixtures/emailtemplate.json`.
 - [ ] a `docker-compose` with a seeded database
-- [ ] **none — data had to be synthesized by hand**
+- [ ] none — data had to be synthesized by hand
 
-Notes:
+Notes: **this is the S-7.5 path working exactly as designed, and it was the
+cheapest stage of the whole run** — 3 seconds, one command, zero edits, versus
+the ~4 minutes repo A cost to synthesize an equivalent graph by hand.
+
+But the volume is the catch. `demo.json` is 3 tickets, 4 followups, 2 queues,
+5.9 KB. That is enough to prove an endpoint *works* and nowhere near enough to
+make it *slow*. **Fixture discovery gives correctness, not scale**, and those are
+different needs: S-7.5 can ground a workload, but a performance investigation
+still needs volume from somewhere. On the evidence here, discovery and synthesis
+are not alternatives at all — discovery gets you a valid object graph to imitate,
+and synthesis then multiplies it. That is a cheaper framing than either story
+currently assumes, and it is worth checking against C before acting on it.
 
 #### Evidence the endpoint did real work
 
 | | value |
 |---|---|
-| Endpoint | |
-| Rows seeded | |
-| Response size (bytes) | |
-| Response time | |
-| Did the response contain seeded values? | |
+| Endpoint | `GET /api/tickets/`, HTTP Basic as `admin:Pa33w0rd` |
+| Rows seeded | 18 objects — 3 tickets, 4 followups, 3 KB items, 2 queues, 2 attachments, 1 user |
+| Response size (bytes) | 2 198 |
+| Response time | 322 ms (warm) — **suspiciously slow for 3 rows; see below** |
+| Did the response contain seeded values? | **Yes** — HTTP 200, 3 ticket objects, the fixture's literal `"Some django-helpdesk Problem"` and its nested `followup_set` present in the body |
 
 #### Obstacles
 
 | # | Obstacle | Category | Time lost | How resolved | Discoverable from the repo alone? |
 |---|---|---|---|---|---|
-| 1 | | | | | |
-| 2 | | | | | |
+| B-1 | `demodesk/config/settings.py:140-145` hardcodes `ENGINE: sqlite3` and a `BASE_DIR`-relative path. There is no `DATABASE_URL`, no `DB_*` variable, and no `local_settings` import hook — the file's only two `os.getenv` calls are for the teams feature flag. There is no supported way to point the demo project at Postgres. | **Database config not externalized** | ~2 min | Wrote `seeds/spike_settings_b.py`: a module outside the checkout that does `from demodesk.config.settings import *` and then overrides `DATABASES`, selected via `PYTHONPATH=/seeds` and `DJANGO_SETTINGS_MODULE`. The checkout stays byte-identical. | **The problem is trivially discoverable; the solution is not offered.** The hardcoding is plain in a file the README tells you to read. But the repo documents no override path, so resolving it means knowing the settings-overlay trick independently. This is the row I predicted *none* of A/B/C would hit — see the cross-repo section. |
+| B-2 | No database driver is declared. `pyproject.toml` lists `django>=4.2` and 16 other dependencies; `psycopg`, `psycopg2`, and `psycopg2-binary` are all absent. A clean `pip install -e .` produces a project that cannot connect to Postgres at all, and the omission is invisible until connect time because SQLite (B-1) needs no driver. | Missing driver, hidden by the SQLite default | ~30 s | `pip install "psycopg[binary]"`. Choice of distribution was mine, since the repo expresses no preference. | **No — only by attempting it.** Nothing in the manifest, README, or docs says which Postgres driver this project expects, because as configured it never uses one. |
+| B-3 | The demo superuser's password is `Pa33w0rd`. It appears in exactly one place in the repository: a **comment inside the `demo` target of the root `Makefile`** (`# The password for the "admin" user is 'Pa33w0rd' for the demo project.`). It is not in `README.rst`, not in `demodesk/README.rst`, not in `docs/`, and not adjacent to the fixture that creates the user — `demo.json` carries only the PBKDF2 hash. | Credentials in an unsearchable place | ~1 min | Read the `Makefile`. | **Yes, but only barely.** It is in the tree, in plain text, and `grep -ri password` finds it. But every *structured* place a reader would look — README, docs, the fixture itself — omits it, and a Makefile comment is not a location any convention would predict. Had it not been there, the account would have been unusable without resetting the hash, i.e. modifying seeded state. |
+| B-4 | The documented way to run the demo is `make rundemo`, which is unusable for an API workload. The `Makefile` hard-fails at *parse* time if `node` is absent (`REQUIRED_BINS := node` with `$(error ...)`), and the `demo` target runs `yarn install` plus a ~60-line static-vendor copy routine before it ever reaches `migrate`. Grounding a JSON endpoint requires none of it. | Documented entry point demands an irrelevant toolchain | 0 (bypassed) | Ignored the `Makefile` and called `manage.py migrate` / `loaddata` / `runserver` directly, which worked. | Yes — but only if you are willing to *disregard* the documented path. Reading the `Makefile` as a checklist leads to installing Node and yarn to serve JSON. Same lesson as finding A-i: the naive path was cheaper than the documented one. |
+
+#### Consequence for S-0.6 — B is a strong development target
+
+`GET /api/tickets/` takes **14 queries to serve 3 tickets**, and 322 ms to
+return 2.2 KB. The breakdown is a textbook nested N+1:
+
+| Count | Query |
+|---|---|
+| 1 | the ticket list |
+| 3 | `helpdesk_followup` — **one per ticket** |
+| 4 | `helpdesk_followupattachment` — **one per followup** |
+| 4 | `helpdesk_customfield` — **one per serialized ticket** |
+| 2 | session + auth user |
+
+The measurement signature S-0.6 asks for is therefore explicit and cheap to
+assert: **queries scale as `1 + T + F + T` where `T` = tickets and `F` = total
+followups, instead of a constant.** Load-testing at fixture scale would miss it
+entirely — 3 tickets is fast enough in absolute terms that nothing looks wrong,
+which is itself a good argument for the guard-counter invariant.
+
+This is an unplanted defect in a real, maintained, 1.7k-star repository, found
+inside five minutes. It makes `django-helpdesk` the strongest S-0.6 development
+target seen so far, and it pairs well with `healthchecks` as the null-result
+holdout. Recorded here; the decision belongs to S-0.6.
+
+#### Excluded — not an obstacle of this repository
+
+`PYTHONPATH=/seeds` arrived inside the container as
+`C:/Program Files/Git/seeds`: Git Bash on the Windows host rewrites
+POSIX-looking arguments before Docker sees them, and `MSYS_NO_PATHCONV=1` fixes
+it. Cost about a minute. It is a property of the shell driving the spike, not of
+`django-helpdesk`, and it is recorded here only so the time is accounted for and
+nobody re-derives it from the transcript as a repo obstacle.
 
 ---
 
