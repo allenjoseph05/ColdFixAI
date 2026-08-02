@@ -31,18 +31,33 @@ enable actually works.
 
 ---
 
+## Scorer calibration — done, before any run
+
+`python run.py --self-check` reports **6/6 scenarios discriminate correctly**:
+for each one, an ideal answer scores clean and a trap-falling answer is caught.
+
+This was not a formality. The first scorer searched the model's prose for
+forbidden substrings and marked the *correct* decoy answer — "query count is
+constant, so this is **not** an N+1" — as falling into the trap, because
+substring matching cannot see negation. The sharpest scenario in the set would
+have scored 0% however well the model reasoned. Diagnoses are an enum now.
+
+Re-run the self-check after any change to a scenario, and before trusting a run.
+
+---
+
 ## Results
 
 Fill from `results/selection.json`.
 
-| Scenario | Instrument | Trap avoided | Finding discipline | Instruments chosen |
-|---|---|---|---|---|
-| `real_n_plus_one` | | | | |
-| `decoy_fixed_floor` | | | | |
-| `over_fetch_invisible_to_query_count` | | | | |
-| `post_ablation_residual` | | | | |
-| `flat_queries_time_grows` | | | | |
-| `noise_no_finding` | | | | |
+| Scenario | Instrument | Diagnosis | Trap avoided | Finding discipline | Instruments chosen |
+|---|---|---|---|---|---|
+| `real_n_plus_one` | | | | | |
+| `decoy_fixed_floor` | | | | | |
+| `over_fetch_invisible_to_query_count` | | | | | |
+| `post_ablation_residual` | | | | | |
+| `flat_queries_time_grows` | | | | | |
+| `noise_no_finding` | | | | | |
 
 **Repeats per scenario:**
 **Mean trap avoidance (trap scenarios only):**

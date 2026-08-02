@@ -30,16 +30,38 @@ given the evidence and chooses the next experiment. Responses are constrained to
 a schema, so scoring compares structured fields rather than reading prose —
 which matters when the scorer and the subject are the same model family.
 
-Three scores, kept separate because they fail independently:
+Four scores, kept separate because they fail independently:
 
 | Score | Question |
 |---|---|
 | **instrument** | Did it pick a defensible next experiment? |
-| **trap** | Did it stay out of the plausible-but-wrong conclusion? |
+| **diagnosis** | Did it read the evidence correctly? |
+| **trap** | Did it stay out of the plausible-but-wrong diagnosis? |
 | **finding discipline** | Did it agree a finding was, or was not, warranted? |
 
 A model can pick a sensible instrument *and* manufacture a finding from noise.
 Under a single aggregate score that combination looks like a pass.
+
+### The scorer is calibrated before it is used
+
+Every check compares structured fields; none reads prose. That is not a style
+choice — **the first version was wrong**, and calibrating it offline is what
+found the bug.
+
+It scored traps by searching the model's wording for forbidden substrings. The
+*correct* answer to the decoy is "query count is constant, so **this is not an
+N+1**" — which contains `n+1` and scored as falling into the trap. Substring
+matching cannot see negation, so the sharpest scenario in the set would have
+scored 0% however well the model reasoned, and the whole run would have produced
+garbage that looked like data.
+
+The diagnosis is an enum now, and `--self-check` proves the scorer discriminates:
+for every scenario it builds an ideal answer and a trap-falling answer and
+asserts they score differently.
+
+```bash
+python run.py --self-check     # no API key needed
+```
 
 ## The scenarios
 
@@ -62,8 +84,14 @@ valid output — from numbers a careless reading calls significant.
 
 ```bash
 cd spikes/S-0.8-instrument-selection
+
+python run.py --self-check                    # validate the scorer, offline
+
 ANTHROPIC_API_KEY=... uv run --with anthropic python run.py --repeats 10
 ```
+
+Run the self-check first. It costs nothing and it has already caught one bug
+that would have invalidated every number the real run produced.
 
 `--repeats` exists because a single answer is an anecdote. The consistency
 figure is the result; a model that gets the decoy right 6 times in 10 has not
