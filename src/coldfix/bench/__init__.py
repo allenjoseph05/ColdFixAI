@@ -5,3 +5,17 @@ the measurements these take; agents never report a measurement themselves.
 
 Epic 1.
 """
+
+from coldfix.bench.execute import (
+    ExecutionError,
+    ExecutionResult,
+    ExecutionTimeoutError,
+    execute,
+)
+
+__all__ = [
+    "ExecutionError",
+    "ExecutionResult",
+    "ExecutionTimeoutError",
+    "execute",
+]
