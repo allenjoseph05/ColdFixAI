@@ -157,6 +157,29 @@ def self_check() -> int:
     return failures
 
 
+def load_key_from_env_file() -> None:
+    """Read ANTHROPIC_API_KEY from a local .env if it is not already set.
+
+    The key has to live somewhere, and every convenient place is a hazard: a
+    shell command puts it in history and in any transcript, a committed file
+    puts it in git forever. `.env` at this path is already covered by the
+    repository's gitignore, so this is the one location that is convenient and
+    not a leak.
+
+    Deliberately minimal — no dependency, no interpolation, no export syntax.
+    An existing environment variable always wins, so CI is unaffected.
+    """
+    env_file = Path(__file__).parent / ".env"
+    if not env_file.exists() or os.environ.get("ANTHROPIC_API_KEY"):
+        return
+    for raw in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        os.environ.setdefault(name.strip(), value.strip().strip("\"'"))
+
+
 def _rate(runs: list[dict[str, Any]], key: str) -> float:
     """Pass rate for one score across a scenario's repeats."""
     return sum(run["score"][key] for run in runs) / len(runs)
@@ -175,10 +198,16 @@ def main() -> None:
     if args.self_check:
         raise SystemExit(1 if self_check() else 0)
 
+    load_key_from_env_file()
     if not os.environ.get("ANTHROPIC_API_KEY"):
+        env_path = Path(__file__).parent / ".env"
         raise SystemExit(
-            "ANTHROPIC_API_KEY is not set. This spike measures a model's judgement "
-            "and cannot be run offline."
+            "ANTHROPIC_API_KEY is not set.\n"
+            "Either export it, or create a file next to this script:\n"
+            f"  {env_path}\n"
+            "containing one line:\n"
+            "  ANTHROPIC_API_KEY=sk-ant-...\n"
+            "That path is already gitignored."
         )
 
     import anthropic
