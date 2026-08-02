@@ -1,0 +1,56 @@
+# Environment for the S-0.4 ablation spike.
+#
+# Self-contained rather than shared with S-0.3. That spike's compose file and
+# FINDINGS are a finished experimental record; a later spike editing them to suit
+# itself would quietly invalidate the conditions the earlier results were taken
+# under. Thirty lines of duplicated YAML is the cheaper mistake.
+#
+# Subject: django-helpdesk, pinned at the commit S-0.3 grounded, which has a real
+# unplanted N+1 in the tickets endpoint.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: coldfix-ablation-db
+    environment:
+      POSTGRES_USER: coldfix_test
+      POSTGRES_PASSWORD: coldfix_test
+      POSTGRES_DB: spike_ablation
+    ports:
+      # Not 5432, and not S-0.3's 55432 either — both spikes' databases can be up
+      # at once, and a measurement run pointed at the wrong one would still work.
+      - "55433:5432"
+    volumes:
+      - ablation-pgdata:/var/lib/postgresql/data
+    # Measurement noise is the thing under test here, so the database gets enough
+    # shared_buffers to hold this dataset and a log of any statement slower than
+    # 200ms. Left at defaults, page cache warmth alone moves the numbers.
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "log_min_duration_statement=200"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coldfix_test -d spike_ablation"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  workbench:
+    image: python:3.12-slim
+    container_name: coldfix-ablation-workbench
+    working_dir: /repo
+    volumes:
+      - ./repo:/repo
+      - ./seeds:/seeds:ro
+      - ./harness:/harness:ro
+      - ./results:/results
+    command: ["sleep", "infinity"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  ablation-pgdata:
