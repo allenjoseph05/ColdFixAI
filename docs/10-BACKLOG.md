@@ -91,7 +91,9 @@ AC:
 - Report coefficient of variation for each condition and whether the delta is statistically separable
 - Repeat with an empty-collection stub and compare — do the two stub strategies give materially different numbers?
 
-Notes: the second half of this AC is what motivates S-3.3's record-and-replay requirement. Confirm it empirically before building on it.
+Notes: the second half of this AC is what motivates S-3.4's record-and-replay requirement. Confirm it empirically before building on it.
+
+Result (2026-08-02, `spikes/S-0.4-ablation/FINDINGS.md`): confirmed, with a twist. The two stub strategies were indistinguishable on **timing** (p=0.64) while differing **6x in payload size** — so the premise holds but wall time alone cannot show it, because the ablated component was database-bound and the downstream work it fed was cheap. Timing-only measurement would have concluded the strategy does not matter and deleted S-3.4's recording requirement. Ablation delta itself was clean: 1454.73ms to 434.64ms, Cliff's delta -1.000, against a detection floor of ~20ms.
 
 ### S-0.5 — SPIKE: is state reset reliable?
 Depends: S-0.3
