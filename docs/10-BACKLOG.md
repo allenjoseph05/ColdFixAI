@@ -506,6 +506,18 @@ AC:
 
 Notes: "how many queries must this endpoint issue" is a question about intent and is circular. Restrict to the computable cases and say so.
 
+### S-3.19 — Observation: deterministic instruction counting
+Depends: S-3.6
+Why: **this is the only known way to measure below the timing noise floor**, and `01-primitives.md` §12 already names it while no story implements it.
+AC:
+- Counts retired instructions for a workload, independent of machine and load
+- Counts are reproducible across runs on the same input to within a stated tolerance
+- Available to the Diagnostician as a metric alongside wall time and query count
+- A test proves two implementations differing by less than the measured timing floor are still separable by instruction count
+- The experiment result records which metric the conclusion rests on
+
+Notes: S-0.4 measured the timing noise floor at **~20 ms, about 6% of a 350 ms endpoint**, at 20 repetitions — so a real 2% improvement is invisible to timing no matter how many times it is run. Instruction counts are deterministic, which collapses that floor to roughly zero for CPU-bound work. `01-primitives.md` §12 states the intended workflow: *"search against instruction count, then validate the single winner with proper interleaved statistical timing."* That makes this the enabling primitive for any optimization search (E10 onward), not merely another instrument. It does not help for I/O- or lock-bound cost — that is S-3.7's job, and the two are complementary rather than alternatives.
+
 ---
 
 # EPIC 4 — Screening
@@ -1135,7 +1147,7 @@ AC:
 - Should decline; if it does not, memory is not working
 - **A controlled ablation of the playbook itself**: ground the same unseen repository with the playbook retrieved and with it withheld, and report the difference in stage completion and steps-to-ground
 
-Notes: the curve is longitudinal and confounded — it declines if the playbook works, and also if later projects happen to be easier. The ablation is the causal measurement, and it is the project's own core primitive applied to the project. It also serves as a regression test: if a playbook edit stops helping, the delta shrinks and that is visible. S-0.4 supplies the method — interleave, discard a warm-up, and require a guard counter (here, stage completion) to move alongside the timing.
+Notes: the curve is longitudinal and confounded — it declines if the playbook works, and also if later projects happen to be easier. The ablation is the causal measurement, and it is the project's own core primitive applied to the project. It also serves as a regression test: if a playbook edit stops helping, the delta shrinks and that is visible. S-0.4 supplies the method — interleave conditions and require a guard counter (here, stage completion) to move alongside the timing. **Do not copy S-0.4's fixed warm-up discard**: that spike hard-coded one, which S-1.2 forbids for good reason (Barrett et al. found at most 43.5% of VM/benchmark pairs reach steady state at all, so 'discard the first N' is an assumption that is wrong more often than not). Record whether each sample ran in a fresh or reused process and let the analysis decide.
 
 ---
 
