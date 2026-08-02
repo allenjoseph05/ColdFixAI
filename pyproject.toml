@@ -80,6 +80,17 @@ strict = true
 warn_unreachable = true
 plugins = ["pydantic.mypy"]
 
+# `files` is overridden whenever mypy is given an explicit path, and CLAUDE.md's
+# documented command is `uv run mypy .`. Without this, that command walks into
+# the repositories a spike has cloned and dies on the first collision — two
+# checkouts both have a top-level `manage.py`, which is "Duplicate module named
+# manage" and stops the run before any of our own code is checked.
+#
+# `.gitignore` does not help here: mypy does not read it. Spike scaffolding is
+# not product code and imports frameworks this project does not depend on, so it
+# is out of scope for strict checking by intent, not just by convenience.
+exclude = ["^spikes/"]
+
 [tool.pydantic-mypy]
 init_typed = true
 warn_required_dynamic_aliases = true
