@@ -66,6 +66,30 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["ANN", "PLR2004", "S101"]
 
+# Spike harnesses are measurement scripts, not product code, and three of these
+# rules are actively wrong for them. Everything else still applies — the spikes
+# are linted and formatted like the rest of the tree.
+"spikes/**" = [
+    # The ablation harness switches conditions through a module-level flag on
+    # purpose. Patching and unpatching around each request instead would charge
+    # setattr cost to the treatment conditions only, which is a real difference
+    # between conditions that has nothing to do with what is being measured.
+    "PLW0603",
+    # `django.setup()` must run before any model or serializer import, so those
+    # imports cannot be at the top of the file.
+    "PLC0415",
+    # Monkeypatching a third-party method means matching its signature, and
+    # DRF's is untyped. The alternative is inventing types for someone else's
+    # API and being wrong about them.
+    "ANN401",
+    # A measurement script that fails should say why in the message rather than
+    # define an exception class that is raised once and never caught.
+    "TRY003",
+    # Reporting functions are long and linear by nature. Splitting a print
+    # sequence into helpers to satisfy a statement count makes it harder to read.
+    "PLR0915",
+]
+
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
