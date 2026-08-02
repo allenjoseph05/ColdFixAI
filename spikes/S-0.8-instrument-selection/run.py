@@ -97,19 +97,64 @@ def ask(client: Any, scenario: Scenario) -> dict[str, Any]:
 
 
 def score(scenario: Scenario, answer: dict[str, Any]) -> dict[str, bool]:
-    """Three independent checks. None of them reads prose for meaning."""
-    instrument_ok = answer["next_instrument"] in scenario.acceptable_instruments
+    """Three independent checks, all on structured fields.
 
-    haystack = f"{answer['conclusion']} {answer['why']}".lower()
-    trap_ok = not any(bad in haystack for bad in scenario.forbidden_conclusions)
-
-    finding_ok = bool(answer["finding_warranted"]) == scenario.finding_warranted
-
+    Nothing here reads prose. An earlier version searched the model's wording
+    for forbidden substrings and marked the *correct* answer to the decoy —
+    "query count is constant, so this is not an N+1" — as falling into the
+    trap, because substring matching cannot see negation. The diagnosis is an
+    enum for that reason.
+    """
     return {
-        "instrument": instrument_ok,
-        "trap": trap_ok,
-        "finding_discipline": finding_ok,
+        "instrument": answer["next_instrument"] in scenario.acceptable_instruments,
+        "trap": answer["diagnosis"] not in scenario.forbidden_diagnoses,
+        "diagnosis": answer["diagnosis"] in scenario.acceptable_diagnoses,
+        "finding_discipline": bool(answer["finding_warranted"]) == scenario.finding_warranted,
     }
+
+
+def self_check() -> int:
+    """Prove the scorer separates a right answer from a wrong one. No API needed.
+
+    A measuring standard nobody calibrated is worse than none, and this one was
+    already wrong once. For each scenario it builds an ideal answer and a
+    trap-falling answer and asserts the scorer marks them differently. Scenarios
+    with no forbidden diagnosis have no trap to fall into and are checked on the
+    ideal answer alone.
+    """
+    failures = 0
+    for scenario in SCENARIOS:
+        ideal = {
+            "conclusion": "...",
+            "why": "...",
+            "diagnosis": scenario.acceptable_diagnoses[0],
+            "finding_warranted": scenario.finding_warranted,
+            "next_instrument": scenario.acceptable_instruments[0],
+        }
+        marks = score(scenario, ideal)
+        if not all(marks.values()):
+            print(f"  FAIL {scenario.name}: ideal answer did not pass — {marks}")
+            failures += 1
+            continue
+
+        if not scenario.forbidden_diagnoses:
+            print(f"  ok   {scenario.name}: ideal passes (no trap defined)")
+            continue
+
+        trapped = {**ideal, "diagnosis": scenario.forbidden_diagnoses[0]}
+        trapped_marks = score(scenario, trapped)
+        if trapped_marks["trap"]:
+            print(f"  FAIL {scenario.name}: trap answer was not caught")
+            failures += 1
+        else:
+            print(f"  ok   {scenario.name}: ideal passes, trap caught")
+
+    print()
+    print(
+        f"scorer self-check: {len(SCENARIOS) - failures}/{len(SCENARIOS)} "
+        f"scenarios discriminate correctly"
+    )
+    return failures
 
 
 def _rate(runs: list[dict[str, Any]], key: str) -> float:
@@ -120,7 +165,15 @@ def _rate(runs: list[dict[str, Any]], key: str) -> float:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument(
+        "--self-check",
+        action="store_true",
+        help="Validate the scorer offline and exit. No API key required.",
+    )
     args = parser.parse_args()
+
+    if args.self_check:
+        raise SystemExit(1 if self_check() else 0)
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise SystemExit(
@@ -144,6 +197,7 @@ def main() -> None:
 
         instrument_rate = _rate(per_run, "instrument")
         trap_rate = _rate(per_run, "trap")
+        diagnosis_rate = _rate(per_run, "diagnosis")
         finding_rate = _rate(per_run, "finding_discipline")
 
         results.append(
@@ -153,6 +207,7 @@ def main() -> None:
                 "repeats": args.repeats,
                 "instrument_rate": instrument_rate,
                 "trap_rate": trap_rate,
+                "diagnosis_rate": diagnosis_rate,
                 "finding_discipline_rate": finding_rate,
                 "instruments_chosen": dict(chosen),
                 "runs": per_run,
@@ -162,6 +217,7 @@ def main() -> None:
         print(
             f"{scenario.name:<38} "
             f"instrument {instrument_rate:>5.0%}  "
+            f"diagnosis {diagnosis_rate:>5.0%}  "
             f"trap {trap_rate:>5.0%}  "
             f"finding {finding_rate:>5.0%}   "
             f"{dict(chosen)}"

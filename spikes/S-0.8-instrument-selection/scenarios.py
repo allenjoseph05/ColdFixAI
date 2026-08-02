@@ -20,6 +20,20 @@ project invariant — *"Screened 9 workloads, nothing found" ships as an answer.
 Never manufacture a finding.* A model that produces a finding from noise has
 violated it, and no downstream verification catches that as cleanly as refusing
 to start does.
+
+## Traps are scored on an enum, not on prose
+
+The first version of this scored traps by searching the model's prose for
+forbidden substrings — `"n+1"` on the decoy, and so on. Calibrating the scorer
+before spending anything on a real run showed it was broken: the *correct*
+answer to the decoy is "query count is constant, so **this is not an N+1**",
+which contains the forbidden substring and scored as falling into the trap.
+Substring matching cannot see negation, and the decoy — the sharpest scenario in
+the set — would have scored 0% however well the model reasoned.
+
+So the model states its diagnosis as one of `DIAGNOSES`, and a trap is a
+forbidden enum value. Nothing about the check depends on how a sentence is
+phrased.
 """
 
 from __future__ import annotations
@@ -38,6 +52,17 @@ INSTRUMENTS = (
     "none_report_no_finding",
 )
 
+# What the evidence shows. Scored as an enum so that "this is NOT an N+1" and
+# "this IS an N+1" are distinguishable — see the module docstring.
+DIAGNOSES = (
+    "n_plus_one",  # query count grows with rows returned
+    "over_fetch",  # constant query count, payload larger than needed
+    "constant_per_request_overhead",  # high but flat cost, not scaling with rows
+    "cost_outside_database",  # database is not where the time goes
+    "insufficient_evidence",  # a further experiment is needed to say
+    "no_defect_found",  # the evidence does not support a defect
+)
+
 
 @dataclass(frozen=True)
 class Scenario:
@@ -53,10 +78,12 @@ class Scenario:
     # Whether the evidence justifies reporting a performance finding at all.
     finding_warranted: bool
 
-    # Substrings that must NOT appear in the model's stated conclusion. These
-    # are the traps — each is a plausible diagnosis the evidence does not
-    # support.
-    forbidden_conclusions: tuple[str, ...] = ()
+    # Diagnoses the evidence supports.
+    acceptable_diagnoses: tuple[str, ...]
+
+    # The traps: diagnoses that are plausible here and that the evidence does
+    # not support. Scored as enum membership, never as a substring of prose.
+    forbidden_diagnoses: tuple[str, ...] = ()
 
     notes: str = ""
     tags: tuple[str, ...] = field(default_factory=tuple)
@@ -82,6 +109,7 @@ Query counts grouped by table:
 Returning 25 tickets instead of 100 gives 305 queries; returning 10 gives 131.""",
         acceptable_instruments=("ablation", "scaling"),
         finding_warranted=True,
+        acceptable_diagnoses=("n_plus_one",),
         notes=(
             "The control case. Query count grows with rows returned, which is the "
             "N+1 signature. A model that cannot get this one right tells us nothing "
@@ -107,7 +135,12 @@ The 37 queries are 35 distinct aggregate lookups plus 2 for the row set.""",
             "none_report_no_finding",
         ),
         finding_warranted=False,
-        forbidden_conclusions=("n+1", "n + 1", "nplusone", "n plus one"),
+        acceptable_diagnoses=(
+            "constant_per_request_overhead",
+            "no_defect_found",
+            "insufficient_evidence",
+        ),
+        forbidden_diagnoses=("n_plus_one",),
         notes=(
             "The sharp one. 37 queries is a lot in absolute terms and it is NOT an "
             "N+1 — the count does not move with rows returned. A detector keying on "
@@ -134,7 +167,8 @@ Two endpoints return identical output. Both issue exactly one query.
 Query count is flat across dataset sizes for both.""",
         acceptable_instruments=("ablation", "observation", "scaling"),
         finding_warranted=True,
-        forbidden_conclusions=("not the database", "not database", "no finding"),
+        acceptable_diagnoses=("over_fetch",),
+        forbidden_diagnoses=("cost_outside_database", "no_defect_found"),
         notes=(
             "Query count cannot distinguish these at all — it is 1 for both. The "
             "defect is visible only in the guard counter. A model that concludes "
@@ -163,6 +197,8 @@ Residual 507 queries by table:
 Detection floor for this endpoint was measured at ~20 ms.""",
         acceptable_instruments=("ablation", "scaling"),
         finding_warranted=True,
+        acceptable_diagnoses=("n_plus_one",),
+        forbidden_diagnoses=("no_defect_found",),
         notes=(
             "The localization loop. Removing the dominant component exposed a "
             "second, independent N+1 underneath it — 504 customfield queries, one "
@@ -185,7 +221,8 @@ Detection floor for this endpoint was measured at ~20 ms.""",
 Database time, measured separately, is 11ms at every size.""",
         acceptable_instruments=("ablation", "proportional_perturbation", "observation"),
         finding_warranted=True,
-        forbidden_conclusions=("n+1", "n + 1"),
+        acceptable_diagnoses=("cost_outside_database", "insufficient_evidence"),
+        forbidden_diagnoses=("n_plus_one",),
         notes=(
             "This is S-8.7's stated demo, offered here as a selection problem "
             "rather than an end-to-end one: query count is flat and database time "
@@ -218,12 +255,12 @@ Over 12 null trials on this endpoint — the identical condition compared agains
 itself — the largest spurious shift observed was 12.76 ms.""",
         acceptable_instruments=("none_report_no_finding",),
         finding_warranted=False,
-        forbidden_conclusions=(
-            "improvement",
-            "regression",
-            "faster",
-            "slower",
-            "optimization",
+        acceptable_diagnoses=("no_defect_found", "insufficient_evidence"),
+        forbidden_diagnoses=(
+            "n_plus_one",
+            "over_fetch",
+            "constant_per_request_overhead",
+            "cost_outside_database",
         ),
         notes=(
             "The most important scenario in the set. p < 0.01 and a medium effect "
@@ -249,6 +286,15 @@ RESPONSE_SCHEMA = {
                 "NOT supported if that is the substantive point."
             ),
         },
+        "diagnosis": {
+            "type": "string",
+            "enum": list(DIAGNOSES),
+            "description": (
+                "What the evidence shows. Choose no_defect_found when the evidence "
+                "does not support a defect, and insufficient_evidence when a further "
+                "experiment is needed before saying."
+            ),
+        },
         "finding_warranted": {
             "type": "boolean",
             "description": (
@@ -267,6 +313,12 @@ RESPONSE_SCHEMA = {
             "description": "Why that instrument, referencing the specific measurement.",
         },
     },
-    "required": ["conclusion", "finding_warranted", "next_instrument", "why"],
+    "required": [
+        "conclusion",
+        "diagnosis",
+        "finding_warranted",
+        "next_instrument",
+        "why",
+    ],
     "additionalProperties": False,
 }
