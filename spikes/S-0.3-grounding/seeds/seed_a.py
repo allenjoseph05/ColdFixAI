@@ -20,7 +20,6 @@ from datetime import timedelta
 
 from django.contrib.auth.models import User
 from django.utils.timezone import now
-
 from hc.accounts.models import Profile, Project
 from hc.api.models import Check, Ping
 
@@ -28,9 +27,7 @@ API_KEY = "X" * 32
 N_CHECKS = 50
 PINGS_PER_CHECK = 20
 
-alice, _ = User.objects.get_or_create(
-    username="alice", defaults={"email": "alice@example.org"}
-)
+alice, _ = User.objects.get_or_create(username="alice", defaults={"email": "alice@example.org"})
 alice.set_password("password")
 alice.save()
 

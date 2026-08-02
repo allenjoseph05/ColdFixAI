@@ -31,6 +31,27 @@ services:
       retries: 20
       start_period: 5s
 
+  # Added mid-spike, for candidate C. Not part of the original environment.
+  #
+  # The spike deliberately shipped Postgres and nothing else, so that "this repo
+  # needs a service we do not have" would be *recorded* rather than silently
+  # accommodated. NetBox needs Redis and will not start without it — obstacle
+  # C-3. This service is the resolution to that obstacle, added after it was
+  # hit and written down, which is the order that keeps the finding honest.
+  #
+  # It is under a profile so the default `docker compose up -d` still brings up
+  # only Postgres and the workbench. Anyone re-running the spike meets the same
+  # wall in the same place instead of inheriting the answer.
+  redis:
+    image: redis:7-alpine
+    container_name: coldfix-spike-redis
+    profiles: ["netbox"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
   # Where the grounding actually happens.
   #
   # The runs are done from Linux, not from the Windows host, because that is the
