@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import os
 
-from demodesk.config.settings import *  # noqa: F401,F403
+from demodesk.config.settings import *  # noqa: F403
 
 DATABASES = {
     "default": {
