@@ -133,6 +133,22 @@ AC:
 
 Notes: the planted-defect fixture repo is the single most useful test asset in the project. Build it early and grow it whenever a real repo surprises you.
 
+**Status (2026-08-02): partially delivered — one AC of four. The other three are blocked on code that does not exist, and the story should be split.**
+
+Delivered: the planted-defect fixture repository, in `tests/fixtures/`. Six query defects and controls, five complexity functions, a slow/fast import pair, and 25 tests asserting every documented signature. It goes beyond the four defects listed above with two additions the spikes demanded — a **decoy** with a high constant query cost that must *not* be flagged (the netbox shape from S-0.3), and a component whose **downstream** work dominates, which is the case S-0.4 could not test and S-3.4 most needs. Every defect is paired with a control, because a detector that always answers "N+1" passes a fixture that only contains defects.
+
+Blocked, with the blocker in each case:
+
+| AC | Blocked on |
+|---|---|
+| Unit tests for the lab bench | **E1** — the lab bench does not exist. There is nothing to unit-test. |
+| Golden-file tests for evidence chain serialization | **S-4.1** — the evidence chain schema is not defined, so there is no serialization to freeze. |
+| A mock LLM client replaying recorded responses | **S-0.2 / ADR-002** — the SDK and provider strategy are undecided, and writing a mock against a guessed interface is the speculative abstraction `CLAUDE.md` forbids. |
+
+The dependency line above (`Depends: S-0.2`) is also partly circular: S-0.2's ADR-006 is *"how the tool tests itself"*, which is this story's subject. ADR-006 should be written from S-0.7's outcome rather than before it.
+
+**Recommendation:** split into `S-0.7a` (the fixture repository — done) and `S-0.7b` (lab-bench unit tests, golden files, mock LLM client), with S-0.7b resequenced to depend on S-0.2, E1 and S-4.1. Nothing is lost by waiting; the fixture repo is the piece E1 needs on day one, and it is available now.
+
 ---
 
 # EPIC 1 — The lab bench
