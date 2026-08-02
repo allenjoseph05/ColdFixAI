@@ -638,6 +638,19 @@ AC:
 - The prompt states explicitly that detail is retrievable
 - No information is discarded — only deferred
 
+### S-5.9 — Vendor cost comparison on effective cost
+Depends: S-5.3, S-15.3
+Why: ADR-002 chose a vendor on SDK ergonomics, not on price, and the question will otherwise be re-argued from list prices and memory.
+AC:
+- Runs the same fixed scenario set against at least two vendors
+- Reports **cost per confirmed finding**, not cost per token
+- Reports effective input cost with caching in effect, alongside list price, and states the measured cache hit rate for each vendor
+- Reports experiments-to-conclusion per vendor — a dearer model reaching the answer in fewer experiments may be cheaper overall
+- Records each vendor's minimum cacheable prefix and cache TTL, since both change effective cost independently of list price
+- Result is published in the cost report and supersedes ADR-002's provider choice if the numbers warrant it
+
+Notes: **list price is the wrong number for this workload.** Cache reads bill at roughly 0.1x of input on the first-party API, and the append-only experiment log exists precisely so the cached prefix stays byte-identical — so effective cost is dominated by hit rate, not sticker rate. Caches are also model-scoped, so a vendor that is 30% cheaper per token but has a larger minimum cacheable prefix, a shorter TTL, or weaker prefix semantics can cost more here. S-0.8's harness is already the right shape for this: a fixed scenario set with programmatic scoring, so swapping the request layer is the only work. ADR-002 is a record of a decision, not a commitment — this story exists to make it falsifiable rather than defended.
+
 ---
 
 # EPIC 6 — State and persistence
