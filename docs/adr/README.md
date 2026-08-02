@@ -25,6 +25,7 @@ reserved:
 | 008 | Query counting uses `force_debug_cursor`, never `settings.DEBUG` | S-0.3 |
 | 009 | Grounding is a staged pipeline, and every stage has a machine-checkable predicate | S-0.3 |
 | 010 | Environments are anchored to the repository's own date | S-0.3 |
+| 011 | Development target, holdout, and reserve | S-0.6 |
 
 ## Format
 

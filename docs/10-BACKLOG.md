@@ -118,6 +118,10 @@ AC:
 
 Notes: the holdout matters — developing and evaluating against the same repo produces a tool that works on exactly one repo.
 
+Result (2026-08-02, ADR 011, pins in `targets.toml`): target `django-helpdesk` @ `3a22901` — nested N+1 on `/api/tickets/`, 1193 queries for 100 tickets, scaling as `1 + T + F + T`, ablation ratio 0.29x against a ~20ms floor, **plus a second N+1 underneath it** (504 customfield queries, invisible until the first is ablated). Reserve `netbox` @ `4877d11` for S-17.3.
+
+**The holdout is named in ADR 011 and `targets.toml`, and deliberately not here.** It was chosen because its endpoint is *already correct* — a holdout containing a defect only tests generalization, while one where the right answer is "nothing found" tests whether the system can resist manufacturing a finding. `tests/test_holdout_discipline.py` enforces that it stays out of everything except the files listed there, and it caught two real references while S-0.6 was being written — including this line's first draft. Reference the ADR rather than repeating the name.
+
 ### S-0.7 — Test strategy for the tool itself
 Depends: S-0.2
 Why: a system whose job is verification must be verifiable.
