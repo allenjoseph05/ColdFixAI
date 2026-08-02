@@ -9,13 +9,44 @@ obstacles from memory afterwards.
 
 ---
 
-## Start the database
+## Start the environment
 
 ```bash
 cd spikes/S-0.3-grounding
 docker compose up -d
-docker compose ps          # wait for state: healthy
+docker compose ps          # wait for postgres state: healthy
 ```
+
+Two services come up: `postgres`, and `workbench` — a bare `python:3.12-slim`
+box that the grounding is actually done from.
+
+```bash
+docker compose exec workbench bash
+```
+
+Clone candidate repositories into `repos/` on the host (gitignored); they appear
+inside the workbench at `/repos`. Seed scripts live in `seeds/` and appear at
+`/seeds`, read-only — they stay outside the checkout they seed, because
+modifying the repository under test is the one thing this spike must not do.
+
+**Why a container and not the host.** Windows has no wheel for `pycurl` or
+`mysqlclient`, so grounding natively invents compiler obstacles that the
+Explorer — which E2 hands a Linux container — will never meet. Those obstacles
+would land in the recurrence matrix looking real. **Why `-slim` and not a fat
+image:** a base that already carries `gcc` and `libpq` would silently absorb the
+missing-system-dependency obstacle class, which is one of the classes worth
+counting. It is meant to be an inconvenient box.
+
+### Reset the workbench between repositories
+
+```bash
+docker compose rm -sf workbench && docker compose up -d workbench
+```
+
+Do this every time. A container still holding repo A's `apt` packages grounds
+repo B partly for free, and the spike then under-counts the exact thing it
+exists to measure. Provisioning time is spike infrastructure — keep it out of
+the per-repo wall clock.
 
 Three empty databases are created on first start — one per candidate repo:
 

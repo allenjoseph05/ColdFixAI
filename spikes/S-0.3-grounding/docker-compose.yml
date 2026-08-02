@@ -1,8 +1,9 @@
-# Throwaway Postgres for the S-0.3 grounding spike.
+# Throwaway environment for the S-0.3 grounding spike: a Postgres to ground
+# against, and a bare Linux box to do the grounding from.
 #
-# One instance, three databases — one per candidate repository. Database setup
-# is not the friction under test; the repositories are. Removing this yak is
-# legitimate, removing theirs is not.
+# One Postgres instance, three databases — one per candidate repository.
+# Database setup is not the friction under test; the repositories are. Removing
+# this yak is legitimate, removing theirs is not.
 
 services:
   postgres:
@@ -29,6 +30,33 @@ services:
       timeout: 3s
       retries: 20
       start_period: 5s
+
+  # Where the grounding actually happens.
+  #
+  # The runs are done from Linux, not from the Windows host, because that is the
+  # environment E2 gives the Explorer. A `pycurl` wheel that does not exist for
+  # Windows is friction for whoever runs this spike, but it is not friction the
+  # agent will ever meet, and it would land in the recurrence matrix looking
+  # like a real recurrent obstacle. Deliberately `-slim`: a bare box that has to
+  # `apt install` its own build dependencies, since discovering *those* is
+  # exactly the obstacle class the spike is trying to count.
+  #
+  # Recreate it between repositories — see the README. A container that still
+  # has repo A's `apt` packages will silently ground repo B for free, and the
+  # spike then under-counts the one thing it exists to measure.
+  workbench:
+    image: python:3.12-slim
+    container_name: coldfix-spike-workbench
+    working_dir: /repos
+    volumes:
+      - ./repos:/repos
+      # Seed scripts stay outside the checkouts they seed — see seeds/seed_a.py.
+      - ./seeds:/seeds:ro
+    # No entrypoint of its own; it exists to be `exec`ed into.
+    command: ["sleep", "infinity"]
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   spike-pgdata:

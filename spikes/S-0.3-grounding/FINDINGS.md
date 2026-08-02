@@ -1,9 +1,35 @@
 # S-0.3 — Can we ground real repositories?
 
-**Status:** candidates selected — grounding not started
-**Run by:**
-**Dates:** candidates selected 2026-08-02
+**Status:** A grounded — B and C not started
+**Run by:** Claude Opus 5, driving a Linux container (see *Where these runs happened*)
+**Dates:** candidates selected 2026-08-02; grounding runs 2026-08-02
 **Timebox:** ~1 day
+
+---
+
+## Where these runs happened
+
+All three runs are done from `python:3.12-slim` on the spike's Docker network
+(the `workbench` service), not from the Windows host the spike was driven from.
+
+This was a deliberate choice and it bounds every number below. `requirements.txt`
+for candidate A pins `pycurl` and `mysqlclient`, neither of which has a Windows
+wheel; grounding natively would have produced two compiler obstacles on the
+first repo. Those are real friction for a human on Windows, but they are not
+friction the Explorer will ever meet — E2 hands it a Linux container — so they
+would have entered the recurrence matrix looking like recurrent obstacles while
+actually being facts about one laptop.
+
+The image is `-slim` rather than a fat build image for the opposite reason: a
+container that already has `gcc`, `libpq` and friends would silently absorb the
+missing-system-dependency obstacle class, which is one of the classes worth
+counting. Obstacle A-1 below is exactly that class, and a fatter base image
+would have hidden it.
+
+**The workbench is recreated between repositories.** A container still carrying
+repo A's `apt` packages grounds repo B partly for free, and the spike would
+under-count the thing it exists to measure. Provisioning the workbench itself is
+spike infrastructure and is excluded from the per-repo wall clock.
 
 ---
 
@@ -98,9 +124,12 @@ One block per repository, pre-filled with the selected names.
 
 ### Repository A — `healthchecks`
 
-**Wall clock:** start `__:__` → end `__:__` = **__ min**
-**Outcome:** grounded / partially grounded / failed
-**Where it stopped** (if not grounded):
+Pinned at `5086d28` ("Fix ruff warnings", committed 2026-07-31; shallow clone of
+`master` taken 2026-08-02).
+
+**Wall clock:** start `07:20:54Z` → end `07:28:52Z` = **8 min**
+**Outcome:** **grounded**
+**Where it stopped** (if not grounded): n/a
 
 #### Stage log
 
@@ -108,15 +137,15 @@ Mark each stage and the time it took. `n/a` is a finding too.
 
 | Stage | Time | Notes |
 |---|---|---|
-| Clone and read the README | | |
-| Resolve dependencies / build environment | | |
-| Configure settings (env vars, secrets, `settings.py`) | | |
-| Connect to Postgres | | |
-| Run migrations | | |
-| Create a user / resolve auth | | |
-| Seed data | | |
-| Find a candidate endpoint | | |
-| Get real data out of that endpoint | | |
+| Clone and read the README | 4 s clone | README states the stack and the dev setup in full. Postgres config is `DB=postgres` plus `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`, read at `hc/settings.py:207-235`, SQLite by default. |
+| Resolve dependencies / build environment | 23 s | `pip install -r requirements.txt`, everything from wheels, **zero `apt` packages**. The README's `apt install gcc python3-dev libpq-dev libcurl4-openssl-dev libssl-dev` step was not needed — `pycurl==7.47.0` had a manylinux wheel. See finding A-i. |
+| Configure settings (env vars, secrets, `settings.py`) | ~0 | Five env vars, no `SECRET_KEY` needed — `settings.py` defaults it. No `local_settings.py` required. Nothing blocked. |
+| Connect to Postgres | 30 s | **Obstacle A-1.** Failed on missing `libpq`. |
+| Run migrations | 25 s | 124 migrations, clean on an empty database, 23 tables. No failures. |
+| Create a user / resolve auth | (in seed) | `createsuperuser` never needed — the REST API authenticates on a per-project `X-Api-Key`, so a plain `User` + `Profile` + `Project` is enough. Discovering *that* is obstacle A-3. |
+| Seed data | 4 s | Synthesized: 1 user, 1 project, 50 checks, 1000 pings. Correct on the first attempt. |
+| Find a candidate endpoint | ~1 min | `hc/api/urls.py` lists routes plainly; `/api/v3/checks/` was the obvious list endpoint. |
+| Get real data out of that endpoint | 1 min | **Obstacle A-2** (readiness), then HTTP 200 with seeded rows. |
 
 #### Fixtures — did they already exist?
 
@@ -124,13 +153,28 @@ This determines whether S-7.5 (fixture *discovery*) or S-7.6 (fixture
 *synthesis*) carries the weight. Synthesis is far more expensive to build.
 
 - [ ] `factory_boy` factories present
-- [ ] pytest fixtures that create model instances
-- [ ] a seed / demo-data management command
-- [ ] Django fixture files (`.json` / `.yaml`)
-- [ ] a `docker-compose` with a seeded database
-- [ ] **none — data had to be synthesized by hand**
+- [x] pytest fixtures that create model instances — **only in this weakened sense:** `hc/test.py::BaseTestCase.setUp` is a Django `TestCase`, not a pytest fixture, and nothing outside the test suite can call it. It is not loadable, but it is *readable*, and it was the source of the seed recipe.
+- [ ] a seed / demo-data management command — 15 management commands exist, all operational (`pruneusers`, `sendalerts`, `sendreports`, …). None seeds.
+- [ ] Django fixture files (`.json` / `.yaml`) — no `fixtures/` directory anywhere in the tree.
+- [ ] a `docker-compose` with a seeded database — `docker/docker-compose.yml` exists but builds the app against an empty database.
+- [x] **none — data had to be synthesized by hand**
 
-Notes:
+Notes: this is the finding that matters most from repo A, and it splits S-7.5
+from S-7.6 in an unexpected place. Nothing here is *loadable* — there is no
+`loaddata` target and no factory to call — so on the S-7.5/S-7.6 boundary as
+written, this repo is pure synthesis. But the object graph was not guessed
+either. `hc/test.py` states that a usable account is `User` + `Profile` +
+`Project`, that the API key is a plain 32-char column on `Project`, and that the
+key used throughout the suite is `"X" * 32`. Without reading it, the two
+non-obvious facts — that a `Profile` row is required, and that auth is a project
+column rather than a user token — would have cost far more than the four minutes
+this repo's seeding took.
+
+So the useful primitive is not "find a fixture file." It is **"find the place
+the test suite constructs a minimal valid object graph, and read it as a
+recipe."** That is a *third* thing, cheaper than synthesis-from-models and more
+widely available than `loaddata` fixtures. Whether it generalizes is a question
+for B and C, not something to conclude from one repo.
 
 #### Evidence the endpoint did real work
 
@@ -141,11 +185,11 @@ claim success.
 
 | | value |
 |---|---|
-| Endpoint | |
-| Rows seeded | |
-| Response size (bytes) | |
-| Response time | |
-| Did the response contain seeded values? | |
+| Endpoint | `GET /api/v3/checks/`, header `X-Api-Key: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX` |
+| Rows seeded | 1 user, 1 project, 50 checks, 1000 pings |
+| Response size (bytes) | 51 352 |
+| Response time | 58.2 ms (warm; measured after one discarded request) |
+| Did the response contain seeded values? | **Yes** — HTTP 200, `checks[]` length 50, and the literal `seeded-check-000` with its synthesized `desc` and `n_pings: 20` present in the body |
 
 #### Obstacles
 
@@ -154,13 +198,47 @@ One row per distinct obstacle. Be specific — "config" is not an obstacle,
 
 | # | Obstacle | Category | Time lost | How resolved | Discoverable from the repo alone? |
 |---|---|---|---|---|---|
-| 1 | | | | | |
-| 2 | | | | | |
+| A-1 | `requirements.txt` pins `psycopg==3.3.4` — the source distribution, not `psycopg[binary]` — so it imports only if `libpq` is already on the system. Django catches the `ImportError` and re-raises it as `ImproperlyConfigured("Error loading psycopg2 or psycopg module")`, which names two Python modules that are both installed and does not mention `libpq`. The real message, `libpq library not found`, is only visible by importing `psycopg` directly, outside Django. | Missing system library, **masked by a misleading error** | ~30 s | `apt-get install libpq5` in the container. Note `libpq5`, the runtime library — the README's `libpq-dev` is the header package, needed only to *compile*, which nothing here did. | **Partly, and the gap is the interesting part.** The README's Debian block does list `libpq-dev`, so the fact is in the repo. But the error text points away from it, and the connection between "Error loading psycopg module" and an `apt` line in a *development-setup* section is not one the failure output supports. Recovering it needed a diagnostic step (import the module outside Django) that no error message suggested. |
+| A-2 | `manage.py runserver` takes >6 s to bind port 8000. A request at 6 s got `ECONNREFUSED`, and the server log at that moment contained only system-check warnings with no "Starting development server" line — so the log could not distinguish *still booting* from *died during startup*. The process was in fact alive and bound moments later. | Readiness not observable | ~1 min | Polled the port with `connect_ex` instead of trusting a fixed sleep or the log contents. | Yes, but only by polling. No file, log line, or health endpoint in the repo reports readiness. |
+| A-3 | No fixture, factory, or seed command exists (see above). The object graph also has two non-obvious requirements: a `Profile` row must exist for the owner, and API auth is a 32-char `api_key` column on `Project` rather than a user-level token — so a correctly-created `User` alone authenticates nothing. | No fixtures / non-obvious object graph | ~4 min | Read `hc/test.py::BaseTestCase.setUp` and transcribed its object graph into `seeds/seed_a.py`. Worked first attempt. | **Yes** — but only from the *test suite*, not from the models, the README, or the admin. An Explorer that reads only application code would have had to infer the `Profile` requirement from a runtime failure. |
+| A-4 | The repository root has no `.env.example`. One exists at `docker/.env.example`, i.e. inside a subdirectory documenting a *different* deployment path, and nothing at the root points to it. | Config discoverability | ~0 (found while reading `docker/`) | Read `hc/settings.py` directly instead. | Yes — `settings.py` is authoritative and readable. Cost nothing here, but only because the settings file is unusually clean. |
 
 That last column is the one that matters for E7. If a human could only resolve
 it by searching the web, reading a mailing list, or guessing, then an agent with
 `shell` and `read_file` cannot resolve it either — and the design needs to
 account for that.
+
+**Nothing here required leaving the repository.** No web search, no mailing
+list, no guessing. That is the single most encouraging result of run A, and it
+is the claim to test hardest against B and C.
+
+#### Non-obstacles worth recording
+
+Absences are data. These were expected to cost time and did not:
+
+- **The documented build-dependency step was unnecessary.** The README's `apt`
+  line is written for a world where `pycurl` and `psycopg` compile from source.
+  Both now ship wheels, and following the README would have installed a compiler
+  toolchain nothing used. *Documented setup steps over-state what is required* —
+  which cuts against an Explorer that treats a README as a checklist, and means
+  attempting the naive path first is the cheaper strategy.
+- **No `SECRET_KEY` obstacle.** `settings.py` defaults it. A very common Django
+  grounding blocker, absent here.
+- **Migrations were clean on an empty database.** 124 of them, no manual
+  ordering, no data migration that assumed existing rows.
+
+#### Consequence for S-0.6 — A is a poor development target
+
+`GET /api/v3/checks/` serves 50 checks in **3 queries**: one for the project,
+one for the checks, one prefetch for channels. It is already correctly
+optimized, and a spot check found no N+1 to plant a story against.
+
+That makes `healthchecks` a *bad* fit for the S-0.6 development target, which
+needs "at least one known performance defect documented with its expected
+measurement signature." It makes it a good **holdout** — a repository where the
+correct answer is a null result. Given that "never manufacture a finding" is a
+project invariant, a holdout that *should* produce nothing is worth more than
+another repo with a planted defect. Recorded here; the decision belongs to S-0.6.
 
 ---
 
