@@ -23,10 +23,12 @@ from coldfix.bench.diffing import (
     DifferenceKind,
     DiffError,
     JsonValue,
+    TooDeepError,
     UnsupportedValueError,
     diff,
 )
 from coldfix.bench.execute import (
+    DEFAULT_MAX_OUTPUT_CHARS,
     ExecutionError,
     ExecutionResult,
     ExecutionStartError,
@@ -53,6 +55,7 @@ from coldfix.bench.timing import (
 
 __all__ = [
     "ABSENT",
+    "DEFAULT_MAX_OUTPUT_CHARS",
     "Comparison",
     "Count",
     "DiffError",
