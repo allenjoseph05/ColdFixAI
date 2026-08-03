@@ -12,10 +12,22 @@ from coldfix.bench.execute import (
     ExecutionTimeoutError,
     execute,
 )
+from coldfix.bench.timing import (
+    ProcessState,
+    Sample,
+    TimingError,
+    TimingRun,
+    time,
+)
 
 __all__ = [
     "ExecutionError",
     "ExecutionResult",
     "ExecutionTimeoutError",
+    "ProcessState",
+    "Sample",
+    "TimingError",
+    "TimingRun",
     "execute",
+    "time",
 ]

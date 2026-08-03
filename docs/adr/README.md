@@ -32,6 +32,12 @@ reserved:
 | 010 | Environments are anchored to the repository's own date | S-0.3 |
 | 011 | Development target, holdout, and reserve | S-0.6 |
 
+Decisions found while building the lab bench:
+
+| ADR | Decision | Came from |
+|---|---|---|
+| 012 | `time()` records samples and changes nothing to get them | S-1.2 |
+
 ## Format
 
 ```markdown
