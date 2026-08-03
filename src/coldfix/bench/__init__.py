@@ -35,6 +35,11 @@ from coldfix.bench.execute import (
     ExecutionTimeoutError,
     execute,
 )
+from coldfix.bench.interleaving import (
+    ComparisonError,
+    InterleavedComparison,
+    compare,
+)
 from coldfix.bench.stats import (
     Fit,
     Growth,
@@ -57,6 +62,7 @@ __all__ = [
     "ABSENT",
     "DEFAULT_MAX_OUTPUT_CHARS",
     "Comparison",
+    "ComparisonError",
     "Count",
     "DiffError",
     "Difference",
@@ -68,6 +74,7 @@ __all__ = [
     "Fit",
     "Growth",
     "HookError",
+    "InterleavedComparison",
     "JsonValue",
     "ProcessState",
     "RankTest",
@@ -80,6 +87,7 @@ __all__ = [
     "UnknownHookError",
     "UnsupportedValueError",
     "calls_to",
+    "compare",
     "count",
     "diff",
     "execute",
