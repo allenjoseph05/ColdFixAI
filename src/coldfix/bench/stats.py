@@ -89,16 +89,34 @@ class Fit:
     its own r²: a metric can be perfectly quadratic — `power_r_squared` of 1.0 —
     while the straight line through it is poor, and that disagreement is
     precisely the signal that something grows faster than it should.
+
+    **`exponent`, `power_r_squared` and `growth` are `None` together**, when a
+    power law could not be fitted at all. That happens when any scale or metric
+    is not positive, because the fit runs through logarithms and `log(0)` is
+    undefined. The linear fit is unaffected and is still reported: "zero queries
+    at the smallest scale, then five, then fifty" is an ordinary shape for a
+    count metric — a cache that covers the small case, a queryset that never
+    fires — and it has a perfectly good slope and a perfectly good r². What it
+    does not have is an exponent.
+
+    `growth` is not inferred from the linear fit in that case. The thresholds
+    are defined on the exponent, and classifying by a different rule under the
+    same name would make two findings that say `LINEAR` mean different things.
     """
 
     slope: float
     intercept: float
     linear_r_squared: float
-    exponent: float
-    power_r_squared: float
-    growth: Growth
+    exponent: float | None
+    power_r_squared: float | None
+    growth: Growth | None
     constant_below: float
     superlinear_above: float
+
+    @property
+    def power_law_fitted(self) -> bool:
+        """Whether the log-log fit was possible. False leaves `growth` unset."""
+        return self.exponent is not None
 
 
 @dataclass(frozen=True)
@@ -176,10 +194,16 @@ def fit_growth(
     fit degenerates — zero variance in y, so r² is 0/0. It returns `CONSTANT`
     with an r² of 1.0, because a constant is exactly what a constant explains.
 
+    **A non-positive scale or metric disables the power fit rather than failing
+    the call.** Logarithms need positive values; least squares does not. The
+    returned `Fit` carries the line and leaves `exponent`, `power_r_squared` and
+    `growth` as `None`. Refusing outright — which this used to do — threw away a
+    computable linear fit over a measurement that is entirely ordinary for a
+    count.
+
     Raises:
-        StatsError: fewer than three points, fewer than two distinct scales, a
-            non-finite value, or a non-positive value where the log-log fit
-            needs one.
+        StatsError: fewer than three points, fewer than two distinct scales, or
+            a non-finite value.
     """
     if len(scales) != len(metrics):
         message = f"got {len(scales)} scales and {len(metrics)} metrics"
@@ -210,20 +234,23 @@ def fit_growth(
     line = statistics.linear_regression(scales, metrics)
     linear_r_squared = statistics.correlation(scales, metrics) ** 2
 
-    _require_positive(scales, "scale")
-    _require_positive(metrics, "metric")
-    log_scales = [math.log(scale) for scale in scales]
-    log_metrics = [math.log(metric) for metric in metrics]
-    power = statistics.linear_regression(log_scales, log_metrics)
-    power_r_squared = statistics.correlation(log_scales, log_metrics) ** 2
+    if _all_positive(scales) and _all_positive(metrics):
+        log_scales = [math.log(scale) for scale in scales]
+        log_metrics = [math.log(metric) for metric in metrics]
+        power = statistics.linear_regression(log_scales, log_metrics)
+        exponent: float | None = power.slope
+        power_r_squared: float | None = statistics.correlation(log_scales, log_metrics) ** 2
+        growth: Growth | None = _classify(power.slope, constant_below, superlinear_above)
+    else:
+        exponent = power_r_squared = growth = None
 
     return Fit(
         slope=line.slope,
         intercept=line.intercept,
         linear_r_squared=linear_r_squared,
-        exponent=power.slope,
+        exponent=exponent,
         power_r_squared=power_r_squared,
-        growth=_classify(power.slope, constant_below, superlinear_above),
+        growth=growth,
         constant_below=constant_below,
         superlinear_above=superlinear_above,
     )
@@ -331,15 +358,9 @@ def _classify(exponent: float, constant_below: float, superlinear_above: float) 
     return Growth.SUPERLINEAR
 
 
-def _require_positive(values: Sequence[float], name: str) -> None:
-    for index, value in enumerate(values):
-        if value <= 0:
-            message = (
-                f"{name} {value} at position {index} is not positive, so no power law "
-                "can be fitted through it; subtract the baseline or measure at a scale "
-                "where the metric is non-zero"
-            )
-            raise StatsError(message)
+def _all_positive(values: Sequence[float]) -> bool:
+    """Whether every value can be passed to `log`, which the power fit needs."""
+    return all(value > 0 for value in values)
 
 
 def _rank(values: Sequence[float]) -> tuple[list[float], float]:
