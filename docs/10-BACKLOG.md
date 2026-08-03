@@ -106,6 +106,8 @@ AC:
 
 Notes: sequence counters, cached querysets, and connection-level state commonly survive a rollback. Check for those specifically.
 
+Result (2026-08-02, `spikes/S-0.5-reset/FINDINGS.md`): **the first AC is too weak and would have shipped a broken reset.** Plain rollback kept row counts, content hashes and max ids identical across all ten cycles while leaving sequences permanently advanced (`helpdesk_ticket_id_seq` 509→759). Assert sequence values too, not just row counts. Rollback + explicit `setval` is correct at 19ms, against 163ms for a template copy and 2022ms for a dump restore — and needs no exclusive access, so unlike `template` it composes with concurrent experiments. The note is right about sequences and cached querysets; **Postgres session state does not survive a rollback** (`SET` is reverted on abort). The cached-queryset leak is untouched by every database-side strategy, so the reset contract has to cover process state as well.
+
 ### S-0.6 — Target repository selection
 Depends: S-0.3
 Why: development needs a fixed subject with known problems.
