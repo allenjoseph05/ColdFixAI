@@ -16,6 +16,16 @@ from coldfix.bench.counting import (
     registered_hooks,
     unregister_hook,
 )
+from coldfix.bench.diffing import (
+    ABSENT,
+    Comparison,
+    Difference,
+    DifferenceKind,
+    DiffError,
+    JsonValue,
+    UnsupportedValueError,
+    diff,
+)
 from coldfix.bench.execute import (
     ExecutionError,
     ExecutionResult,
@@ -31,18 +41,26 @@ from coldfix.bench.timing import (
 )
 
 __all__ = [
+    "ABSENT",
+    "Comparison",
     "Count",
+    "DiffError",
+    "Difference",
+    "DifferenceKind",
     "ExecutionError",
     "ExecutionResult",
     "ExecutionTimeoutError",
     "HookError",
+    "JsonValue",
     "ProcessState",
     "Sample",
     "TimingError",
     "TimingRun",
     "UnknownHookError",
+    "UnsupportedValueError",
     "calls_to",
     "count",
+    "diff",
     "execute",
     "register_hook",
     "registered_hooks",
