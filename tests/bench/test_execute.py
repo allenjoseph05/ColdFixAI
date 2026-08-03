@@ -20,7 +20,12 @@ from pathlib import Path
 
 import pytest
 
-from coldfix.bench.execute import ExecutionResult, ExecutionTimeoutError, execute
+from coldfix.bench.execute import (
+    ExecutionResult,
+    ExecutionStartError,
+    ExecutionTimeoutError,
+    execute,
+)
 
 PY = sys.executable
 
@@ -94,6 +99,51 @@ def test_env_replaces_rather_than_extends() -> None:
         assert result.stdout.strip() == "ABSENT"
     finally:
         del os.environ["COLDFIX_LEAK_PROBE"]
+
+
+# ------------------------------------------------------- never started
+
+
+def test_a_missing_binary_is_a_typed_error(tmp_path: Path) -> None:
+    """The common failure when driving an unfamiliar repository.
+
+    The wrong interpreter, a virtualenv nobody created, a path that exists only
+    on the machine the workload was written on. The operating system reports it
+    as `FileNotFoundError`, `NotADirectoryError` or a bare `OSError` depending
+    on which argument was wrong and on which platform, so a caller cannot
+    reasonably catch all three.
+    """
+    with pytest.raises(ExecutionStartError) as caught:
+        execute(["definitely-not-a-real-binary"], timeout=5)
+
+    assert isinstance(caught.value.cause, OSError)
+    assert "definitely-not-a-real-binary" in str(caught.value)
+
+
+def test_a_working_directory_that_does_not_exist_is_a_typed_error(tmp_path: Path) -> None:
+    missing = tmp_path / "nowhere"
+
+    with pytest.raises(ExecutionStartError) as caught:
+        execute([PY, "-c", "pass"], timeout=5, cwd=missing)
+
+    assert caught.value.cwd == missing
+
+
+def test_an_empty_command_is_rejected() -> None:
+    with pytest.raises(ValueError, match="command is empty"):
+        execute([], timeout=5)
+
+
+def test_a_non_positive_timeout_is_rejected() -> None:
+    """Otherwise the process starts, is killed at once, and reports a timeout.
+
+    A command that never got a chance to run would be indistinguishable from
+    one that hung, and every measurement taken from it is void either way.
+    """
+    with pytest.raises(ValueError, match="timeout must be positive"):
+        execute([PY, "-c", "pass"], timeout=0)
+    with pytest.raises(ValueError, match="timeout must be positive"):
+        execute([PY, "-c", "pass"], timeout=-1)
 
 
 # -------------------------------------------------------------- deadlock

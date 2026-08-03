@@ -331,6 +331,33 @@ def test_the_p_value_is_conservative_in_the_tail() -> None:
     assert approximate < 0.01, "still decisive, just less so than the truth"
 
 
+def test_a_nan_cannot_produce_a_confident_answer() -> None:
+    """The sharpest failure this module can have, and it is silent by nature.
+
+    Every comparison against NaN is false. So sorting puts the values in an
+    arbitrary order, the tie detector sees no ties, ranks come out meaningless,
+    and the arithmetic downstream runs to completion and returns a well-formed
+    p-value. Measured before the guard existed: eight NaNs against eight ones
+    reported **p = 0.0004** — a decisive, entirely fictional finding.
+
+    Nothing about that output looks wrong. It is the exact shape of a real
+    result, which is why the guard is at the door rather than in the caller.
+    """
+    with pytest.raises(StatsError, match="non-finite"):
+        rank_test([math.nan] * 8, [1.0] * 8)
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+def test_no_entry_point_accepts_a_non_finite_value(bad: float) -> None:
+    """A failed measurement must not be summarized, fitted, or tested."""
+    with pytest.raises(StatsError, match="non-finite"):
+        stats([1.0, bad, 3.0])
+    with pytest.raises(StatsError, match="non-finite"):
+        fit_growth([10, 20, 40], [1.0, bad, 4.0])
+    with pytest.raises(StatsError, match="non-finite"):
+        rank_test([1.0] * 8, [*([2.0] * 7), bad])
+
+
 def test_too_few_observations_is_refused_rather_than_approximated() -> None:
     """The normal approximation is not trustworthy here, and neither is a p-value.
 

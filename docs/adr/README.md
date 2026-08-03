@@ -40,6 +40,7 @@ Decisions found while building the lab bench:
 | 013 | Counters are named hooks, and an unknown name raises | S-1.3 |
 | 014 | `diff()` is strict by default, and every loosening is opt-in | S-1.4 |
 | 015 | The rank test is written out, and the statistics stay standard-library | S-1.5 |
+| 016 | Malformed input must not produce a well-formed answer | E1 audit |
 
 ## Format
 
