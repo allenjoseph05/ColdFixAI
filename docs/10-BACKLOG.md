@@ -200,6 +200,8 @@ AC:
 - Counting overhead is verified to be under 5% of the counted operation's cost
 - One test proves counts match an uninstrumented run's observable behaviour
 
+**DONE (2026-08-03)** — `src/coldfix/bench/counting.py`, 17 tests in `tests/bench/test_counting.py`. All four AC met. **ADR 013**: this story is the mechanism, not the counters — S-3.6 defines those and S-14.1 makes hook points part of the adapter interface, so what ships here is the registry, the install/remove context manager, and stack capture. The decision worth not re-litigating is that `count()` **raises on an unknown hook name rather than returning zero**: zero is a publishable result in this system, so a misspelled instrument would otherwise produce a null finding indistinguishable from a real one. `calls_to()` refuses a `classmethod`/`staticmethod`/`property` rather than wrapping it, because a plain wrapper changes how the attribute binds — a correct count of a different program, which is the ADR 008 failure again. Overhead came in at **0.26µs per event against a 366µs operation (0.07%)**, but only after fixing a `Path.resolve()` — a filesystem call — that ran once per counted event on the capture path: 590µs per event, 132 seconds for the test file, and precisely the defect class this tool exists to find. Both AC-bearing tests were verified to discriminate by sabotage: dropping the `finally` fails only the raising-body removal test, and a wrapper that alters return values fails the uninstrumented-equivalence test.
+
 ### S-1.4 — diff()
 Depends: S-0.1
 AC:
