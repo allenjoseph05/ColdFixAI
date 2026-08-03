@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import tracemalloc
 from pathlib import Path
 
 import pytest
@@ -166,6 +167,109 @@ def test_large_output_on_both_streams_does_not_deadlock() -> None:
     assert len(result.stdout) == payload
     assert len(result.stderr) == payload
     assert result.exit_code == 0
+
+
+# ---------------------------------------------------------- bounded output
+
+
+def test_output_under_the_limit_is_returned_whole() -> None:
+    """The bound must not touch anything that fits inside it."""
+    result = run_python("import sys; sys.stdout.write('x' * 5000)", timeout=30)
+
+    assert result.stdout == "x" * 5000
+    assert result.stdout_dropped_chars == 0
+    assert not result.truncated
+
+
+def test_output_over_the_limit_keeps_both_ends_and_accounts_for_the_middle() -> None:
+    """Twenty-six characters into a ten-character budget: five each end.
+
+    Exact rather than approximate, because an off-by-one in the split is the
+    kind of thing that only shows up as a corrupted diagnostic months later.
+    """
+    result = run_python(
+        "import sys; sys.stdout.write('abcdefghijklmnopqrstuvwxyz')",
+        timeout=30,
+        max_output_chars=10,
+    )
+
+    assert result.stdout.startswith("abcde")
+    assert result.stdout.endswith("vwxyz")
+    assert result.stdout_dropped_chars == 16
+    assert result.truncated
+
+
+def test_elision_is_recorded_and_never_silent() -> None:
+    """A truncated stream that looks complete is a manufactured measurement.
+
+    The count on the result is the load-bearing part — the marker in the text
+    is for whoever reads it, but a caller comparing two outputs has to be able
+    to know the comparison is against a partial one.
+    """
+    result = run_python("import sys; sys.stdout.write('y' * 100)", timeout=30, max_output_chars=20)
+
+    assert result.stdout_dropped_chars == 80
+    assert "coldfix elided 80 characters" in result.stdout
+
+
+def test_memory_does_not_grow_with_the_volume_of_output() -> None:
+    """The property the bound exists for, asserted against allocation.
+
+    Eight million characters through a hundred-thousand-character budget. An
+    unbounded capture peaks at the emitted volume, which is how a workload with
+    a debug loop left on kills the harness *before* its own timeout can fire.
+    """
+    emitted = 8_000_000
+    budget = 100_000
+
+    tracemalloc.start()
+    try:
+        result = run_python(
+            f"import sys\nfor _ in range({emitted // 100}): sys.stdout.write('z' * 100)",
+            timeout=120,
+            max_output_chars=budget,
+        )
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert result.stdout_dropped_chars > 7_000_000, "the command did not emit enough to bound"
+    # Generous against scheduling and buffer churn, and still an order of
+    # magnitude below the 8 MB an unbounded capture would have held.
+    assert peak < 4 * 1024 * 1024, f"peak was {peak:,} bytes for a {budget:,} character budget"
+
+
+def test_a_character_split_across_a_read_boundary_is_not_corrupted() -> None:
+    """Chunks are read at 64 KiB, and a UTF-8 character can straddle the edge.
+
+    Decoding each chunk independently mangles one character per chunk — a
+    corruption that looks like a real difference to `diff()` downstream.
+    """
+    filler = 65535  # leaves the two-byte character spanning the chunk boundary
+    result = run_python(
+        f"import sys; sys.stdout.buffer.write(b'a' * {filler} + bytes.fromhex('c3a9') * 5000)",
+        timeout=60,
+    )
+
+    assert result.stdout == "a" * filler + "é" * 5000
+
+
+def test_a_non_positive_output_limit_is_rejected() -> None:
+    with pytest.raises(ValueError, match="max_output_chars"):
+        run_python("pass", timeout=30, max_output_chars=0)
+
+
+def test_stdin_is_closed_rather_than_inherited() -> None:
+    """A command that reads stdin gets EOF instead of blocking on a terminal.
+
+    Weakly discriminating under pytest, which already replaces the parent's
+    stdin — the value is as a regression guard against someone dropping the
+    `DEVNULL` and reintroducing a hang that only reproduces on a real terminal.
+    """
+    result = run_python("import sys; print(repr(sys.stdin.read()))", timeout=10)
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "''"
 
 
 # --------------------------------------------------------------- timeout
