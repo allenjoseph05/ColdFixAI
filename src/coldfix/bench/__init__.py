@@ -6,6 +6,16 @@ the measurements these take; agents never report a measurement themselves.
 Epic 1.
 """
 
+from coldfix.bench.counting import (
+    Count,
+    HookError,
+    UnknownHookError,
+    calls_to,
+    count,
+    register_hook,
+    registered_hooks,
+    unregister_hook,
+)
 from coldfix.bench.execute import (
     ExecutionError,
     ExecutionResult,
@@ -21,13 +31,21 @@ from coldfix.bench.timing import (
 )
 
 __all__ = [
+    "Count",
     "ExecutionError",
     "ExecutionResult",
     "ExecutionTimeoutError",
+    "HookError",
     "ProcessState",
     "Sample",
     "TimingError",
     "TimingRun",
+    "UnknownHookError",
+    "calls_to",
+    "count",
     "execute",
+    "register_hook",
+    "registered_hooks",
     "time",
+    "unregister_hook",
 ]
