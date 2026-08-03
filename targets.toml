@@ -1,0 +1,59 @@
+# Development target, holdout, and reserve — the subjects this tool is built
+# against and evaluated on. Decided in S-0.6; rationale in
+# docs/adr/011-development-target-and-holdout.md.
+#
+# Machine-readable because "pinned by commit" should be checkable rather than
+# promised. tests/test_holdout_discipline.py reads this file and fails if the
+# holdout is referenced anywhere it should not be.
+
+[development]
+name = "django-helpdesk"
+url = "https://github.com/django-helpdesk/django-helpdesk"
+commit = "3a2290172ced5bcae9c211ad6ec23cfbc48dcc4e"
+committed = "2026-07-31"
+# Where the runnable project lives — the repo root's manage.py names it.
+settings_module = "demodesk.config.settings"
+grounded_by = ["S-0.3", "S-0.4", "S-0.5"]
+known_defect = "N+1 on /api/tickets/, see [development.defect]"
+
+[development.defect]
+endpoint = "/api/tickets/?page_size=100"
+kind = "nested N+1"
+# Queries scale with rows returned instead of staying constant. Measured at
+# 100 tickets / 586 followups on the scaled dataset; see the ADR for the
+# formula and the second defect underneath this one.
+queries_at_100_tickets = 1193
+queries_after_ablating_followup_set = 507
+response_bytes = 429071
+ablation_ratio = 0.29
+cliffs_delta = -1.0
+
+[holdout]
+name = "healthchecks"
+url = "https://github.com/healthchecks/healthchecks"
+commit = "5086d282ea33831e8c86eb9d0802dc2602c66ef7"
+committed = "2026-07-31"
+settings_module = "hc.settings"
+# NOT a defective repository. Its list endpoint is already correctly
+# prefetched at 3 queries and no defect was found. The correct answer on this
+# repo is "nothing found", which is the harder thing for the system to get
+# right and the reason it is the holdout rather than a second target.
+expected_result = "null"
+queries_at_50_checks = 3
+# Grounded once, during S-0.3, before it was designated the holdout. Not used
+# since and not to be used again until evaluation.
+grounded_by = ["S-0.3"]
+
+[reserve]
+name = "netbox"
+url = "https://github.com/netbox-community/netbox"
+commit = "4877d1167f4e20c0507bc902ee4c708e20f92e36"
+committed = "2026-07-31"
+settings_module = "netbox.settings"
+# Neither target nor holdout. A mature system with a high fixed query floor
+# and sublinear growth — nothing to "fix", which makes it the right subject
+# for S-17.3's realistic-scale work and for exercising the guard-counter
+# invariant. Also ships CLAUDE.md and AGENTS.md at its root, so any agent
+# result from it is optimistic relative to a typical repository.
+queries_floor_interfaces = 35
+grounded_by = ["S-0.3"]
