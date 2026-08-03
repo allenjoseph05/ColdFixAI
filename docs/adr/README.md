@@ -37,6 +37,7 @@ Decisions found while building the lab bench:
 | ADR | Decision | Came from |
 |---|---|---|
 | 012 | `time()` records samples and changes nothing to get them | S-1.2 |
+| 013 | Counters are named hooks, and an unknown name raises | S-1.3 |
 
 ## Format
 
