@@ -168,6 +168,25 @@ def calls_to(owner: object, attribute: str) -> Hook:
     *stored* silently changes which objects are affected, and restoring it
     afterwards would write an attribute onto a class that never had one.
 
+    **It counts calls that go through the attribute, and only those.** A
+    consumer holding its own reference calls the original and is never seen::
+
+        import target;        target.work()   # counted
+        from target import work;  work()      # NOT counted
+
+    The undercount is silent, and an undercount is a measurement that looks
+    like a finding. This is a property of replacing an attribute, not a defect
+    that can be fixed here — a name bound at import time cannot be reached
+    afterwards. It matters much less than it first appears, because a method
+    reached through an instance (`cursor.execute(...)`) is looked up on the
+    class at every call, and that is the shape of nearly every counter worth
+    having. Framework hooks — Django's `execute_wrapper`, S-14.2 — do not
+    depend on attribute lookup at all and are preferred where they exist.
+
+    **An `async def` is counted when the coroutine is created**, not when it is
+    awaited. For a call count those are the same number; for anything that
+    needs completions, the hook belongs around the await.
+
     Raises:
         HookError: the attribute is missing from `owner`, is not callable, or
             is a descriptor this cannot wrap faithfully.

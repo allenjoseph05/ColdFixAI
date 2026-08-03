@@ -29,6 +29,7 @@ from coldfix.bench.diffing import (
 from coldfix.bench.execute import (
     ExecutionError,
     ExecutionResult,
+    ExecutionStartError,
     ExecutionTimeoutError,
     execute,
 )
@@ -59,6 +60,7 @@ __all__ = [
     "DifferenceKind",
     "ExecutionError",
     "ExecutionResult",
+    "ExecutionStartError",
     "ExecutionTimeoutError",
     "Fit",
     "Growth",
@@ -71,6 +73,7 @@ __all__ = [
     "Summary",
     "TimingError",
     "TimingRun",
+    "TooDeepError",
     "UnknownHookError",
     "UnsupportedValueError",
     "calls_to",

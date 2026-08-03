@@ -127,11 +127,13 @@ def stats(samples: Sequence[float]) -> Summary:
     complete population of them.
 
     Raises:
-        StatsError: fewer than two samples, which have no dispersion to report.
+        StatsError: fewer than two samples, which have no dispersion to
+            report, or a sample that is NaN or infinite.
     """
     if len(samples) < MINIMUM_SAMPLES:
         message = f"need at least {MINIMUM_SAMPLES} samples to summarize, got {len(samples)}"
         raise StatsError(message)
+    _require_finite(samples, "sample")
 
     mean = statistics.fmean(samples)
     stdev = statistics.stdev(samples)
@@ -175,8 +177,9 @@ def fit_growth(
     with an r² of 1.0, because a constant is exactly what a constant explains.
 
     Raises:
-        StatsError: fewer than three points, fewer than two distinct scales, or
-            a non-positive value where the log-log fit needs one.
+        StatsError: fewer than three points, fewer than two distinct scales, a
+            non-finite value, or a non-positive value where the log-log fit
+            needs one.
     """
     if len(scales) != len(metrics):
         message = f"got {len(scales)} scales and {len(metrics)} metrics"
@@ -189,6 +192,8 @@ def fit_growth(
     if len(set(scales)) < MINIMUM_DISTINCT_SCALES:
         message = "every measurement was taken at the same scale; there is nothing to fit"
         raise StatsError(message)
+    _require_finite(scales, "scale")
+    _require_finite(metrics, "metric")
 
     if len(set(metrics)) == 1:
         return Fit(
@@ -255,13 +260,15 @@ def rank_test(a: Sequence[float], b: Sequence[float]) -> RankTest:
     Read `effect` for how much, and `p_value` only for whether.
 
     Raises:
-        StatsError: either sample is too small.
+        StatsError: either sample is too small, or holds a non-finite value.
     """
     if len(a) < MINIMUM_GROUP_SIZE or len(b) < MINIMUM_GROUP_SIZE:
         message = (
             f"need at least {MINIMUM_GROUP_SIZE} observations per group, got {len(a)} and {len(b)}"
         )
         raise StatsError(message)
+    _require_finite(a, "observation in the first sample")
+    _require_finite(b, "observation in the second sample")
 
     n_a, n_b = len(a), len(b)
     ranks, tie_correction = _rank([*a, *b])
@@ -293,6 +300,27 @@ def rank_test(a: Sequence[float], b: Sequence[float]) -> RankTest:
         n_a=n_a,
         n_b=n_b,
     )
+
+
+def _require_finite(values: Sequence[float], name: str) -> None:
+    """Refuse NaN and infinity before any of them reach a comparison.
+
+    NaN is the dangerous one, and it is dangerous quietly. Every comparison
+    against it is false, so sorting produces an arbitrary order, no ties are
+    detected, ranks come out meaningless — and the rank test then returns a
+    confident, well-formed, entirely fictional p-value. Measured before this
+    check existed: eight NaNs against eight ones reported p = 0.0004.
+
+    That is the failure this project forbids by name. A missing measurement is
+    recoverable; a manufactured one is not.
+    """
+    for index, value in enumerate(values):
+        if not math.isfinite(value):
+            message = (
+                f"{name} at position {index} is {value}, which cannot be ranked or "
+                "summarized; a non-finite measurement is a failed measurement"
+            )
+            raise StatsError(message)
 
 
 def _classify(exponent: float, constant_below: float, superlinear_above: float) -> Growth:

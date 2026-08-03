@@ -197,6 +197,40 @@ def test_an_attribute_the_owner_does_not_define_is_refused() -> None:
             pass
 
 
+def test_a_consumer_holding_its_own_reference_is_not_counted() -> None:
+    """Pinned because it is a real limit, not because it is wanted.
+
+    `calls_to` replaces an attribute. A module that did `from x import work`
+    bound the original function at import time and never looks the attribute up
+    again, so its calls are invisible — and the resulting undercount is silent,
+    which is the dangerous kind.
+
+    It cannot be fixed at this layer: a name already bound cannot be reached.
+    What limits the damage is that nearly every counter worth having wraps a
+    *method*, and `cursor.execute(...)` looks the attribute up on the class at
+    every call. Framework hooks (S-14.2) avoid attribute lookup entirely and
+    are preferred wherever they exist.
+    """
+    direct = 0
+
+    def bound_elsewhere() -> None:
+        # Standing in for `from module import work` — a reference captured
+        # before the patch and called without going through the attribute.
+        nonlocal direct
+        direct += 1
+        vars(THIS_MODULE)["work"]
+
+    original = vars(THIS_MODULE)["work"]
+    register_hook(OTHER_HOOK, calls_to(THIS_MODULE, "work"))
+
+    with count(OTHER_HOOK) as tally:
+        work(10)  # through the attribute
+        original(10)  # a reference held from before
+        bound_elsewhere()
+
+    assert tally.events == 1, "only the call that went through the attribute is seen"
+
+
 # ------------------------------------------- the instrument is not observable
 
 
