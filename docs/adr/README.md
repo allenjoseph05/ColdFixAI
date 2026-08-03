@@ -17,6 +17,15 @@ The point is to stop decisions being re-litigated silently.
 | 006 | How the tool tests itself |
 | 007 | The refusal list and its rationale |
 
+Decisions found by the E0 spikes, numbered from 008 so the seven above stay
+reserved:
+
+| ADR | Decision | Came from |
+|---|---|---|
+| 008 | Query counting uses `force_debug_cursor`, never `settings.DEBUG` | S-0.3 |
+| 009 | Grounding is a staged pipeline, and every stage has a machine-checkable predicate | S-0.3 |
+| 010 | Environments are anchored to the repository's own date | S-0.3 |
+
 ## Format
 
 ```markdown

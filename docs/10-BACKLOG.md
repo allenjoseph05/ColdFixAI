@@ -708,12 +708,39 @@ AC:
 - Reset method verified by S-2.7 before emission
 
 ### S-7.10 — Caps and honest failure
-Depends: S-5.4
+Depends: S-5.4, S-7.11
 AC:
 - 60-step cap enforced
 - Progress check escalates after 15 steps with no new information
-- On failure, reports what was attempted and why it stopped
+- Per-stage attempt budget enforced on top of the global cap (S-7.11 supplies the stages)
+- On failure, reports **which stage never completed** and what was attempted there
 - **Never reports success when no workload does real work**
+
+Notes: "reports what was attempted" is a transcript; "stage 4 never completed, here is its predicate and the last error" is something a user can act on and S-17.2 can publish. The per-stage budget is the tighter instrument — S-0.3's grounding runs took 5–19 minutes, and detecting at stage 2 that a repo will not ground saves the other seven stages.
+
+### S-7.11 — Stage predicates — **SAFETY**
+Depends: S-7.1
+Why: without a definition of done per stage, an agent stuck at stage 4 and an agent progressing normally are indistinguishable until the global cap fires.
+AC:
+- Grounding is modelled as the nine stages in ADR 009, each with a predicate
+- **Every predicate is computed by the harness; the agent cannot supply or override one** — the S-7.8 rule, extended to all stages
+- Predicates are framework-scoped and resolved through the S-7.1 fingerprint
+- A stage whose predicate is already true is complete without action (repos shipping a seeded database skip seeding)
+- A test proves an agent claiming a stage complete cannot advance while that stage's predicate is false
+
+Notes: S-0.3 produced sixteen distinct obstacles across three repositories, no two identical, and **every one fell into one of nine stages with no obstacle needing a tenth**. Specifics never repeated; the taxonomy stayed closed. That asymmetry is what makes this tractable — an unfamiliar obstacle inside a known stage is a bounded search against a stated success condition, which is the shape an agent handles. This is the strongest lever found in E0 for the unknown-unknowns problem, and it is what lets S-13.1 key playbook entries to a stage rather than to a whole run.
+
+### S-7.12 — Date-anchored environments
+Depends: S-7.2
+Why: a repository last touched in 2019 does not break because it is complex; it breaks because we hand it a 2026 toolchain.
+AC:
+- An anchor date is derived from the repository's most recent commit
+- Dependency resolution is constrained to packages published on or before the anchor (`uv --exclude-newer`)
+- The interpreter version is read from the repo's own declarations — `python_requires`, classifiers, `tox.ini`, CI matrices — and fetched to match
+- The anchor, the resolved dependency set, and any override are all recorded in the workload artifact
+- A test grounds a repository whose unpinned dependencies resolve incorrectly at HEAD and correctly at its anchor
+
+Notes: see ADR 010. S-0.3's sample was drawn entirely from repositories committed to within three days of selection, which is why the *Python version mismatch* and *dependency resolution failure* rows of its recurrence matrix came back empty — the spike could not have detected this class. **Anchoring covers the Python layer only**; an old `psycopg2` needing a `libpq` current Debian no longer ships is an OS-level problem with no `--exclude-newer` equivalent, and that residue belongs in S-17.2 rather than being described as solved. The anchor must be overridable, since a contemporary dependency version may carry a since-fixed incompatibility or a known vulnerability.
 
 ---
 
@@ -1072,6 +1099,9 @@ AC:
 - Explorer steps to first runnable workload recorded per project
 - Plotted against number of projects with that fingerprint
 - Should decline; if it does not, memory is not working
+- **A controlled ablation of the playbook itself**: ground the same unseen repository with the playbook retrieved and with it withheld, and report the difference in stage completion and steps-to-ground
+
+Notes: the curve is longitudinal and confounded — it declines if the playbook works, and also if later projects happen to be easier. The ablation is the causal measurement, and it is the project's own core primitive applied to the project. It also serves as a regression test: if a playbook edit stops helping, the delta shrinks and that is visible. S-0.4 supplies the method — interleave, discard a warm-up, and require a guard counter (here, stage completion) to move alongside the timing.
 
 ---
 
