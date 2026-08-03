@@ -42,6 +42,7 @@ Decisions found while building the lab bench:
 | 015 | The rank test is written out, and the statistics stay standard-library | S-1.5 |
 | 016 | Malformed input must not produce a well-formed answer | E1 audit |
 | 017 | An instrument must survive the input it cannot summarize | E1 audit |
+| 018 | A comparison owns the order its samples were taken in | S-1.6 |
 
 ## Format
 
