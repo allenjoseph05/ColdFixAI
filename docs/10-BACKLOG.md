@@ -149,6 +149,20 @@ The dependency line above (`Depends: S-0.2`) is also partly circular: S-0.2's AD
 
 **Recommendation:** split into `S-0.7a` (the fixture repository — done) and `S-0.7b` (lab-bench unit tests, golden files, mock LLM client), with S-0.7b resequenced to depend on S-0.2, E1 and S-4.1. Nothing is lost by waiting; the fixture repo is the piece E1 needs on day one, and it is available now.
 
+### S-0.8 — SPIKE: can a model select the right instrument?
+Depends: S-0.3, S-0.4, S-0.5
+Why: **this is the project's central claim, and nothing in E0 tests it.** `00-BRIEF.md` §1 says the agent exists because *"choosing which one applies to a given program, sequencing them, and interpreting the results"* is the bottleneck. That claim is tested in exactly one place — S-8.7, *the thesis behaviour* — which sits behind E1 through E7.
+AC:
+- Present recorded measurement results from the E0 spikes as scenarios; the model chooses the next experiment
+- Responses are constrained to a schema (conclusion, next instrument, whether a finding is warranted) so scoring is programmatic, not a reading of prose
+- Every scenario carries a trap: an answer that is plausible and wrong
+- Score separately: instrument selection, trap avoidance, and **refusal to manufacture a finding**
+- Run each scenario N≥5 times to measure consistency, not a single lucky answer
+
+Notes: no primitives are needed — the measurements already exist and are recorded, so this tests the *selection* step alone, which is precisely the named bottleneck. The decoy scenario is the sharp one: 37 queries, constant with dataset size, where a detector keying on "many queries" reports an N+1 that is not there. The noise scenario is sharper still — a 12.76ms shift with guard counters unchanged, where the correct answer is *no finding*, and a model that produces one has violated the invariant that null results are valid output.
+
+Result (2026-08-02): scenarios and scoring harness built in `spikes/S-0.8-instrument-selection/`; **not yet executed** — the environment has no API credentials. Run it with a key present and fill in `FINDINGS.md`.
+
 ---
 
 # EPIC 1 — The lab bench
