@@ -212,6 +212,8 @@ AC:
 
 Notes: order-insensitivity must be opt-in per comparison, decided by whether the original query had an ORDER BY. Defaulting to order-insensitive hides real regressions.
 
+**DONE (2026-08-03)** — `src/coldfix/bench/diffing.py`, 28 tests in `tests/bench/test_diffing.py`. All four AC met. **ADR 014**: this is the one instrument that produces a verdict a patch is gated on rather than a fact someone reasons about, which inverts which failure matters — a false "differs" is visible and wastes a cycle, a false "identical" approves a patch and looks exactly like a correct approval. So everything is strict by default and each loosening is a named argument on a single call. The note's case generalised: `ignore_order` compares **multisets, not sets** (`[1,1,2]` vs `[1,2,2]` differ — the shape of a patch that duplicated one row and dropped another), and the other traps are all places where the obvious Python answer is unsafe — `True == 1` in Python but a boolean is not a number in JSON, `null` is not an absent key, a `str` satisfies `Sequence` but is not an array of characters, `bytes` is refused rather than read as integers, and two NaNs must agree or a payload containing one differs from itself. Paths are structural tuples rendered separately, so a key containing a dot cannot read as a separator. Both AC-bearing tests were verified by sabotage: defaulting `ignore_order` to true, and replacing the multiset with a set, each fail exactly the tests written for them. **Open debt**: unordered comparison *with* a tolerance is greedy and quadratic, because approximate equality is not transitive — conservative, but it wants a real bipartite matching if a workload ever needs it.
+
 ### S-1.5 — stats()
 Depends: S-0.1
 AC:
