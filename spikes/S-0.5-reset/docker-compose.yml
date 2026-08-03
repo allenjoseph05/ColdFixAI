@@ -1,0 +1,52 @@
+# Environment for the S-0.5 state-reset spike.
+#
+# Self-contained, like S-0.4 and for the same reason: a finished spike's
+# environment is part of its record, and a later spike editing it to suit itself
+# would invalidate the conditions the earlier numbers were taken under.
+#
+# This one needs something the others did not — the ability to drop and rebuild
+# the subject database from a snapshot while the application is running. That
+# means a second database to connect to while the first is being replaced, so
+# `postgres` is reachable as a maintenance target throughout.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: coldfix-reset-db
+    environment:
+      POSTGRES_USER: coldfix_test
+      POSTGRES_PASSWORD: coldfix_test
+      # Maintenance database. The subject database is created by the harness so
+      # it can be dropped and recreated without severing the connection issuing
+      # the DROP.
+      POSTGRES_DB: postgres
+    ports:
+      # Not 5432, not S-0.3's 55432, not S-0.4's 55433. Three spikes' databases
+      # can be up at once and a reset run pointed at the wrong one would still
+      # appear to work, which is the worst way for this to fail.
+      - "55434:5432"
+    volumes:
+      - reset-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coldfix_test -d postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  workbench:
+    image: python:3.12-slim
+    container_name: coldfix-reset-workbench
+    working_dir: /repo
+    volumes:
+      - ./repo:/repo
+      - ./seeds:/seeds:ro
+      - ./harness:/harness:ro
+      - ./results:/results
+    command: ["sleep", "infinity"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  reset-pgdata:
