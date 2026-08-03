@@ -177,10 +177,55 @@ def test_measuring_everything_at_one_scale_is_refused() -> None:
         fit_growth([10, 10, 10], [1.0, 2.0, 3.0])
 
 
-def test_a_non_positive_value_is_refused_with_a_way_forward() -> None:
-    """No power law passes through zero, and silently dropping the point lies."""
-    with pytest.raises(StatsError, match="not positive"):
-        fit_growth([10, 20, 40], [0.0, 2.0, 4.0])
+def test_a_zero_metric_keeps_the_linear_fit_and_drops_only_the_exponent() -> None:
+    """Zero at the smallest scale is an ordinary count, not a broken measurement.
+
+    A cache that covers the small case, or a queryset that never fires, gives
+    exactly this shape. No power law passes through zero — but least squares
+    does, and refusing the whole call threw away a computable fit.
+    """
+    fit = fit_growth([10, 20, 40], [0.0, 2.0, 6.0])
+
+    assert fit.slope == pytest.approx(0.2)
+    assert fit.intercept == pytest.approx(-2.0)
+    assert fit.linear_r_squared == pytest.approx(1.0)
+    assert not fit.power_law_fitted
+    assert fit.exponent is None
+    assert fit.power_r_squared is None
+    assert fit.growth is None
+
+
+def test_growth_is_never_guessed_from_the_line_when_the_exponent_is_missing() -> None:
+    """The thresholds are defined on the exponent, so nothing else may set it.
+
+    A perfectly straight line through a zero would classify as LINEAR under any
+    reasonable second rule, and that is exactly why it must not: two findings
+    reading `LINEAR` have to have been decided the same way.
+    """
+    straight = fit_growth([1, 2, 3], [0.0, 1.0, 2.0])
+
+    assert straight.linear_r_squared == pytest.approx(1.0)
+    assert straight.growth is None
+
+
+def test_a_negative_metric_also_only_disables_the_power_fit() -> None:
+    """A delta against a baseline is signed, and is still a real measurement."""
+    fit = fit_growth([10, 20, 40], [-1.0, 2.0, 8.0])
+
+    assert fit.slope > 0
+    assert fit.growth is None
+
+
+def test_a_flat_metric_at_zero_is_still_constant() -> None:
+    """The flat path predates the logarithm and must not have been caught by it.
+
+    Zero queries at every scale is a publishable exclusion, and it is the one
+    all-zero input that still has an answer.
+    """
+    fit = fit_growth([1, 10, 100], [0.0, 0.0, 0.0])
+
+    assert fit.growth is Growth.CONSTANT
+    assert fit.exponent == 0.0
 
 
 # -------------------------------------------------------------- the rank test
