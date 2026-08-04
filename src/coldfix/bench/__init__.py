@@ -6,6 +6,13 @@ the measurements these take; agents never report a measurement themselves.
 Epic 1.
 """
 
+from coldfix.bench.certification import (
+    Certification,
+    CertificationError,
+    NoiseFloorTooHighError,
+    certify,
+    minimum_detectable_effect,
+)
 from coldfix.bench.counting import (
     Count,
     HookError,
@@ -61,6 +68,8 @@ from coldfix.bench.timing import (
 __all__ = [
     "ABSENT",
     "DEFAULT_MAX_OUTPUT_CHARS",
+    "Certification",
+    "CertificationError",
     "Comparison",
     "ComparisonError",
     "Count",
@@ -76,6 +85,7 @@ __all__ = [
     "HookError",
     "InterleavedComparison",
     "JsonValue",
+    "NoiseFloorTooHighError",
     "ProcessState",
     "RankTest",
     "Sample",
@@ -87,11 +97,13 @@ __all__ = [
     "UnknownHookError",
     "UnsupportedValueError",
     "calls_to",
+    "certify",
     "compare",
     "count",
     "diff",
     "execute",
     "fit_growth",
+    "minimum_detectable_effect",
     "rank_test",
     "register_hook",
     "registered_hooks",
