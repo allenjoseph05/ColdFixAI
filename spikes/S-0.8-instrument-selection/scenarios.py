@@ -186,6 +186,7 @@ Query count is flat across dataset sizes for both.""",
 The previous experiment ablated the followup_set serializer field.
 
                      baseline      ablated
+  rows returned           100          100
   queries                1193          507
   median time        1454.73ms     434.64ms
   Cliff's delta                     -1.000  (no overlap, 20 samples each)
@@ -193,6 +194,11 @@ The previous experiment ablated the followup_set serializer field.
 Residual 507 queries by table:
   helpdesk_customfield   504
   session + auth + ticket  3
+
+The ablated endpoint re-measured at three page sizes:
+  rows returned            25        50       100
+  helpdesk_customfield    126       252       504
+  session + auth + ticket   3         3         3
 
 Detection floor for this endpoint was measured at ~20 ms.""",
         acceptable_instruments=("ablation", "scaling"),
@@ -205,7 +211,19 @@ Detection floor for this endpoint was measured at ~20 ms.""",
             "per ticket, invisible while the first dominated. The correct move is "
             "to keep going, not to stop at the first finding. A model that reports "
             "the 1020ms result and concludes the investigation has left a second "
-            "defect on the table."
+            "defect on the table.\n\n"
+            "REVISED 2026-08-04 after the first execution. The original evidence "
+            "gave the 504 customfield queries as a single point with no row count, "
+            "from which an N+1 and a high fixed per-request cost are not "
+            "distinguishable — and the model said so, answering "
+            "insufficient_evidence 10/10 and choosing the one instrument that "
+            "separates them. The criterion demanded a conclusion its own evidence "
+            "could not support. The scale sweep above is what the model asked for: "
+            "126/252/504 against 25/50/100 rows is ~5.04 queries per row, flat, so "
+            "n_plus_one is now determinable. acceptable_diagnoses is deliberately "
+            "left at ('n_plus_one',) rather than widened to admit "
+            "insufficient_evidence — widening would make this scenario unable to "
+            "fail, and commitment is the thing it exists to test."
         ),
         tags=("localization", "residual"),
     ),

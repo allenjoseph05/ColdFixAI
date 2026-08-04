@@ -62,7 +62,9 @@ requests total.
 | `flat_queries_time_grows` | **100%** | **100%** | 100% | 70% | observation 10 |
 | `noise_no_finding` | 0% | **100%** | **100%** | **100%** | scaling 10 |
 
-† Criterion defect, not a model failure. See below.
+† Criterion defect, not a model failure — the scenario was repaired and re-run
+the same day and scored **100% on all four axes**. See below. The row above is
+left as it ran.
 
 **Repeats per scenario:** 10
 **Mean trap avoidance (trap scenarios only):** **100%** (30/30)
@@ -106,9 +108,33 @@ was a conclusion the evidence cannot support, which is the opposite of what this
 project asks of its own findings.
 
 **This reading is post-hoc and was authorized by a human before being written
-here.** The as-run numbers above are unaltered. `scenarios.py` is unchanged —
-the fix is proposed below rather than applied, so that no acceptance criterion
-moves after seeing a result without that move being visible in the history.
+here.** The as-run numbers above are unaltered.
+
+#### Resolved by re-run, same day
+
+The scenario was repaired rather than its criterion loosened. The evidence now
+carries a scale sweep — 126 / 252 / 504 customfield queries against 25 / 50 /
+100 rows, a flat ~5.04 per row — so an N+1 is genuinely determinable from it.
+`acceptable_diagnoses` was **deliberately left at `('n_plus_one',)`**; widening
+it to admit `insufficient_evidence` would have made the scenario unable to fail,
+and commitment is the thing it exists to test. The scorer self-check was re-run
+after the change and still reports 6/6 discriminating.
+
+Re-run alone, 10 repeats, $0.29 — `results/post-ablation-rerun.json`:
+
+| Scenario | Instrument | Diagnosis | Trap avoided | Finding discipline | Instruments chosen |
+|---|---|---|---|---|---|
+| `post_ablation_residual` (repaired) | **100%** | **100%** | **100%** | **100%** | scaling 7, ablation 3 |
+
+**The model was right and the criterion was wrong.** Given evidence that
+determines the answer, it commits to `n_plus_one` 10/10 and warrants the finding
+10/10 — the two axes it scored 0% on before. Nothing about the model changed
+between the two runs; only the sufficiency of what it was shown.
+
+That is worth more than the corrected score. The original 0% would have been
+recorded as a model weakness and carried into E9's design, and the thing that
+caught it was a model refusing to assert something its evidence did not support
+— the exact behaviour this project asks of its own findings.
 
 ### `flat_queries_time_grows` — finding discipline 70%
 
@@ -203,23 +229,36 @@ bad one.
 
 ## Follow-on
 
-**Proposed, not applied — each needs a decision before it lands.**
+### Done, 2026-08-04
 
-1. **Fix `post_ablation_residual` properly, then re-run that scenario alone**
-   (10 requests, ≈ $0.35). Add a row-count column to the evidence so an N+1 is
-   genuinely determinable, and leave `acceptable_diagnoses` at `('n_plus_one',)`
-   so the scenario still tests commitment. Widening the criterion to admit
-   `insufficient_evidence` instead would make the scenario unable to fail.
-2. **Record token usage per run.** `selection.json` stores `answer` and `score`
-   only. A spike deferred on cost grounds cannot report its own cost from its
-   own output; the $2 figure here comes from the billing console.
-3. **Flush stdout.** Python block-buffers through a pipe, so a 16-minute run
-   emits nothing until it exits and cannot be told apart from a hung one. `-u`
-   or `flush=True`.
-4. **`none_report_no_finding` needs a fixture, not a prompt.** Chosen 0/60. If
+1. ~~**Fix `post_ablation_residual` properly, then re-run that scenario
+   alone.**~~ Done — scale sweep added, criterion left narrow, self-check
+   re-confirmed 6/6, re-run scored 100% on all four axes for $0.29. Written up
+   under *Resolved by re-run* above.
+2. ~~**Record token usage per run.**~~ Done — `ask()` returns usage, every run
+   carries `usage`, and the result file carries a `usage` total and a
+   `cost_usd` estimate. The run now prints its own receipt:
+   `10 requests, 13,270 in + 8,829 out, $0.29 at claude-opus-5 list price`.
+   List price is hardcoded with the date it was correct; the billing console
+   stays authoritative.
+3. ~~**Flush stdout.**~~ Done — `flush=True` on every progress line.
+4. **`--scenario` and `--out` added** while fixing the above. Re-running one
+   repaired scenario costs a sixth of a full pass, and a partial run writes to
+   its own file: model output is not deterministic, so overwriting a completed
+   pass destroys evidence that cannot be regenerated. The trap summary is now
+   guarded — a selection containing no trap scenario says so rather than
+   dividing by zero.
+
+### Still open
+
+5. **`none_report_no_finding` needs a fixture, not a prompt.** Chosen 0/60. If
    the agent is to be able to stop, S-8.1 / S-8.2 cannot rely on the instrument
    merely being available in the list.
-5. Whatever fails here becomes a scenario in `tests/fixtures/` (S-0.7) or a
+6. **Re-check the other five criteria the way this one got checked.** One in six
+   did not survive contact with a result, and it was caught only because the
+   model disagreed with it. A criterion the model happens to agree with is
+   indistinguishable from a correct one at this sample size.
+7. Whatever fails here becomes a scenario in `tests/fixtures/` (S-0.7) or a
    prompt requirement on S-8.1 / S-8.2.
-6. The scenario set should grow the same way the fixture repo does: whenever a
+8. The scenario set should grow the same way the fixture repo does: whenever a
    real investigation produces a shape that a careless reading gets wrong.
