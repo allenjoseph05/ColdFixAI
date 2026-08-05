@@ -179,6 +179,8 @@ AC:
 - Output is captured without deadlocking on large writes
 - Raises a typed error on timeout, distinguishable from a non-zero exit
 
+**DONE (2026-08-02)** — `src/coldfix/bench/execute.py`, 10 tests in `tests/bench/test_execute.py`. All four AC met. A non-zero exit is returned as a *result*, not raised — only the absence of a usable result raises (`ExecutionTimeoutError`). `timeout` is required and keyword-only: a subprocess with no deadline can hang an investigation with no diagnostic. `env` replaces rather than extends, matching subprocess semantics, because a variable leaking in from the parent shell is how two runs of the same measurement come to differ. Process-group kill needed different code per platform — `start_new_session` + `killpg` on POSIX, `taskkill /T` on Windows. **The safety test was verified to discriminate**: sabotaging the kill to reach only the direct child makes the orphan survive and the test fail.
+
 ### S-1.2 — time()
 Depends: S-1.1
 AC:
