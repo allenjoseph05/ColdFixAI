@@ -506,6 +506,18 @@ AC:
 
 Notes: "how many queries must this endpoint issue" is a question about intent and is circular. Restrict to the computable cases and say so.
 
+### S-3.19 — Observation: deterministic instruction counting
+Depends: S-3.6
+Why: **this is the only known way to measure below the timing noise floor**, and `01-primitives.md` §12 already names it while no story implements it.
+AC:
+- Counts retired instructions for a workload, independent of machine and load
+- Counts are reproducible across runs on the same input to within a stated tolerance
+- Available to the Diagnostician as a metric alongside wall time and query count
+- A test proves two implementations differing by less than the measured timing floor are still separable by instruction count
+- The experiment result records which metric the conclusion rests on
+
+Notes: S-0.4 measured the timing noise floor at **~20 ms, about 6% of a 350 ms endpoint**, at 20 repetitions — so a real 2% improvement is invisible to timing no matter how many times it is run. Instruction counts are deterministic, which collapses that floor to roughly zero for CPU-bound work. `01-primitives.md` §12 states the intended workflow: *"search against instruction count, then validate the single winner with proper interleaved statistical timing."* That makes this the enabling primitive for any optimization search (E10 onward), not merely another instrument. It does not help for I/O- or lock-bound cost — that is S-3.7's job, and the two are complementary rather than alternatives.
+
 ---
 
 # EPIC 4 — Screening
@@ -625,6 +637,19 @@ AC:
 - `read_experiment(n)` returns full output, stacks, and raw counters
 - The prompt states explicitly that detail is retrievable
 - No information is discarded — only deferred
+
+### S-5.9 — Vendor cost comparison on effective cost
+Depends: S-5.3, S-15.3
+Why: ADR-002 chose a vendor on SDK ergonomics, not on price, and the question will otherwise be re-argued from list prices and memory.
+AC:
+- Runs the same fixed scenario set against at least two vendors
+- Reports **cost per confirmed finding**, not cost per token
+- Reports effective input cost with caching in effect, alongside list price, and states the measured cache hit rate for each vendor
+- Reports experiments-to-conclusion per vendor — a dearer model reaching the answer in fewer experiments may be cheaper overall
+- Records each vendor's minimum cacheable prefix and cache TTL, since both change effective cost independently of list price
+- Result is published in the cost report and supersedes ADR-002's provider choice if the numbers warrant it
+
+Notes: **list price is the wrong number for this workload.** Cache reads bill at roughly 0.1x of input on the first-party API, and the append-only experiment log exists precisely so the cached prefix stays byte-identical — so effective cost is dominated by hit rate, not sticker rate. Caches are also model-scoped, so a vendor that is 30% cheaper per token but has a larger minimum cacheable prefix, a shorter TTL, or weaker prefix semantics can cost more here. S-0.8's harness is already the right shape for this: a fixed scenario set with programmatic scoring, so swapping the request layer is the only work. ADR-002 is a record of a decision, not a commitment — this story exists to make it falsifiable rather than defended.
 
 ---
 
@@ -1135,7 +1160,7 @@ AC:
 - Should decline; if it does not, memory is not working
 - **A controlled ablation of the playbook itself**: ground the same unseen repository with the playbook retrieved and with it withheld, and report the difference in stage completion and steps-to-ground
 
-Notes: the curve is longitudinal and confounded — it declines if the playbook works, and also if later projects happen to be easier. The ablation is the causal measurement, and it is the project's own core primitive applied to the project. It also serves as a regression test: if a playbook edit stops helping, the delta shrinks and that is visible. S-0.4 supplies the method — interleave, discard a warm-up, and require a guard counter (here, stage completion) to move alongside the timing.
+Notes: the curve is longitudinal and confounded — it declines if the playbook works, and also if later projects happen to be easier. The ablation is the causal measurement, and it is the project's own core primitive applied to the project. It also serves as a regression test: if a playbook edit stops helping, the delta shrinks and that is visible. S-0.4 supplies the method — interleave conditions and require a guard counter (here, stage completion) to move alongside the timing. **Do not copy S-0.4's fixed warm-up discard**: that spike hard-coded one, which S-1.2 forbids for good reason (Barrett et al. found at most 43.5% of VM/benchmark pairs reach steady state at all, so 'discard the first N' is an assumption that is wrong more often than not). Record whether each sample ran in a fresh or reused process and let the analysis decide.
 
 ---
 

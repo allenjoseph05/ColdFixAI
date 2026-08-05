@@ -10,7 +10,9 @@ Organized by the symptom you notice, not by our internal machinery. Each entry g
 
 ## How anything gets found at all
 
-Everything below comes from composing six kinds of experiment. Not a list of detectors — a list of *ways to construct a contrast between two runs*:
+Everything below comes from composing **fourteen** kinds of experiment (`01-primitives.md`).
+Not a list of detectors — a list of *ways to construct a contrast between two runs*. The six
+that account for most findings:
 
 | Primitive | Method | What it reveals |
 |---|---|---|
