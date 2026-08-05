@@ -190,6 +190,8 @@ AC:
 
 Notes: do not build in a fixed warmup discard. Barrett et al. showed at most 43.5% of VM/benchmark pairs reach steady state, so "discard the first N" is an assumption that is wrong more often than not.
 
+**DONE (2026-08-03)** — `src/coldfix/bench/timing.py`, 10 tests in `tests/bench/test_timing.py`. All three AC met. The note generalised into **ADR 012**: warmup is not the only decision `timeit` makes on the caller's behalf, and the other three are wrong here in the same direction — no batching (per-sample variance is what S-1.5's rank test consumes), no garbage-collection control (disabling it makes a patch that increases allocation pressure look free), and no `min`-taking (a workload that is pathological one run in five is a finding, not noise). `ProcessState.FRESH` is **scoped to the run** — it means no earlier sample of this run used this process, and claims nothing about the interpreter being newly started, because `time()` cannot observe that. `fresh_process_per_sample` is the caller declaring what it built; the test for it composes with `execute()` and checks the child pids are genuinely distinct rather than trusting the label. **The discard test was verified to discriminate**: sabotaging `time()` to drop the first sample fails it on `samples went missing`, along with three others.
+
 ### S-1.3 — count()
 Depends: S-1.1
 AC:
