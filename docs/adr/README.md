@@ -53,6 +53,7 @@ Decisions found while building the execution environment:
 | 021 | Worktrees are detached, and the clean-tree guard is asymmetric | S-2.2 |
 | 022 | A diagnostic session has no method that returns a diff | S-2.3 |
 | 023 | The patch filter parses the diff, and uses git only to check itself | S-2.4 |
+| 024 | The production guard is a constructor, and configuration cannot disable it | S-2.5 |
 
 ## Format
 

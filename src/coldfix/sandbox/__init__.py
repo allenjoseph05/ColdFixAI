@@ -26,7 +26,7 @@ from coldfix.sandbox.modes import (
     Workbench,
 )
 from coldfix.sandbox.patching import (
-    DEFAULT_POLICY,
+    DEFAULT_PATCH_POLICY,
     DEFAULT_PROTECTED_PATTERNS,
     PatchDidNotApplyError,
     PatchError,
@@ -36,6 +36,18 @@ from coldfix.sandbox.patching import (
     UnsafePathError,
     apply_patch,
     touched_paths,
+)
+from coldfix.sandbox.production import (
+    DEFAULT_ALLOWED_HOSTS,
+    DEFAULT_ALLOWED_NAME_PATTERNS,
+    DEFAULT_ALLOWED_SCHEMES,
+    DEFAULT_DATABASE_POLICY,
+    DatabasePolicy,
+    ProductionDatabaseError,
+    ProductionGuardError,
+    UnreadableDatabaseUrlError,
+    VerifiedDatabase,
+    redact,
 )
 from coldfix.sandbox.runner import (
     DEFAULT_LIMITS,
@@ -63,12 +75,17 @@ from coldfix.sandbox.worktrees import (
 )
 
 __all__ = [
+    "DEFAULT_ALLOWED_HOSTS",
+    "DEFAULT_ALLOWED_NAME_PATTERNS",
+    "DEFAULT_ALLOWED_SCHEMES",
+    "DEFAULT_DATABASE_POLICY",
     "DEFAULT_LIMITS",
-    "DEFAULT_POLICY",
+    "DEFAULT_PATCH_POLICY",
     "DEFAULT_PROTECTED_PATTERNS",
     "WORKSPACE_MOUNTPOINT",
     "CandidateSession",
     "ContainerNotDestroyedError",
+    "DatabasePolicy",
     "DiagnosticSession",
     "DirtyWorkingTreeError",
     "DockerUnavailableError",
@@ -78,6 +95,8 @@ __all__ = [
     "PatchDidNotApplyError",
     "PatchError",
     "PatchPolicy",
+    "ProductionDatabaseError",
+    "ProductionGuardError",
     "ProtectedPathError",
     "Repository",
     "ResourceLimits",
@@ -89,7 +108,9 @@ __all__ = [
     "SessionError",
     "UnknownRevisionError",
     "UnparsablePatchError",
+    "UnreadableDatabaseUrlError",
     "UnsafePathError",
+    "VerifiedDatabase",
     "Workbench",
     "WorkspaceError",
     "Worktree",
@@ -99,5 +120,6 @@ __all__ = [
     "apply_patch",
     "docker_available",
     "docker_run_argv",
+    "redact",
     "touched_paths",
 ]
