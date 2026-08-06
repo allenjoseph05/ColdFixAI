@@ -16,6 +16,15 @@ Epic 2. See ADR 004 for why containers and worktrees, ADR 020 for the container
 flags, and ADR 021 for why every worktree is detached.
 """
 
+from coldfix.sandbox.modes import (
+    CandidateSession,
+    DiagnosticSession,
+    ExecutionMode,
+    Session,
+    SessionClosedError,
+    SessionError,
+    Workbench,
+)
 from coldfix.sandbox.runner import (
     DEFAULT_LIMITS,
     WORKSPACE_MOUNTPOINT,
@@ -44,9 +53,12 @@ from coldfix.sandbox.worktrees import (
 __all__ = [
     "DEFAULT_LIMITS",
     "WORKSPACE_MOUNTPOINT",
+    "CandidateSession",
     "ContainerNotDestroyedError",
+    "DiagnosticSession",
     "DirtyWorkingTreeError",
     "DockerUnavailableError",
+    "ExecutionMode",
     "MemoryLimitExceededError",
     "NotARepositoryError",
     "Repository",
@@ -54,7 +66,11 @@ __all__ = [
     "Sandbox",
     "SandboxError",
     "SandboxStartError",
+    "Session",
+    "SessionClosedError",
+    "SessionError",
     "UnknownRevisionError",
+    "Workbench",
     "WorkspaceError",
     "Worktree",
     "WorktreeError",
