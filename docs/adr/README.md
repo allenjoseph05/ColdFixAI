@@ -56,6 +56,7 @@ Decisions found while building the execution environment:
 | 024 | The production guard is a constructor, and configuration cannot disable it | S-2.5 |
 | 025 | The rollback strategy restores sequences, and is named for it | S-2.6 |
 | 026 | Cache state is checked by process identity, not by output | S-2.7 |
+| 027 | The real-time screening is tuned against its control, not its defect | S-2.8 |
 
 ## Format
 
