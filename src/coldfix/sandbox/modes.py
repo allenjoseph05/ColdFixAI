@@ -53,7 +53,7 @@ from typing import ClassVar, Self
 from coldfix.bench.execute import DEFAULT_MAX_OUTPUT_CHARS, ExecutionResult, execute
 from coldfix.sandbox.patching import DEFAULT_PATCH_POLICY, PatchPolicy
 from coldfix.sandbox.patching import apply_patch as _apply_patch
-from coldfix.sandbox.runner import DEFAULT_LIMITS, ResourceLimits, Sandbox
+from coldfix.sandbox.runner import DEFAULT_LIMITS, InternalNetwork, ResourceLimits, Sandbox
 from coldfix.sandbox.worktrees import Repository, Worktree
 
 _GIT_TIMEOUT_SECONDS = 300.0
@@ -241,6 +241,15 @@ class Workbench:
     worktree_root: Path
     limits: ResourceLimits = DEFAULT_LIMITS
     policy: PatchPolicy = DEFAULT_PATCH_POLICY
+    network: InternalNetwork | None = None
+    """Passed to every session's sandbox. `None` means loopback and nothing else.
+
+    A subject that needs its database needs a network, and an `InternalNetwork`
+    is the only kind that exists — see ADR 029. Held here rather than per
+    session because every session in one investigation talks to the same
+    environment, and a session on a different network would be measuring a
+    different system.
+    """
 
     def open(self, revision: str, *, mode: ExecutionMode) -> DiagnosticSession | CandidateSession:
         """Create a worktree at `revision` and bind a sandbox to it.
@@ -265,7 +274,12 @@ class Workbench:
 
         worktree = self.repository.create_worktree(path, revision)
         try:
-            sandbox = Sandbox(image=self.image, workspace=worktree.path, limits=self.limits)
+            sandbox = Sandbox(
+                image=self.image,
+                workspace=worktree.path,
+                limits=self.limits,
+                network=self.network,
+            )
         except Exception:
             # A worktree whose session was never constructed has no owner and
             # no close() to reach it. Cleaning up here is what stops a failed

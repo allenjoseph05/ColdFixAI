@@ -187,6 +187,76 @@ class ResourceLimits:
 DEFAULT_LIMITS = ResourceLimits()
 
 
+class NotAnInternalNetworkError(SandboxError):
+    """The named docker network has a route off the host, so it is refused.
+
+    The distinction is `Internal` in `docker network inspect`. A network without
+    it is bridged to the host's, and attaching a sandbox to one would restore
+    exactly the egress AC 3 removes — quietly, because a workload that can reach
+    a database and a workload that can reach the internet look identical from
+    inside.
+    """
+
+    def __init__(self, name: str, detail: str) -> None:
+        self.name = name
+        super().__init__(
+            f"the docker network {name!r} is not internal, so a container on it can reach "
+            f"the network beyond this host: {detail}"
+        )
+
+
+@dataclass(frozen=True)
+class InternalNetwork:
+    """A docker network proven to have no route off the host.
+
+    Exists because a subject needs its database and must still not reach the
+    internet. `--network none` gives loopback and nothing else, which is
+    airtight and also makes a Django application impossible to run: its Postgres
+    lives in a sibling container. A network created `--internal` resolves both —
+    containers on it reach each other by name through docker's embedded DNS, and
+    nothing on it reaches anything else. Measured rather than assumed: a
+    container on one of these fails to open a socket to `1.1.1.1` and succeeds
+    in querying a sibling database in the same breath.
+
+    **Constructing one is the check**, the same construction as
+    `VerifiedDatabase`. `Sandbox` accepts an `InternalNetwork` and not a name, so
+    there is no string a caller could pass that attaches a workload to the
+    default bridge. AC 3 is therefore still enforced by type rather than
+    weakened by a parameter — what widened is "localhost only" to "this internal
+    network only", and nothing about egress.
+    """
+
+    name: str
+
+    def __post_init__(self) -> None:
+        result = execute(
+            ["docker", "network", "inspect", "--format", "{{.Internal}}", self.name],
+            timeout=_HOUSEKEEPING_TIMEOUT_SECONDS,
+        )
+        if result.exit_code != 0:
+            raise NotAnInternalNetworkError(self.name, result.stderr.strip() or "no such network")
+        if result.stdout.strip().lower() != "true":
+            raise NotAnInternalNetworkError(self.name, "Internal is false")
+
+    @classmethod
+    def create(cls, name: str) -> InternalNetwork:
+        """Create the network, then verify it — never trusting the creation.
+
+        The verification is not ceremony over a command that just ran. A daemon
+        configured with a different default driver, or a name already taken by
+        a bridged network, both produce a successful-looking `create` and a
+        network with egress.
+        """
+        execute(
+            ["docker", "network", "create", "--internal", name],
+            timeout=_HOUSEKEEPING_TIMEOUT_SECONDS,
+        )
+        return cls(name=name)
+
+    def destroy(self) -> None:
+        execute(["docker", "network", "rm", self.name], timeout=_HOUSEKEEPING_TIMEOUT_SECONDS)
+
+
 @dataclass(frozen=True)
 class Sandbox:
     """A container configuration. Constructing one is the only way to run.
@@ -197,15 +267,22 @@ class Sandbox:
     the object that carries the isolation policy to be the object you call —
     not an argument you may forget to pass.
 
-    The policy is not parameterised. There is no argument that turns networking
-    on, none that adds a second bind mount, and none that lifts the read-only
-    root, because each of those is an acceptance criterion rather than a
-    preference. Widening any of them is a change to this file, reviewed as such.
+    The policy is not parameterised. There is no argument that adds a second
+    bind mount and none that lifts the read-only root, because each is an
+    acceptance criterion rather than a preference.
+
+    `network` is the one thing that was widened, and it was widened by type
+    rather than by string. It defaults to `None`, meaning `--network none` —
+    loopback and nothing else. Supplying an `InternalNetwork` lets the workload
+    reach sibling containers, which is what makes a Django subject runnable at
+    all, and cannot let it reach anything beyond the host, because
+    `InternalNetwork` refuses to exist for a network that is not internal.
     """
 
     image: str
     workspace: Path
     limits: ResourceLimits = DEFAULT_LIMITS
+    network: InternalNetwork | None = None
 
     def __post_init__(self) -> None:
         if not self.image.strip():
@@ -352,13 +429,14 @@ def docker_run_argv(
         # the OOM flag before the container is allowed to disappear.
         "--name",
         container,
-        # AC 3. `none` leaves the container with a loopback interface and
-        # nothing else: no bridge, no DNS, no route off the host. "Localhost
-        # only" is precisely what this mode means. A subject needing to reach a
-        # sibling database container needs an `--internal` network, which is a
-        # standup concern and must not be reachable by widening this flag.
+        # AC 3. Without a network this is `none`: a loopback interface and
+        # nothing else — no bridge, no DNS, no route off the host. With one it
+        # is a docker network that `InternalNetwork` has proved carries no
+        # route off the host either, so the workload reaches its database and
+        # still reaches nothing beyond. The value is never a caller's string;
+        # it comes off a type whose constructor checked it.
         "--network",
-        "none",
+        "none" if sandbox.network is None else sandbox.network.name,
         # AC 2. `--memory-swap` is set equal to `--memory` because otherwise
         # docker grants swap at twice the limit and the memory cap does not bite
         # — the workload gets slow instead of getting killed, and a slow

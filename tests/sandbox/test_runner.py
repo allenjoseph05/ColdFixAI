@@ -194,18 +194,45 @@ def test_there_is_no_field_by_which_isolation_could_be_requested_away() -> None:
     """Structural, not behavioural — and deliberately brittle.
 
     Every criterion in this story is a constant in `docker_run_argv`. The way
-    that stops being true is someone adding a `network`, `mounts` or
-    `privileged` field to `Sandbox` because one caller needed it, at which point
-    the policy becomes a default rather than a property. This test fails when
-    that happens, so the widening is reviewed rather than merged.
+    that stops being true is someone adding a `mounts` or `privileged` field to
+    `Sandbox` because one caller needed it, at which point the policy becomes a
+    default rather than a property. This test fails when that happens, so the
+    widening is reviewed rather than merged.
+
+    **`network` is here because this test did its job.** It was added after the
+    epic, when the end-to-end test showed that `--network none` makes a Django
+    subject unrunnable — its Postgres is a sibling container. This assertion
+    failed, which is what forced the widening to be argued for rather than
+    slipped in, and the argument is recorded in ADR 029.
     """
-    assert {f.name for f in dataclasses.fields(Sandbox)} == {"image", "workspace", "limits"}
+    assert {f.name for f in dataclasses.fields(Sandbox)} == {
+        "image",
+        "workspace",
+        "limits",
+        "network",
+    }
     assert {f.name for f in dataclasses.fields(ResourceLimits)} == {
         "cpus",
         "memory_bytes",
         "pids",
         "tmpfs_bytes",
     }
+
+
+def test_the_network_field_cannot_hold_an_arbitrary_name() -> None:
+    """The widening is by type, and this is the part that keeps AC 3 true.
+
+    A `str` here would let any caller attach a workload to the default bridge
+    and restore the egress this story removes — quietly, because a workload
+    that can reach a database and one that can reach the internet look
+    identical from inside the container. `InternalNetwork` refuses to exist for
+    a network docker does not report as internal, so there is no string to
+    pass.
+    """
+    annotation = {f.name: f.type for f in dataclasses.fields(Sandbox)}["network"]
+
+    assert "InternalNetwork" in str(annotation)
+    assert "str" not in str(annotation)
 
 
 # ------------------------------------------------------------- validation
