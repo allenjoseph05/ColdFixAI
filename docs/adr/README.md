@@ -60,6 +60,12 @@ Decisions found while building the execution environment:
 | 028 | A refused category and an uncovered one are not the same thing | S-2.9 |
 | 029 | A sandbox may join a network that has been proved internal | E2 composition |
 
+Decisions found while building the primitives:
+
+| ADR | Decision | Came from |
+|---|---|---|
+| 030 | An applicability predicate has three answers, and a tool list cannot move | S-3.1 |
+
 ## Format
 
 ```markdown
