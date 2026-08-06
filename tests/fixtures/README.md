@@ -124,6 +124,30 @@ Import cost is asserted as a **ratio against the control**, never as an absolute
 duration — an absolute threshold encodes the speed of whichever machine wrote it.
 Both import tests are marked `slow` and excluded from `pytest -m "not slow"`.
 
+### Real-time screening — `realtime/`
+
+Two whole repositories rather than two functions, because S-2.8 screens a tree
+and not a call.
+
+| Directory | Kind | Expected |
+|---|---|---|
+| `realtime/flight_controller` | **defect** | refused — RTOS imports, deadline annotations, certification markers, framework signatures |
+| `realtime/task_tracker` | control | cleared — every innocent word a naive detector fires on |
+
+The control is the valuable half here, more than anywhere else in this
+catalogue. It is an ordinary web application with **deadlines** (including
+"hard deadlines" in the contractual sense), a **priority** field whose highest
+value is **critical**, a class named **Scheduler**, **real-time** updates
+meaning websockets, and **mission-critical** work meaning somebody will be
+annoyed. None of it is a timing guarantee.
+
+The pinned development target in ADR 011 is a helpdesk application full of the
+same vocabulary. A screening that refuses the control refuses its own target on
+day one, so `test_the_control_repository_is_cleared` is the test that keeps the
+tool usable, and a third test asserts the control still *contains* the tempting
+words — because the way that claim quietly stops meaning anything is somebody
+tidying the vocabulary out of the fixture rather than the detector changing.
+
 ---
 
 ## Growing this
