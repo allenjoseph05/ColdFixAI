@@ -44,10 +44,6 @@ REPO = Path("/srv/subject")
 # even when these tests run on Windows.
 
 
-def verdict_for(mechanism: str, site: str = "app/views.py") -> object:
-    return classify(mechanism, site, repository=REPO)
-
-
 # ------------------------------------------- concurrency: diagnose, never patch
 
 
