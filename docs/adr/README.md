@@ -69,6 +69,7 @@ Decisions found while building the primitives:
 | 032 | A fixture shape is generated here so the volume cannot move with it | S-3.3 |
 | 033 | A replay stub that is not size-representative is an empty stub in disguise | S-3.4 |
 | 034 | A threshold oracle has a third answer, and needs it | S-3.5 |
+| 035 | Five percent of what: the counter budget needs a denominator | S-3.6 |
 
 ## Format
 
