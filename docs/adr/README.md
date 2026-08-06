@@ -66,6 +66,7 @@ Decisions found while building the primitives:
 |---|---|---|
 | 030 | An applicability predicate has three answers, and a tool list cannot move | S-3.1 |
 | 031 | A scaling sweep prevents a warm cache rather than detecting one, and always measures N=0 | S-3.2 |
+| 032 | A fixture shape is generated here so the volume cannot move with it | S-3.3 |
 
 ## Format
 
