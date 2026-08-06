@@ -45,6 +45,12 @@ Decisions found while building the lab bench:
 | 018 | A comparison owns the order its samples were taken in | S-1.6 |
 | 019 | The noise floor is simulated against the test that will be used | S-1.7 |
 
+Decisions found while building the execution environment:
+
+| ADR | Decision | Came from |
+|---|---|---|
+| 020 | A container is destroyed by name, and its status read from the daemon | S-2.1 |
+
 ## Format
 
 ```markdown

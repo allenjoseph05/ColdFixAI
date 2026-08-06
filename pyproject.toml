@@ -128,4 +128,9 @@ testpaths = ["tests"]
 addopts = "--strict-markers --strict-config"
 markers = [
     "slow: takes long enough to exclude from the fast subset (`-m 'not slow'`)",
+    # Kept distinct from `slow` because the reason for skipping is different: a
+    # slow test is one you choose not to wait for, a docker test is one this
+    # machine cannot run at all. Conflating them would let an absent daemon read
+    # as a passing fast subset.
+    "docker: needs a running Docker daemon; skipped when none is listening",
 ]
