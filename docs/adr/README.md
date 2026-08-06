@@ -57,6 +57,7 @@ Decisions found while building the execution environment:
 | 025 | The rollback strategy restores sequences, and is named for it | S-2.6 |
 | 026 | Cache state is checked by process identity, not by output | S-2.7 |
 | 027 | The real-time screening is tuned against its control, not its defect | S-2.8 |
+| 028 | A refused category and an uncovered one are not the same thing | S-2.9 |
 
 ## Format
 
