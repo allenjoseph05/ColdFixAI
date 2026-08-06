@@ -26,7 +26,7 @@ import pytest
 from conftest import git
 
 from coldfix.sandbox.patching import (
-    DEFAULT_POLICY,
+    DEFAULT_PATCH_POLICY,
     PatchDidNotApplyError,
     PatchPolicy,
     ProtectedPathError,
@@ -233,7 +233,7 @@ def test_a_case_variant_of_a_protected_directory_is_refused(worktree: Path) -> N
         +new
         """)
 
-    assert DEFAULT_POLICY.matching_rule("tests/helpers.py") == "**/tests/**"
+    assert DEFAULT_PATCH_POLICY.matching_rule("tests/helpers.py") == "**/tests/**"
 
     with pytest.raises(ProtectedPathError):
         apply_patch(patch, worktree=worktree)
@@ -350,7 +350,7 @@ def test_a_patch_that_does_not_fit_is_reported_as_such_not_as_a_rejection(
 
 def test_protected_paths_are_configurable(worktree: Path) -> None:
     """AC 3. A project can add its own, and the defaults still stand alone."""
-    policy = PatchPolicy(protected=(*DEFAULT_POLICY.protected, "**/src/app.py"))
+    policy = PatchPolicy(protected=(*DEFAULT_PATCH_POLICY.protected, "**/src/app.py"))
     (worktree / "src" / "app.py").write_text("def slow():\n    return 42\n")
     patch = diff_for(worktree)
 
@@ -402,4 +402,4 @@ def test_the_default_rules_match_what_they_claim_to(path: str, protected: bool) 
     with `fnmatch` over the whole path would protect it and quietly refuse
     legitimate patches.
     """
-    assert (DEFAULT_POLICY.matching_rule(path) is not None) is protected
+    assert (DEFAULT_PATCH_POLICY.matching_rule(path) is not None) is protected

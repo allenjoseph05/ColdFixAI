@@ -180,7 +180,7 @@ class PatchPolicy:
         )
 
 
-DEFAULT_POLICY = PatchPolicy()
+DEFAULT_PATCH_POLICY = PatchPolicy()
 
 
 def touched_paths(diff: str) -> frozenset[str]:
@@ -279,7 +279,7 @@ def audit(diff: str, *, policy: PatchPolicy, worktree: Path) -> frozenset[str]:
 
 
 def apply_patch(
-    diff: str, *, worktree: Path, policy: PatchPolicy = DEFAULT_POLICY
+    diff: str, *, worktree: Path, policy: PatchPolicy = DEFAULT_PATCH_POLICY
 ) -> frozenset[str]:
     """Audit `diff` and, only if it passes, apply it to `worktree`.
 
