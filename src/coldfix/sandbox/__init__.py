@@ -25,6 +25,18 @@ from coldfix.sandbox.modes import (
     SessionError,
     Workbench,
 )
+from coldfix.sandbox.patching import (
+    DEFAULT_POLICY,
+    DEFAULT_PROTECTED_PATTERNS,
+    PatchDidNotApplyError,
+    PatchError,
+    PatchPolicy,
+    ProtectedPathError,
+    UnparsablePatchError,
+    UnsafePathError,
+    apply_patch,
+    touched_paths,
+)
 from coldfix.sandbox.runner import (
     DEFAULT_LIMITS,
     WORKSPACE_MOUNTPOINT,
@@ -52,6 +64,8 @@ from coldfix.sandbox.worktrees import (
 
 __all__ = [
     "DEFAULT_LIMITS",
+    "DEFAULT_POLICY",
+    "DEFAULT_PROTECTED_PATTERNS",
     "WORKSPACE_MOUNTPOINT",
     "CandidateSession",
     "ContainerNotDestroyedError",
@@ -61,6 +75,10 @@ __all__ = [
     "ExecutionMode",
     "MemoryLimitExceededError",
     "NotARepositoryError",
+    "PatchDidNotApplyError",
+    "PatchError",
+    "PatchPolicy",
+    "ProtectedPathError",
     "Repository",
     "ResourceLimits",
     "Sandbox",
@@ -70,12 +88,16 @@ __all__ = [
     "SessionClosedError",
     "SessionError",
     "UnknownRevisionError",
+    "UnparsablePatchError",
+    "UnsafePathError",
     "Workbench",
     "WorkspaceError",
     "Worktree",
     "WorktreeError",
     "WorktreeNotDestroyedError",
     "WorktreePathError",
+    "apply_patch",
     "docker_available",
     "docker_run_argv",
+    "touched_paths",
 ]

@@ -144,7 +144,7 @@ def test_a_candidate_session_is_the_only_thing_that_produces_a_diff(
 ) -> None:
     surface = {name for name in dir(CandidateSession) if not name.startswith("_")}
 
-    assert surface == {"mode", "worktree", "closed", "run", "close", "diff"}
+    assert surface == {"mode", "worktree", "closed", "run", "close", "diff", "apply_patch"}
 
     with workbench.open("HEAD", mode=ExecutionMode.CANDIDATE) as session:
         # The narrowing a type checker needs is the same fact the test asserts:
