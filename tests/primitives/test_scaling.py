@@ -29,16 +29,18 @@ import pytest
 
 from coldfix.bench.counting import calls_to, count, register_hook, unregister_hook
 from coldfix.bench.stats import Growth, fit_growth
-from coldfix.primitives.registry import REGISTRY, Capability
-from coldfix.primitives.scaling import (
+from coldfix.primitives.measurement import (
     MATERIALIZED,
     SECONDS,
     BaselineError,
     CacheControl,
     CacheControlError,
-    Distribution,
     MetricKind,
     MetricSetError,
+)
+from coldfix.primitives.registry import REGISTRY, Capability
+from coldfix.primitives.scaling import (
+    Distribution,
     ScaleSweepError,
     scale_volume,
 )
@@ -464,7 +466,7 @@ def test_a_sweep_with_no_cache_control_refuses_to_run(query_counter: None) -> No
     with pytest.raises(CacheControlError) as raised:
         sweep(subject, process_identity=None)
 
-    assert "superlinear reads as sublinear" in str(raised.value)
+    assert "the second looks cheaper than it is" in str(raised.value)
 
 
 def test_a_process_that_outlives_a_scale_point_stops_the_sweep(query_counter: None) -> None:
