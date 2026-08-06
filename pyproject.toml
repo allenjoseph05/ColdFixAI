@@ -127,6 +127,12 @@ warn_required_dynamic_aliases = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers --strict-config"
+# With no `__init__.py` in the tree, pytest puts each test module's own
+# directory on `sys.path` — `tests/primitives`, not `tests` — so the shared
+# fixture package resolves only for the test files sitting at the top level.
+# Naming it here rather than in a `tests/conftest.py`, because a second file
+# named `conftest` collides with `tests/sandbox/conftest.py` under mypy.
+pythonpath = ["tests"]
 markers = [
     "slow: takes long enough to exclude from the fast subset (`-m 'not slow'`)",
     # Kept distinct from `slow` because the reason for skipping is different: a
