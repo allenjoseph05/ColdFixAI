@@ -223,6 +223,31 @@ class VerifiedDatabase:
         if not self.policy.permits_name(name):
             raise ProductionDatabaseError("name", name, self.policy.allowed_name_patterns, self.url)
 
+    @property
+    def dsn(self) -> str:
+        """The URL in the form libpq accepts.
+
+        `postgresql+psycopg://` is SQLAlchemy's way of naming a driver inside
+        the scheme, and libpq does not understand it. The guard permits those
+        schemes because they are what a Django or SQLAlchemy project's settings
+        actually contain; stripping the suffix belongs here rather than in
+        every caller that opens a connection.
+        """
+        driver_free = self.scheme.split("+", 1)[0]
+        parts = urlsplit(self.url)
+        return urlunsplit((driver_free, parts.netloc, parts.path, parts.query, parts.fragment))
+
+    def dsn_for(self, database: str) -> str:
+        """The same server, a different database.
+
+        `DROP DATABASE` cannot run from a connection to the database being
+        dropped, and a server that has just restarted may not hold the subject
+        database yet. Both need a connection to a maintenance database on the
+        same server, with the same credentials.
+        """
+        parts = urlsplit(self.dsn)
+        return urlunsplit((parts.scheme, parts.netloc, f"/{database}", parts.query, parts.fragment))
+
     def __repr__(self) -> str:
         """Never the password.
 

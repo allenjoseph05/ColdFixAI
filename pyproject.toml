@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
+    "psycopg[binary]>=3.2",
     "pydantic>=2.9",
 ]
 
@@ -133,4 +134,8 @@ markers = [
     # machine cannot run at all. Conflating them would let an absent daemon read
     # as a passing fast subset.
     "docker: needs a running Docker daemon; skipped when none is listening",
+    # Separate from `docker` even though it starts one, because what it needs is
+    # a database server that answers — a daemon that is up but cannot pull or
+    # run Postgres fails these for a different reason and should say so.
+    "postgres: needs a real Postgres server; skipped when one cannot be started",
 ]
