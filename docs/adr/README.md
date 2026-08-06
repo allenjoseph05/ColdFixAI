@@ -54,6 +54,7 @@ Decisions found while building the execution environment:
 | 022 | A diagnostic session has no method that returns a diff | S-2.3 |
 | 023 | The patch filter parses the diff, and uses git only to check itself | S-2.4 |
 | 024 | The production guard is a constructor, and configuration cannot disable it | S-2.5 |
+| 025 | The rollback strategy restores sequences, and is named for it | S-2.6 |
 
 ## Format
 
