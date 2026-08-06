@@ -32,6 +32,7 @@ from coldfix.bench.stats import Growth, fit_growth
 from coldfix.primitives.measurement import (
     MATERIALIZED,
     SECONDS,
+    TOTAL_SUFFIX,
     BaselineError,
     CacheControl,
     CacheControlError,
@@ -221,7 +222,16 @@ def test_every_recorded_metric_is_fitted(query_counter: None) -> None:
 
     result = sweep(subject, extra_counters=subject.guard_counters)
 
-    assert set(result.metric_names()) == {SECONDS, MATERIALIZED, QUERIES, "cells_returned"}
+    # Every counter contributes two metrics: its event count and the sum of the
+    # amounts recorded (S-3.6). For a hook that only counts they agree, and that
+    # agreement is a fact about the hook rather than a duplicate.
+    assert set(result.metric_names()) == {
+        SECONDS,
+        MATERIALIZED,
+        QUERIES,
+        f"{QUERIES}{TOTAL_SUFFIX}",
+        "cells_returned",
+    }
     assert all(name in result.fits for name in result.metric_names())
 
 
