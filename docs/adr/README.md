@@ -58,6 +58,7 @@ Decisions found while building the execution environment:
 | 026 | Cache state is checked by process identity, not by output | S-2.7 |
 | 027 | The real-time screening is tuned against its control, not its defect | S-2.8 |
 | 028 | A refused category and an uncovered one are not the same thing | S-2.9 |
+| 029 | A sandbox may join a network that has been proved internal | E2 composition |
 
 ## Format
 
