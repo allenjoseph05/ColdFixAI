@@ -78,6 +78,16 @@ class Interference:
 
     @property
     def context_cost(self) -> float:
+        """The typical cost under contention. **Contention in the tail is
+        understated by this**, deliberately and at a cost worth naming.
+
+        A median is what a component typically costs, which is the right thing
+        for a gap. It is the wrong thing for contention that shows up only
+        occasionally — tail-latency amplification is on `01-primitives.md` §3's
+        detection list, and a median is exactly the statistic that discards it.
+        Where the tail is the question, compare the distributions with S-1.5's
+        rank test rather than reading this number.
+        """
         return statistics.median(self.in_context)
 
     @property

@@ -63,6 +63,22 @@ class SharedResource:
             time.sleep(seconds)
 
 
+def component_using(resource: SharedResource) -> None:
+    """A component with work either side of its critical section.
+
+    The work outside the lock is not decoration, and leaving it out made this
+    file flaky. Measured back-to-back with nothing in between, the foreground
+    thread releases the lock and immediately re-acquires it — Python's locks are
+    not fair, so it barges ahead of the neighbours already queued — and only the
+    *first* of five samples ever contends: [0.86, 0.05, 0.05, 0.05, 0.05], whose
+    median is the uncontended cost. A component that does anything at all before
+    taking the lock gives the queue a chance, which is both realistic and what
+    makes every sample contend.
+    """
+    time.sleep(HOLD / 5)
+    resource.use(HOLD)
+
+
 def interference_from(alone: tuple[float, ...], together: tuple[float, ...]) -> Interference:
     """An `Interference` stated directly, for the tests about its arithmetic."""
     return Interference(
@@ -82,7 +98,7 @@ def test_a_component_sharing_a_lock_is_slower_among_its_neighbours() -> None:
     resource = SharedResource()
 
     result = measure_interference(
-        lambda: resource.use(HOLD),
+        lambda: component_using(resource),
         lambda: resource.use(HOLD),
         name="checkout",
         context_name="the report job",
@@ -106,7 +122,7 @@ def test_a_component_sharing_nothing_shows_no_interference() -> None:
     theirs = SharedResource()
 
     result = measure_interference(
-        lambda: mine.use(HOLD),
+        lambda: component_using(mine),
         lambda: theirs.use(HOLD),
         name="checkout",
         context_name="the unrelated job",
@@ -164,7 +180,7 @@ def test_the_neighbour_actually_contended_with_is_named() -> None:
     unrelated = SharedResource()
 
     attribution = attribute_interference(
-        lambda: resource.use(HOLD),
+        lambda: component_using(resource),
         {
             "the report job": lambda: unrelated.use(HOLD),
             "the export job": lambda: resource.use(HOLD),
