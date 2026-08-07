@@ -71,6 +71,7 @@ Decisions found while building the primitives:
 | 034 | A threshold oracle has a third answer, and needs it | S-3.5 |
 | 035 | Five percent of what: the counter budget needs a denominator | S-3.6 |
 | 036 | Wall minus CPU is exact; attribution by category is not, and says so | S-3.7 |
+| 037 | An envelope check needs a ratio and a floor, and the floor is measured | S-3.8 |
 
 ## Format
 
