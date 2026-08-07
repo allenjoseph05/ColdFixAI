@@ -43,6 +43,7 @@ from coldfix.bench.counting import (
 )
 from coldfix.primitives.counters import (
     ALLOCATION,
+    ALLOCATION_BYTES,
     CATALOGUE,
     DB_BYTES,
     DB_QUERY,
@@ -279,10 +280,13 @@ def test_allocations_are_declared_a_different_shape_from_the_hooks() -> None:
     """Nothing in Python fires per allocation that a probe can attach to, so the
     alternative to a block meter is inventing events — and an invented event is
     a fabricated measurement."""
-    assert describe(ALLOCATION).shape is CounterShape.BLOCK_METER
-    assert all(
-        describe(name).shape is CounterShape.EVENT_HOOK for name in CATALOGUE if name != ALLOCATION
-    )
+    meters = {
+        name for name, counter in CATALOGUE.items() if counter.shape is CounterShape.BLOCK_METER
+    }
+
+    # Both readings of the allocation meter and nothing else. S-3.8 added the
+    # bytes reading beside the count, so this is a set rather than one name.
+    assert meters == {ALLOCATION, ALLOCATION_BYTES}
 
 
 def test_two_allocation_meters_cannot_own_the_same_measurement() -> None:
@@ -501,7 +505,7 @@ def test_every_other_counter_is_declared_negligible() -> None:
         name for name, counter in CATALOGUE.items() if counter.overhead is CounterOverhead.HEAVY
     }
 
-    assert heavy == {ALLOCATION}
+    assert heavy == {ALLOCATION, ALLOCATION_BYTES}
 
 
 # ------------------------------------------- the counters through a primitive
