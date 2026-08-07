@@ -40,6 +40,12 @@ src = ["src", "tests"]
 extend-exclude = ["docs"]
 
 [tool.ruff.lint]
+# The Universal Scalability Law's coefficients are named α, β and γ everywhere
+# it is written about (S-3.12). Spelling them out in prose would make the module
+# harder to check against the literature, which is the only thing that can
+# confirm the fit is the one it claims to be.
+allowed-confusables = ["α", "β", "γ", "×", "≤", "≥"]
+
 select = [
     "A",    # shadowed builtins
     "ANN",  # missing type annotations
