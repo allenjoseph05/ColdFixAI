@@ -52,6 +52,13 @@ from coldfix.primitives.off_cpu import (
 from coldfix.sandbox.runner import Sandbox
 
 SLEEP = 0.15
+
+# `process_time` ticks at about 15.6ms on Windows, so `wall - cpu` can understate
+# blocked time by a whole tick — measured here as a sleep of 0.15s reporting
+# 0.1347s blocked, which is arithmetic rather than a defect. Assertions about
+# blocked time allow for one tick; a fraction of the sleep would not, and a
+# looser fraction would stop being an assertion.
+CLOCK_TICK = 0.020
 POSIX_ONLY = pytest.mark.skipif(sys.platform == "win32", reason="needs getrusage")
 
 
@@ -88,7 +95,7 @@ def test_a_sleep_reports_blocked_time_rather_than_cpu_time() -> None:
 
     assert profile.wall_seconds >= SLEEP
     assert profile.cpu_seconds < SLEEP / 2
-    assert profile.blocked_seconds >= SLEEP * 0.9
+    assert profile.blocked_seconds >= SLEEP - CLOCK_TICK
     assert profile.boundedness is Boundedness.BLOCKED
 
 
@@ -179,7 +186,7 @@ def test_elapsed_time_is_still_divided_when_the_block_raises() -> None:
         raise TimeoutError(message)
 
     assert profile is not None
-    assert profile.blocked_seconds >= SLEEP * 0.9
+    assert profile.blocked_seconds >= SLEEP - CLOCK_TICK
 
 
 # ---------------------------------- AC 1: what the operating system counted
@@ -253,7 +260,7 @@ def test_a_declared_waiting_point_records_the_seconds_it_waited() -> None:
         unregister_hook(BLOCKED_NETWORK)
 
     assert tally.events == 2
-    assert tally.total >= 2 * SLEEP * 0.9
+    assert tally.total >= 2 * SLEEP - CLOCK_TICK
 
 
 def test_a_waiting_point_that_fails_still_reports_what_it_waited() -> None:
@@ -268,7 +275,7 @@ def test_a_waiting_point_that_fails_still_reports_what_it_waited() -> None:
         unregister_hook(BLOCKED_NETWORK)
 
     assert tally.events == 1
-    assert tally.total >= SLEEP * 0.9
+    assert tally.total >= SLEEP - CLOCK_TICK
 
 
 def test_the_waiting_point_is_restored_afterwards() -> None:
