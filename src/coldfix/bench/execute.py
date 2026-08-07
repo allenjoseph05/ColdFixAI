@@ -69,6 +69,32 @@ class ExecutionTimeoutError(ExecutionError):
         )
 
 
+class ExecutionStartError(ExecutionError):
+    """The command never started, so there is no result of any kind.
+
+    A missing binary, a working directory that does not exist, an empty
+    command. Distinct from both a non-zero exit and a timeout: those describe
+    something that ran. This describes the environment being wrong, which for
+    an agent driving an unfamiliar repository is the common case — the wrong
+    interpreter, a virtualenv that was never created, a path that only exists
+    on the machine the workload was written on.
+
+    Raised in place of the `OSError` the operating system supplies, because
+    that arrives as `FileNotFoundError`, `NotADirectoryError` or a bare
+    `OSError` depending on which argument was wrong and on which platform, and
+    a caller cannot reasonably catch all three.
+    """
+
+    def __init__(self, command: Sequence[str], cwd: Path | None, cause: OSError) -> None:
+        self.command = tuple(command)
+        self.cwd = cwd
+        self.cause = cause
+        location = f" in {cwd}" if cwd is not None else ""
+        super().__init__(
+            f"could not start {' '.join(self.command) or '<empty command>'}{location}: {cause}"
+        )
+
+
 @dataclass(frozen=True)
 class ExecutionResult:
     """What a command did. Four facts, no judgement."""
@@ -164,27 +190,48 @@ def execute(
     that makes two runs of the same measurement differ. Callers wanting to add
     one variable pass `{**os.environ, "X": "y"}` and say so.
 
+    Output is decoded as UTF-8 text with undecodable bytes replaced. A command
+    whose output is genuinely binary cannot be measured through this function —
+    the original bytes are not recoverable from the result. Nothing in the
+    project needs them yet, and adding a bytes mode before something does would
+    be guessing at its shape.
+
     Raises:
+        ValueError: `command` is empty, or `timeout` is not positive.
+        ExecutionStartError: the command could not be started at all.
         ExecutionTimeoutError: the command outlived `timeout`. A non-zero exit code
             does **not** raise — it is returned in the result.
     """
     argv = [str(part) for part in command]
+    if not argv:
+        message = "command is empty; there is nothing to run"
+        raise ValueError(message)
+    if timeout <= 0:
+        # Without this, a negative timeout starts the process and immediately
+        # kills it, and the caller gets a timeout error for a command that was
+        # never given a chance to run.
+        message = f"timeout must be positive, got {timeout}"
+        raise ValueError(message)
+
     started = time.perf_counter()
 
-    popen = subprocess.Popen(
-        argv,
-        cwd=str(cwd) if cwd is not None else None,
-        env=dict(env) if env is not None else None,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        # A stray non-UTF-8 byte in a subprocess's stderr should not take down
-        # a measurement run. Replacement characters are visible in the output;
-        # a raised UnicodeDecodeError would lose the whole result.
-        errors="replace",
-        **_process_group_kwargs(),
-    )
+    try:
+        popen = subprocess.Popen(
+            argv,
+            cwd=str(cwd) if cwd is not None else None,
+            env=dict(env) if env is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            # A stray non-UTF-8 byte in a subprocess's stderr should not take
+            # down a measurement run. Replacement characters are visible in the
+            # output; a raised UnicodeDecodeError would lose the whole result.
+            errors="replace",
+            **_process_group_kwargs(),
+        )
+    except OSError as error:
+        raise ExecutionStartError(argv, cwd, error) from error
 
     try:
         # communicate() drains both pipes concurrently. Reading them in
@@ -194,9 +241,17 @@ def execute(
         stdout, stderr = popen.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         _kill_process_group(popen)
-        # Drain again, without a timeout, to collect whatever was buffered
-        # before the kill and to close the pipes rather than leak them.
-        stdout, stderr = popen.communicate()
+        # Drain again to collect whatever was buffered before the kill and to
+        # close the pipes rather than leak them — but *bounded*. An unbounded
+        # drain here is the one path in this function that can hang forever: if
+        # the kill did not reach a grandchild that inherited the pipe, the pipe
+        # never closes, and a function whose entire purpose is to bound how long
+        # a command may take would block indefinitely inside its own timeout
+        # handler. Losing the partial output is much cheaper than that.
+        try:
+            stdout, stderr = popen.communicate(timeout=_TERM_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = "", ""
         raise ExecutionTimeoutError(argv, timeout, stdout or "", stderr or "") from None
 
     elapsed = time.perf_counter() - started

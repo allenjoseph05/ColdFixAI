@@ -26,6 +26,7 @@ from coldfix.bench.diffing import (
     Comparison,
     DifferenceKind,
     JsonValue,
+    TooDeepError,
     UnsupportedValueError,
     diff,
     render_path,
@@ -120,6 +121,36 @@ def test_a_string_is_not_an_array_of_characters() -> None:
 def test_any_sequence_counts_as_an_array() -> None:
     """The parameter types are the covariant protocols, and this is the consequence."""
     assert diff({"tags": ("a", "b")}, {"tags": ["a", "b"]}).identical
+
+
+def test_a_structure_that_references_itself_is_refused_with_a_path() -> None:
+    """Rather than dying of a stack overflow that names nothing.
+
+    JSON cannot express a cycle, but a Python object graph handed to this
+    function can, and following one produces a `RecursionError` at around 490
+    levels — an error with no path in it, from a comparison that had already
+    done a great deal of useless work.
+    """
+    cyclic: dict[str, JsonValue] = {}
+    cyclic["self"] = cyclic
+
+    with pytest.raises(TooDeepError) as caught:
+        diff(cyclic, cyclic)
+
+    assert len(caught.value.path) > 100
+    assert "references itself" in str(caught.value)
+
+
+def test_deep_but_finite_nesting_still_compares() -> None:
+    """The guard is above anything a service returns."""
+    deep: dict[str, JsonValue] = {}
+    cursor = deep
+    for _ in range(150):
+        nested: dict[str, JsonValue] = {}
+        cursor["n"] = nested
+        cursor = nested
+
+    assert diff(deep, copy.deepcopy(deep)).identical
 
 
 def test_bytes_are_refused_rather_than_read_as_an_array() -> None:

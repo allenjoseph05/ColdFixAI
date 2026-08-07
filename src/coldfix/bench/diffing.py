@@ -46,8 +46,31 @@ type JsonValue = bool | int | float | str | Sequence[JsonValue] | Mapping[str, J
 type PathElement = str | int
 
 
+# Deeper than any JSON a service returns. A payload past this is either
+# generated — a fuzzer, S-3.10 — or not a tree at all, and the recursion here
+# would otherwise die of a `RecursionError` that names no path and explains
+# nothing. Measured: a self-referential dict crashed at ~490 levels.
+MAXIMUM_DEPTH = 200
+
+
 class DiffError(Exception):
     """The comparison could not be made."""
+
+
+class TooDeepError(DiffError):
+    """The payload nests deeper than `MAXIMUM_DEPTH`.
+
+    Most likely a structure that references itself. JSON cannot express a
+    cycle, but a Python object graph handed to this function can, and following
+    one forever produces a stack overflow rather than an answer.
+    """
+
+    def __init__(self, path: tuple[PathElement, ...]) -> None:
+        self.path = path
+        super().__init__(
+            f"payload nests deeper than {MAXIMUM_DEPTH} at {render_path(path)}; "
+            "a structure that references itself cannot be compared"
+        )
 
 
 class UnsupportedValueError(DiffError):
@@ -195,6 +218,9 @@ def _compare(
     found: list[Difference],
     options: _Options,
 ) -> None:
+    if len(path) > MAXIMUM_DEPTH:
+        raise TooDeepError(path)
+
     left_type = _json_type(left, path)
     right_type = _json_type(right, path)
 
