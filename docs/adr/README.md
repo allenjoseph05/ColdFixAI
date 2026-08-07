@@ -38,6 +38,7 @@ Decisions found while building the lab bench:
 |---|---|---|
 | 012 | `time()` records samples and changes nothing to get them | S-1.2 |
 | 013 | Counters are named hooks, and an unknown name raises | S-1.3 |
+| 014 | `diff()` is strict by default, and every loosening is opt-in | S-1.4 |
 
 ## Format
 
