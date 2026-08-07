@@ -77,6 +77,7 @@ Decisions found while building the primitives:
 | 040 | A skipped revision is not a cheap one, and one threshold oracle serves both searches | S-3.11 |
 | 041 | A fitted coefficient needs a floor, and a peak needs a measured range | S-3.12 |
 | 042 | A gap inside the noise names an innocent neighbour | S-3.13 |
+| 043 | Sensitivity is not cost, and the gate is the reason it is a separate primitive | S-3.14 |
 
 ## Format
 
