@@ -39,16 +39,27 @@ from enum import StrEnum
 from time import perf_counter
 
 from coldfix.bench.counting import count
+from coldfix.primitives.off_cpu import BLOCKED_COUNTERS, off_cpu
 
 # Metric names this module produces itself. An extra counter colliding with one
 # of these would overwrite a measurement with another measurement, silently.
 SECONDS = "seconds"
 MATERIALIZED = "materialized"
-RESERVED_METRICS = frozenset({SECONDS, MATERIALIZED})
+
+# S-3.7. Recorded on every measurement rather than only when off-CPU time is the
+# hypothesis, because it costs two clock reads and because a delta that does not
+# say whether the component computed or waited leads to the wrong fix as easily
+# as the right one.
+CPU_SECONDS = "cpu_seconds"
+BLOCKED_SECONDS = "blocked_seconds"
+
+RESERVED_METRICS = frozenset({SECONDS, MATERIALIZED, CPU_SECONDS, BLOCKED_SECONDS})
 
 # Every counter contributes two metrics: how many events, and the sum of their
 # amounts. The second is named by suffixing the first.
 TOTAL_SUFFIX = ".total"
+
+_DURATIONS = frozenset({SECONDS, CPU_SECONDS, BLOCKED_SECONDS})
 
 
 class MeasurementError(Exception):
@@ -179,12 +190,18 @@ def measure_once(
     """
     with ExitStack() as stack:
         tallies = {name: stack.enter_context(count(name)) for name in counters}
+        profile = stack.enter_context(off_cpu())
 
         started = perf_counter()
         materialized = materialize(invoke())
         seconds = perf_counter() - started
 
-    metrics: dict[str, float] = {SECONDS: seconds, MATERIALIZED: float(materialized)}
+    metrics: dict[str, float] = {
+        SECONDS: seconds,
+        MATERIALIZED: float(materialized),
+        CPU_SECONDS: profile.cpu_seconds,
+        BLOCKED_SECONDS: profile.blocked_seconds,
+    }
     for name, tally in tallies.items():
         # Both numbers, always, for every hook. A hook that only counts makes
         # the two equal — which is a fact about that hook rather than noise —
@@ -263,4 +280,14 @@ def check_same_metrics(
 
 
 def metric_kind(name: str) -> MetricKind:
-    return MetricKind.DURATION if name == SECONDS else MetricKind.COUNT
+    """Whether a metric is an exact count or a single timing sample.
+
+    The blocked-time counters (S-3.7) record *seconds* as their amount, so their
+    totals are durations however they were collected. Reading one as a count
+    would invite a conclusion from a difference the noise floor covers.
+    """
+    if name in _DURATIONS:
+        return MetricKind.DURATION
+    if name.endswith(TOTAL_SUFFIX) and name.removesuffix(TOTAL_SUFFIX) in BLOCKED_COUNTERS:
+        return MetricKind.DURATION
+    return MetricKind.COUNT

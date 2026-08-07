@@ -30,6 +30,8 @@ import pytest
 from coldfix.bench.counting import calls_to, count, register_hook, unregister_hook
 from coldfix.bench.stats import Growth, fit_growth
 from coldfix.primitives.measurement import (
+    BLOCKED_SECONDS,
+    CPU_SECONDS,
     MATERIALIZED,
     SECONDS,
     TOTAL_SUFFIX,
@@ -227,6 +229,8 @@ def test_every_recorded_metric_is_fitted(query_counter: None) -> None:
     # agreement is a fact about the hook rather than a duplicate.
     assert set(result.metric_names()) == {
         SECONDS,
+        CPU_SECONDS,
+        BLOCKED_SECONDS,
         MATERIALIZED,
         QUERIES,
         f"{QUERIES}{TOTAL_SUFFIX}",
