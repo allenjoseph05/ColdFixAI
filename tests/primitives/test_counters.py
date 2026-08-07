@@ -77,15 +77,16 @@ class Cursor:
 
 
 def test_the_six_counters_the_story_names_are_all_declared() -> None:
-    """AC 1."""
-    assert set(CATALOGUE) == {
+    """AC 1. S-3.7's blocked-time counters share the catalogue, so this asserts
+    a subset — the six have to be there, and the catalogue is allowed to grow."""
+    assert {
         DB_QUERY,
         DB_ROWS,
         DB_BYTES,
         HTTP_REQUEST,
         FILE_OPEN,
         ALLOCATION,
-    }
+    } <= set(CATALOGUE)
 
 
 def test_every_counter_says_what_an_event_and_an_amount_are() -> None:
