@@ -91,11 +91,15 @@ class Outcome(StrEnum):
     UNRESOLVED = "unresolved"
 
 
+# What a threshold oracle is asked about. A set of active components here; a
+# revision in S-3.11, which is why this is a parameter rather than a fixed type —
+# two threshold oracles with separately-invented noise semantics would produce
+# findings that disagree for reasons nobody could see.
 @dataclass(frozen=True)
-class Probe:
-    """One configuration, what it cost, and what that was taken to mean."""
+class Probe[Subject]:
+    """One thing measured, what it cost, and what that was taken to mean."""
 
-    active: frozenset[str]
+    subject: Subject
     outcome: Outcome
     cost: float | None = None
     failure: str | None = None
@@ -114,8 +118,8 @@ class Probe:
 
 
 @dataclass
-class Oracle:
-    """Measures a configuration and says whether it is still expensive.
+class Oracle[Subject]:
+    """Measures something and says whether it is still expensive.
 
     Caches by configuration, because both algorithms re-ask about sets they have
     already seen and a cache hit is not an ablation. The trace is append-only,
@@ -123,7 +127,7 @@ class Oracle:
     asked, in the order it was asked.
     """
 
-    measure: Callable[[frozenset[str]], float]
+    measure: Callable[[Subject], float]
     threshold: float
     resolution: float = 0.0
     """Half-width of the band around the threshold inside which no answer is given.
@@ -133,7 +137,7 @@ class Oracle:
     of the search on noise, and `UNRESOLVED` is the honest name for that.
     """
 
-    probes: list[Probe] = field(default_factory=list)
+    probes: list[Probe[Subject]] = field(default_factory=list)
     measurements: int = 0
     """How many times the workload was actually run.
 
@@ -143,14 +147,14 @@ class Oracle:
     stayed flat. This is the number AC 3 is about, so it counts the thing.
     """
 
-    _known: dict[frozenset[str], Probe] = field(default_factory=dict, repr=False)
+    _known: dict[Subject, Probe[Subject]] = field(default_factory=dict, repr=False)
 
-    def __call__(self, active: frozenset[str]) -> Outcome:
-        known = self._known.get(active)
+    def __call__(self, subject: Subject) -> Outcome:
+        known = self._known.get(subject)
         if known is not None:
             self.probes.append(
                 Probe(
-                    active=active,
+                    subject=subject,
                     outcome=known.outcome,
                     cost=known.cost,
                     failure=known.failure,
@@ -161,7 +165,7 @@ class Oracle:
 
         self.measurements += 1
         try:
-            cost = self.measure(active)
+            cost = self.measure(subject)
         except Exception as error:  # noqa: BLE001 - any failure means the same thing
             # AC 4. Ablation breaks correctness deliberately, and some subsets
             # break it far enough that nothing can be measured. That is a third
@@ -169,14 +173,14 @@ class Oracle:
             # not an error to abort the search with — and it is recorded against
             # the configuration that caused it rather than swallowed.
             probe = Probe(
-                active=active,
+                subject=subject,
                 outcome=Outcome.UNRESOLVED,
                 failure=f"{type(error).__name__}: {error}",
             )
         else:
-            probe = Probe(active=active, outcome=self._classify(cost), cost=cost)
+            probe = Probe(subject=subject, outcome=self._classify(cost), cost=cost)
 
-        self._known[active] = probe
+        self._known[subject] = probe
         self.probes.append(probe)
         return probe.outcome
 
@@ -200,7 +204,7 @@ class SearchResult:
     culprits: frozenset[str]
     """The components that own the cost, as far as the measurements can tell."""
 
-    probes: tuple[Probe, ...]
+    probes: tuple[Probe[frozenset[str]], ...]
     measurements: int
     threshold: float
     resolution: float
@@ -229,7 +233,7 @@ class SearchResult:
         return min(margins) if margins else None
 
 
-def ddmin(candidates: Iterable[str], oracle: Oracle) -> SearchResult:
+def ddmin(candidates: Iterable[str], oracle: Oracle[frozenset[str]]) -> SearchResult:
     """Reduce an expensive configuration to a 1-minimal one.
 
     Zeller and Hildebrandt's `ddmin`, with `EXPENSIVE` in the place of their
@@ -283,7 +287,7 @@ def ddmin(candidates: Iterable[str], oracle: Oracle) -> SearchResult:
     )
 
 
-def dd(candidates: Iterable[str], oracle: Oracle) -> SearchResult:
+def dd(candidates: Iterable[str], oracle: Oracle[frozenset[str]]) -> SearchResult:
     """Isolate the difference between a cheap configuration and an expensive one.
 
     The variant the story's note prefers, and the one that fits ablation: the
@@ -355,7 +359,7 @@ def dd(candidates: Iterable[str], oracle: Oracle) -> SearchResult:
     )
 
 
-def _require_bounds(everything: frozenset[str], oracle: Oracle) -> None:
+def _require_bounds(everything: frozenset[str], oracle: Oracle[frozenset[str]]) -> None:
     """Both ends must say what the search assumes they say.
 
     Checking costs two measurements and buys the difference between a localized
