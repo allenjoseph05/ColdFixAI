@@ -204,6 +204,19 @@ def test_a_cap_above_the_ceiling_is_refused() -> None:
         plan(ranking_of(a_flag("one")), cap=MAXIMUM_FINDINGS_CAP + 1)
 
 
+def test_a_ranking_with_nothing_flagged_is_not_a_plan() -> None:
+    """Found by Epic 4's composition check.
+
+    Without this, a caller that always asked for a plan got `investigate=(),
+    deferred=(), within_budget=True` — which reads as *nothing to investigate and
+    everything fitted the budget*, is indistinguishable from a healthy plan, and
+    means S-4.5's null result is never produced. `assess` branches correctly, so
+    this is the guard for a caller that does not go through it.
+    """
+    with pytest.raises(BudgetError, match="no plan to make"):
+        plan(Ranking(flagged=(), healthy=("batched",), unclassified=()))
+
+
 def test_a_cap_of_zero_is_refused_rather_than_treated_as_a_dry_run() -> None:
     """It investigates nothing having already paid for the screen. If that is the
     intention it belongs at the call site, not in a budget set to zero."""
@@ -324,8 +337,9 @@ def screened(name: str, call: Any) -> Any:
             report=VerificationReport(strategy=ResetStrategy.SNAPSHOT_RESTORE, cycles=10),
         ),
         process_identity=subject.process_identity,
+        extra_counters=subject.payload,
     )
-    return screen_growth(bound, counters=[DB_QUERY], extra_counters=subject.payload)
+    return screen_growth(bound, counters=[DB_QUERY])
 
 
 def test_the_cap_composes_with_a_real_screen(query_counter: None) -> None:

@@ -170,6 +170,7 @@ def make(name: str, call: Any, **overrides: Any) -> tuple[BoundWorkload, Subject
             report=VerificationReport(strategy=ResetStrategy.SNAPSHOT_RESTORE, cycles=10),
         ),
         "process_identity": subject.process_identity,
+        "extra_counters": subject.payload,
     }
     arguments.update(overrides)
     return BoundWorkload(descriptor, **arguments), subject
@@ -180,8 +181,8 @@ def bound(name: str, call: Any, **overrides: Any) -> BoundWorkload:
 
 
 def sweep(name: str, call: Any) -> Any:
-    workload, subject = make(name, call)
-    return screen_growth(workload, counters=[DB_QUERY], extra_counters=subject.payload)
+    workload, _ = make(name, call)
+    return screen_growth(workload, counters=[DB_QUERY])
 
 
 # ------------------------------------ AC 1 and 2: every workload, every metric
@@ -279,14 +280,9 @@ def test_observations_are_recorded_by_scale_however_the_sweep_ran(
     has to render identically between runs for ADR 002's cached prefix, so the
     sweep order and the recorded order are two different things.
     """
-    workload, subject = make("n.plus.one", list_books_n_plus_one)
+    workload, _ = make("n.plus.one", list_books_n_plus_one)
 
-    screened = screen_growth(
-        workload,
-        scales=(160, 10, 40),
-        counters=[DB_QUERY],
-        extra_counters=subject.payload,
-    )
+    screened = screen_growth(workload, scales=(160, 10, 40), counters=[DB_QUERY])
 
     assert screened.scales == (160, 10, 40)
     assert [point.scale for point in screened.workload.observations] == [10, 40, 160]
@@ -300,13 +296,11 @@ def test_a_metric_that_starts_at_zero_has_no_ratio(query_counter: None) -> None:
     fired — and dividing by it would turn that into the largest growth figure in
     the screen, which is exactly where S-4.3's ranking would put it.
     """
-    workload, subject = make("overflow", list_books_n_plus_one)
+    subject = Subject(list_books_n_plus_one)
+    workload = bound("overflow", list_books_n_plus_one, extra_counters=subject.beyond_first_page)
+    workload.invoke, workload.scale = subject.invoke, subject.scale
 
-    screened = screen_growth(
-        workload,
-        counters=[DB_QUERY],
-        extra_counters=subject.beyond_first_page,
-    )
+    screened = screen_growth(workload, counters=[DB_QUERY])
 
     assert screened.workload.observations[0].metrics["rows_beyond_page"] == 0
     assert screened.metric("rows_beyond_page").ratio is None

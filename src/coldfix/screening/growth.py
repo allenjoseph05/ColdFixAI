@@ -32,7 +32,7 @@ with.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from coldfix.bench.stats import Fit, Growth
@@ -139,7 +139,6 @@ def screen_growth(
     *,
     scales: Sequence[int] = SCREENING_SCALES,
     counters: Sequence[str] = (),
-    extra_counters: Callable[[], Mapping[str, float]] | None = None,
 ) -> ScreenedWorkload:
     """Measure one workload at every scale point and fit each metric against volume.
 
@@ -160,7 +159,7 @@ def screen_growth(
         scales=scales,
         distribution=bound.descriptor.fixture.distribution,
         counters=counters,
-        extra_counters=extra_counters,
+        extra_counters=bound.extra_counters,
         clear_caches=bound.clear_caches,
         process_identity=bound.process_identity,
     )
@@ -177,9 +176,12 @@ def screen(
     *,
     scales: Sequence[int] = SCREENING_SCALES,
     counters: Sequence[str] = (),
-    extra_counters: Callable[[], Mapping[str, float]] | None = None,
 ) -> tuple[ScreenedWorkload, ...]:
     """Screen every workload, in the order given.
+
+    Guard counters come off each binding rather than being passed in for all of
+    them, which Epic 4's composition check corrected: one callable applied to a
+    project of six workloads read one subject's counters six times.
 
     A workload that cannot be screened stops the screen. It is tempting to skip
     it and carry on with the rest — a screening pass that returned nine of ten
@@ -198,15 +200,7 @@ def screen(
         )
         raise ScreeningError(message)
 
-    return tuple(
-        screen_growth(
-            bound,
-            scales=scales,
-            counters=counters,
-            extra_counters=extra_counters,
-        )
-        for bound in workloads
-    )
+    return tuple(screen_growth(bound, scales=scales, counters=counters) for bound in workloads)
 
 
 def _observed(result: ScalingResult) -> tuple[Observation, ...]:

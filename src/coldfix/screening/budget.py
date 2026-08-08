@@ -115,7 +115,8 @@ def plan(ranking: Ranking, *, cap: int = DEFAULT_FINDINGS_CAP) -> Plan:
     Raises:
         BudgetError: a cap below one, which investigates nothing while still
             paying for the screen, or above `MAXIMUM_FINDINGS_CAP`, which is not
-            a cap.
+            a cap; or a ranking with nothing flagged, which is S-4.5's answer
+            rather than a plan.
     """
     if cap < 1:
         message = (
@@ -130,6 +131,20 @@ def plan(ranking: Ranking, *, cap: int = DEFAULT_FINDINGS_CAP) -> Plan:
             f"pass. `04-cost.md` §12.1 puts a worst-case finding at about $58, so this is a run "
             "with no ceiling on it — which is the condition §12.4 says makes every cost figure "
             "in that document meaningless. Split the repository across runs instead"
+        )
+        raise BudgetError(message)
+
+    if not ranking.flagged:
+        # Found by Epic 4's composition check. Without this a caller that always
+        # asked for a plan got `investigate=(), deferred=(), within_budget=True`
+        # — which reads as *nothing to investigate and everything fitted the
+        # budget*, is indistinguishable from a healthy plan, and never produces
+        # S-4.5's null result at all. The two outcomes are exclusive, and saying
+        # so here is what lets `assess` remove the branch from every caller.
+        message = (
+            "nothing was flagged, so there is no plan to make. A screen that found nothing has "
+            "an answer of its own — S-4.5's null result, which names what was looked at and the "
+            "thresholds applied. An empty plan says neither"
         )
         raise BudgetError(message)
 
