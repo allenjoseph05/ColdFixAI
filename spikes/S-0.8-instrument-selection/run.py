@@ -37,6 +37,13 @@ from scenarios import RESPONSE_SCHEMA, SCENARIOS, Scenario
 
 MODEL = "claude-opus-5"
 
+# List price for MODEL as of 2026-08-04: $5 / $25 per million tokens. Hardcoded
+# rather than fetched, so the number printed at the end is an estimate that goes
+# stale if pricing moves — the billing console remains authoritative. It is here
+# because a spike that cannot say roughly what it cost gets deferred on a guess.
+INPUT_USD_PER_TOKEN = 5.0 / 1_000_000
+OUTPUT_USD_PER_TOKEN = 25.0 / 1_000_000
+
 SYSTEM = """\
 You are the Diagnostician in a performance-investigation system. You are given \
 the results of an experiment that has already been run, and you choose the next \
@@ -76,8 +83,14 @@ Experiment results:
 Choose the next experiment."""
 
 
-def ask(client: Any, scenario: Scenario) -> dict[str, Any]:
-    """One structured response for one scenario."""
+def ask(client: Any, scenario: Scenario) -> tuple[dict[str, Any], dict[str, int]]:
+    """One structured response for one scenario, and what it cost.
+
+    Usage is returned alongside the answer because the first execution of this
+    spike could not report its own cost: it stored answers and scores only, so
+    the figure in FINDINGS.md had to come from the billing console. A spike
+    deferred four months on cost grounds should carry its own receipt.
+    """
     response = client.messages.create(
         model=MODEL,
         max_tokens=2048,
@@ -93,7 +106,11 @@ def ask(client: Any, scenario: Scenario) -> dict[str, Any]:
         raise SystemExit(f"request refused on {scenario.name}; nothing to score")
     text = next(block.text for block in response.content if block.type == "text")
     parsed: dict[str, Any] = json.loads(text)
-    return parsed
+    usage = {
+        "input_tokens": response.usage.input_tokens,
+        "output_tokens": response.usage.output_tokens,
+    }
+    return parsed, usage
 
 
 def score(scenario: Scenario, answer: dict[str, Any]) -> dict[str, bool]:
@@ -193,10 +210,41 @@ def main() -> None:
         action="store_true",
         help="Validate the scorer offline and exit. No API key required.",
     )
+    parser.add_argument(
+        "--scenario",
+        action="append",
+        metavar="NAME",
+        help=(
+            "Run only this scenario; repeatable. Re-running one scenario after "
+            "fixing it costs a sixth of a full pass, which is the difference "
+            "between checking a repair and paying for the whole set again."
+        ),
+    )
+    parser.add_argument(
+        "--out",
+        default="selection.json",
+        metavar="FILE",
+        help=(
+            "Filename under results/. Defaults to the full-pass record. Give a "
+            "partial run its own file: model output is not deterministic, so "
+            "overwriting a completed pass destroys evidence that cannot be "
+            "regenerated."
+        ),
+    )
     args = parser.parse_args()
 
     if args.self_check:
         raise SystemExit(1 if self_check() else 0)
+
+    selected = SCENARIOS
+    if args.scenario:
+        known = {s.name for s in SCENARIOS}
+        unknown = [name for name in args.scenario if name not in known]
+        if unknown:
+            raise SystemExit(
+                f"no such scenario: {', '.join(unknown)}\nknown: {', '.join(sorted(known))}"
+            )
+        selected = tuple(s for s in SCENARIOS if s.name in set(args.scenario))
 
     load_key_from_env_file()
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -215,14 +263,17 @@ def main() -> None:
     client = anthropic.Anthropic()
     results: list[dict[str, Any]] = []
 
-    for scenario in SCENARIOS:
+    spent: Counter[str] = Counter()
+
+    for scenario in selected:
         per_run = []
         chosen: Counter[str] = Counter()
         for _ in range(args.repeats):
-            answer = ask(client, scenario)
+            answer, usage = ask(client, scenario)
             marks = score(scenario, answer)
             chosen[answer["next_instrument"]] += 1
-            per_run.append({"answer": answer, "score": marks})
+            spent.update(usage)
+            per_run.append({"answer": answer, "score": marks, "usage": usage})
 
         instrument_rate = _rate(per_run, "instrument")
         trap_rate = _rate(per_run, "trap")
@@ -243,27 +294,58 @@ def main() -> None:
             }
         )
 
+        # flush: stdout is block-buffered when piped, and the whole run emits
+        # under a kilobyte. Without this a sixteen-minute pass shows nothing
+        # until it exits and cannot be told apart from a hung one.
         print(
             f"{scenario.name:<38} "
             f"instrument {instrument_rate:>5.0%}  "
             f"diagnosis {diagnosis_rate:>5.0%}  "
             f"trap {trap_rate:>5.0%}  "
             f"finding {finding_rate:>5.0%}   "
-            f"{dict(chosen)}"
+            f"{dict(chosen)}",
+            flush=True,
         )
 
     traps = [r for r in results if "trap" in r["tags"]]
+    if traps:
+        print(
+            f"\ntrap scenarios: {len(traps)}  |  "
+            f"mean trap-avoidance {sum(r['trap_rate'] for r in traps) / len(traps):.0%}  |  "
+            f"mean finding-discipline "
+            f"{sum(r['finding_discipline_rate'] for r in traps) / len(traps):.0%}",
+            flush=True,
+        )
+    else:
+        print("\nno trap scenarios in this selection; the decision rule needs a full pass")
+
+    cost = (
+        spent["input_tokens"] * INPUT_USD_PER_TOKEN + spent["output_tokens"] * OUTPUT_USD_PER_TOKEN
+    )
+    requests = args.repeats * len(selected)
     print(
-        f"\ntrap scenarios: {len(traps)}  |  "
-        f"mean trap-avoidance {sum(r['trap_rate'] for r in traps) / len(traps):.0%}  |  "
-        f"mean finding-discipline "
-        f"{sum(r['finding_discipline_rate'] for r in traps) / len(traps):.0%}"
+        f"cost: {requests} requests, "
+        f"{spent['input_tokens']:,} in + {spent['output_tokens']:,} out, "
+        f"${cost:.2f} at {MODEL} list price",
+        flush=True,
     )
 
-    out = Path(__file__).parent / "results" / "selection.json"
+    out = Path(__file__).parent / "results" / args.out
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"model": MODEL, "results": results}, indent=2))
-    print(f"wrote {out}")
+    out.write_text(
+        json.dumps(
+            {
+                "model": MODEL,
+                "repeats": args.repeats,
+                "scenarios_run": [s.name for s in selected],
+                "usage": dict(spent),
+                "cost_usd": round(cost, 4),
+                "results": results,
+            },
+            indent=2,
+        )
+    )
+    print(f"wrote {out}", flush=True)
 
 
 if __name__ == "__main__":
