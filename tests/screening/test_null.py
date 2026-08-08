@@ -126,8 +126,9 @@ def screened(name: str, call: Any) -> Any:
             report=VerificationReport(strategy=ResetStrategy.SNAPSHOT_RESTORE, cycles=10),
         ),
         process_identity=subject.process_identity,
+        extra_counters=subject.payload,
     )
-    return screen_growth(bound, counters=[DB_QUERY], extra_counters=subject.payload)
+    return screen_growth(bound, counters=[DB_QUERY])
 
 
 def emptied(result: Any) -> Any:

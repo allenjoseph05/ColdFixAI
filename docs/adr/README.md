@@ -87,6 +87,7 @@ Decisions found while building the primitives:
 | 050 | A toolkit is what was imported, and a floor measures one dimension | Epic 3 composition |
 | 051 | Verifying work must not require an N+1 — F6's first condition corrected | S-4.1 |
 | 052 | The N+1 is linear, so "superlinear" is the wrong test | S-4.3 |
+| 053 | A screen with no entry point, and four things only a project shows | Epic 4 composition |
 
 ## Format
 

@@ -139,8 +139,9 @@ def screened(name: str, call: Any) -> Any:
             report=VerificationReport(strategy=ResetStrategy.SNAPSHOT_RESTORE, cycles=10),
         ),
         process_identity=subject.process_identity,
+        extra_counters=subject.payload,
     )
-    return screen_growth(bound, counters=[DB_QUERY], extra_counters=subject.payload)
+    return screen_growth(bound, counters=[DB_QUERY])
 
 
 # ----------------------------------- AC 1: the defect the literal reading misses
@@ -269,13 +270,31 @@ def test_a_duration_that_rose_less_than_the_noise_floor_cannot_flag(
     result = screened("batched", list_books_batched)
     shaped = _with_fit(result, SECONDS, Growth.SUPERLINEAR)
 
-    imperceptible = _with_metric(
-        _with_metric(shaped, SECONDS, 0.001, at_smallest=True), SECONDS, 0.010
-    )
-    real = _with_metric(_with_metric(shaped, SECONDS, 0.001, at_smallest=True), SECONDS, 1.400)
+    measurable = _with_metric(shaped, SECONDS, 0.400, at_smallest=True)
+    imperceptible = _with_metric(measurable, SECONDS, 0.410)
+    real = _with_metric(measurable, SECONDS, 1.400)
 
     assert SECONDS not in {item.metric for item in flag(imperceptible)}
     assert SECONDS in {item.metric for item in flag(real)}
+
+
+def test_a_duration_too_small_to_measure_at_all_cannot_flag(query_counter: None) -> None:
+    """Found by Epic 4's composition check, and it is the same clock granularity
+    that bit S-3.7 and S-3.13.
+
+    `cpu_seconds` comes from `process_time`, which moves in ~15.6ms steps on
+    Windows. A sub-millisecond workload records zero ticks at the small scale and
+    two at the large one, so a **quantisation artefact of 31ms** clears a 20ms
+    floor and flags a workload that did nothing — which is what happened to the
+    batched control the first time the whole epic ran at once. Both ends have to
+    be measurable, or the denominator is rounding.
+    """
+    result = screened("batched", list_books_batched)
+    shaped = _with_fit(result, SECONDS, Growth.SUPERLINEAR)
+
+    quantised = _with_metric(_with_metric(shaped, SECONDS, 0.0, at_smallest=True), SECONDS, 0.03125)
+
+    assert SECONDS not in {item.metric for item in flag(quantised)}
 
 
 def test_a_count_needs_no_absolute_floor_to_flag(query_counter: None) -> None:
@@ -364,6 +383,28 @@ def test_a_metric_whose_growth_could_not_be_fitted_is_neither_flagged_nor_cleare
     assert ("batched", CELLS) in ranking.unclassified
     assert CELLS not in {item.metric for item in ranking.flagged}
     assert "could not tell" in ranking.report()
+
+
+def test_a_metric_that_could_not_have_flagged_is_not_reported_as_unclassified(
+    query_counter: None,
+) -> None:
+    """Found by Epic 4's composition check, and it is about caveat inflation.
+
+    `blocked_seconds` is elapsed minus CPU, so on a workload fast enough for the
+    two clocks to agree it is zero or negative and has no exponent — unfittable
+    on essentially every healthy fixture here. Recorded as *could not tell*, it
+    made every null result say it did not cover everything it screened, and a
+    caveat attached to everything is one a reader learns to skip. It also could
+    not have flagged: it is below the timing floor at both ends, so its exponent
+    was never going to change anything.
+    """
+    result = screened("batched", list_books_batched)
+
+    unfittable_duration = _unfitted(result, SECONDS)
+    unfittable_count = _unfitted(result, DB_QUERY)
+
+    assert rank([unfittable_duration]).unclassified == ()
+    assert rank([unfittable_count]).unclassified == (("batched", DB_QUERY),)
 
 
 def test_ranking_nothing_is_an_error_and_not_a_clean_bill(query_counter: None) -> None:
