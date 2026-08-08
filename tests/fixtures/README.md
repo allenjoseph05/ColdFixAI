@@ -105,6 +105,16 @@ fitter keying on an exact ratio rather than a fitted exponent gets it wrong.
 `linearithmic_sort` exists so "recovers the exponent" is a real claim rather than
 a two-way guess between linear and quadratic.
 
+**`linearithmic_sort` is `sorted()`, so S-3.19 cannot see it.** Its work happens
+in C, and instruction counting reports 14 bytecode instructions for a sort of two
+hundred elements — correctly. Reaching for it as the baseline in an
+instruction-count comparison is the obvious move and it does not work: the
+comparison comes back `trustworthy=False` and refuses to name a winner, which is
+the instrument doing its job rather than reporting a C implementation as nearly
+free. Use `linear_scan` for a Python-against-Python count, and S-1.6 with a clock
+if the C control is what you actually want to rank against. Found by the Epic 3
+composition check.
+
 ### Imports — `planted/slow_import.py`, `planted/fast_import.py`
 
 | Module | Kind | Signature |
