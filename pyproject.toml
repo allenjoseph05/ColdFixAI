@@ -7,6 +7,12 @@ requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
+    # S-3.17's search engine, not a test tool. `hypothesis.target()` is targeted
+    # property-based testing (Löscher & Sagonas, ISSTA 2017) — an existing search
+    # engine whose fitness function the caller supplies, which is what lets input
+    # search be guided by measured cost instead of by coverage. ADR 046 records
+    # why no AFL-lineage engine is wrapped instead.
+    "hypothesis>=6.100",
     "psycopg[binary]>=3.2",
     "pydantic>=2.9",
 ]

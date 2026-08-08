@@ -10,6 +10,9 @@ dist/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+# S-3.17. The example database is switched off for every campaign this project
+# runs, but Hypothesis caches unicode tables here regardless.
+.hypothesis/
 .coverage
 htmlcov/
 
