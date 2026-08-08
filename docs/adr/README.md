@@ -51,6 +51,7 @@ Decisions found while building the execution environment:
 |---|---|---|
 | 020 | A container is destroyed by name, and its status read from the daemon | S-2.1 |
 | 021 | Worktrees are detached, and the clean-tree guard is asymmetric | S-2.2 |
+| 022 | A diagnostic session has no method that returns a diff | S-2.3 |
 
 ## Format
 
