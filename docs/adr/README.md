@@ -84,6 +84,7 @@ Decisions found while building the primitives:
 | 047 | A payload that costs ten times as much is withheld, not printed | S-3.17 |
 | 048 | The circular question is refused by a constructor, not by a convention | S-3.18 |
 | 049 | The deterministic unit is a bytecode instruction, and two corrections make it one | S-3.19 |
+| 050 | A toolkit is what was imported, and a floor measures one dimension | Epic 3 composition |
 
 ## Format
 

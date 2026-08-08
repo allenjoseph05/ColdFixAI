@@ -111,10 +111,22 @@ class ImpossibleBoundError(BoundError):
 
 
 class BoundKind(StrEnum):
-    """The three F8 kept. There is no fourth, and adding one is a design decision."""
+    """What F8 kept, and adding one is a design decision rather than a convenience.
+
+    `FIELDS_REQUIRED` was added when composing Epic 3, which is the first thing
+    that ran the row floor against the planted over-fetch: both the defect and
+    its control return the same *number of rows*, so the row floor puts them at
+    exactly 1.0x and reports no room in the one workload built to have some.
+    Over-fetching is a width defect, and §13's own table names the width case —
+    *serialization: fields consumed downstream vs fields serialized*. It is
+    computable on the same terms as the row floor, off the response the workload
+    actually returned rather than off an opinion about what it should have
+    fetched.
+    """
 
     BYTES_READ = "bytes that must be read"
     ROWS_REQUIRED = "rows the response schema requires"
+    FIELDS_REQUIRED = "fields the response actually contains"
     INSTRUCTIONS = "instructions a reference implementation retires"
 
 
@@ -333,6 +345,48 @@ def rows_required_by(entities: Mapping[str, Collection[Hashable]], *, metric: st
         metric=metric,
         floor=float(sum(distinct.values())),
         basis=f"the response itself contains {listed}",
+    )
+
+
+def fields_required_by(response: Sequence[object], *, metric: str) -> Bound:
+    """A floor on payload width: the response says how many fields it carries.
+
+    The row floor cannot see an over-fetch. A query returning five columns where
+    one is used returns exactly as many *rows* as the projected version, so the
+    two land at the same floor and the defect reads as having no room. This
+    counts what came back per item instead — `01-primitives.md` §13's
+    *serialization* row, where the bound is fields consumed and the measurement
+    is fields serialized.
+
+    Computable on the same terms as the row floor: read off the response the
+    workload returned. A response of plain values is one field each; a response
+    of mappings carries as many as the mapping has keys. What it deliberately
+    does not do is guess at fields a *caller further downstream* might not use —
+    that is intent, and F8 dropped it.
+
+    Raises:
+        BoundError: an empty response, which has no width to read.
+        NotComputableError: `metric` has no computable minimum.
+    """
+    if not response:
+        message = (
+            "a field floor needs a response to read a width off; an empty one carries no "
+            "fields and bounds nothing"
+        )
+        raise BoundError(message)
+
+    widths = [len(item) if isinstance(item, Mapping) else 1 for item in response]
+    total = sum(widths)
+    shape = (
+        f"{len(response)} items carrying {widths[0]} field(s) each"
+        if len(set(widths)) == 1
+        else f"{len(response)} items carrying {total} fields between them"
+    )
+    return Bound(
+        kind=BoundKind.FIELDS_REQUIRED,
+        metric=metric,
+        floor=float(total),
+        basis=f"the response itself is {shape}",
     )
 
 
