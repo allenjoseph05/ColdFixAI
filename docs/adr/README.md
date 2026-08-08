@@ -50,6 +50,7 @@ Decisions found while building the execution environment:
 | ADR | Decision | Came from |
 |---|---|---|
 | 020 | A container is destroyed by name, and its status read from the daemon | S-2.1 |
+| 021 | Worktrees are detached, and the clean-tree guard is asymmetric | S-2.2 |
 
 ## Format
 
