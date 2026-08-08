@@ -51,13 +51,8 @@ from coldfix.primitives.counters import (
     FILE_OPEN,
     HTTP_REQUEST,
 )
-from coldfix.primitives.measurement import MeasurementError
+from coldfix.primitives.measurement import INSTRUCTIONS, MeasurementError
 from coldfix.primitives.registry import REGISTRY, CostClass, Primitive
-
-# S-3.19 produces this. Named here because the bound is computable before the
-# instrument is: a hand-written reference implementation's retired-instruction
-# count is a floor whether or not anything is measuring the subject yet.
-INSTRUCTIONS = "instructions"
 
 # Below this much available, the check says an investigation is unlikely to be
 # worth its cost. The number is a factor of the measurement, not a percentage of

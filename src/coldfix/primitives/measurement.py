@@ -53,7 +53,14 @@ MATERIALIZED = "materialized"
 CPU_SECONDS = "cpu_seconds"
 BLOCKED_SECONDS = "blocked_seconds"
 
-RESERVED_METRICS = frozenset({SECONDS, MATERIALIZED, CPU_SECONDS, BLOCKED_SECONDS})
+# S-3.19. Named here rather than in the module that produces it, because
+# `01-primitives.md` §12 makes it a metric the Diagnostician reads beside wall
+# time and query count — and because a name only one module knows is a name an
+# adapter will spell differently. Nothing in `measure_once` produces it: counting
+# instructions costs 33x the run, so it is asked for on purpose or not at all.
+INSTRUCTIONS = "instructions"
+
+RESERVED_METRICS = frozenset({SECONDS, MATERIALIZED, CPU_SECONDS, BLOCKED_SECONDS, INSTRUCTIONS})
 
 # Every counter contributes two metrics: how many events, and the sum of their
 # amounts. The second is named by suffixing the first.

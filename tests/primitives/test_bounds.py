@@ -19,7 +19,6 @@ import re
 import pytest
 
 from coldfix.primitives.bounds import (
-    INSTRUCTIONS,
     WORTH_INVESTIGATING,
     Bound,
     BoundError,
@@ -40,6 +39,7 @@ from coldfix.primitives.counters import (
     FILE_OPEN,
     HTTP_REQUEST,
 )
+from coldfix.primitives.measurement import INSTRUCTIONS
 from coldfix.primitives.registry import REGISTRY, Capability, CostClass, ProjectProfile
 
 # One order row per order, plus one row per distinct customer. The endpoint that
