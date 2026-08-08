@@ -51,6 +51,8 @@ from types import TracebackType
 from typing import ClassVar, Self
 
 from coldfix.bench.execute import DEFAULT_MAX_OUTPUT_CHARS, ExecutionResult, execute
+from coldfix.sandbox.patching import DEFAULT_POLICY, PatchPolicy
+from coldfix.sandbox.patching import apply_patch as _apply_patch
 from coldfix.sandbox.runner import DEFAULT_LIMITS, ResourceLimits, Sandbox
 from coldfix.sandbox.worktrees import Repository, Worktree
 
@@ -99,10 +101,17 @@ class Session:
 
     mode: ClassVar[ExecutionMode]
 
-    def __init__(self, repository: Repository, worktree: Worktree, sandbox: Sandbox) -> None:
+    def __init__(
+        self,
+        repository: Repository,
+        worktree: Worktree,
+        sandbox: Sandbox,
+        policy: PatchPolicy = DEFAULT_POLICY,
+    ) -> None:
         self._repository = repository
         self._worktree = worktree
         self._sandbox = sandbox
+        self._policy = policy
         self._closed = False
 
     @property
@@ -194,6 +203,29 @@ class CandidateSession(Session):
         _git(self._worktree.path, "add", "--intent-to-add", "--all")
         return _git(self._worktree.path, "diff", "HEAD").stdout
 
+    def apply_patch(self, diff: str) -> frozenset[str]:
+        """Apply `diff` to this worktree, or reject it and change nothing.
+
+        The protected-path filter runs here, in the applier, because this is the
+        only route by which a diff becomes a file. A model is never asked what
+        it intends to touch and is never told what it may not — S-2.4's rule is
+        that the rejection is server-side, and a check anywhere else would be a
+        check something could be routed around.
+
+        Returns the paths written, so a caller recording an attempt does not
+        re-derive them.
+
+        Raises:
+            ProtectedPathError: the patch touches a file that decides whether
+                the patch worked.
+            UnsafePathError: a path is absolute or climbs out of the worktree.
+            UnparsablePatchError: git sees a path the filter did not.
+            PatchDidNotApplyError: the patch was allowed and does not fit.
+        """
+        if self._closed:
+            raise SessionClosedError(self.mode)
+        return _apply_patch(diff, worktree=self._worktree.path, policy=self._policy)
+
 
 @dataclass(frozen=True)
 class Workbench:
@@ -208,6 +240,7 @@ class Workbench:
     image: str
     worktree_root: Path
     limits: ResourceLimits = DEFAULT_LIMITS
+    policy: PatchPolicy = DEFAULT_POLICY
 
     def open(self, revision: str, *, mode: ExecutionMode) -> DiagnosticSession | CandidateSession:
         """Create a worktree at `revision` and bind a sandbox to it.
@@ -242,7 +275,7 @@ class Workbench:
             raise
 
         session_type = DiagnosticSession if mode is ExecutionMode.DIAGNOSTIC else CandidateSession
-        return session_type(self.repository, worktree, sandbox)
+        return session_type(self.repository, worktree, sandbox, self.policy)
 
 
 def _git(cwd: Path, *args: str) -> ExecutionResult:
