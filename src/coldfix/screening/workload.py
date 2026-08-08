@@ -57,7 +57,7 @@ from collections.abc import Callable, Mapping
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from coldfix.primitives.counters import DB_QUERY
-from coldfix.primitives.measurement import SECONDS
+from coldfix.primitives.measurement import BLOCKED_SECONDS, SECONDS
 from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetStrategy
 from coldfix.sandbox.verification import VerifiedReset
@@ -86,6 +86,16 @@ MINIMUM_SCALE_RATIO = 4.0
 MINIMUM_POINTS = 2
 
 _SLUG = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
+
+# Metrics that may legitimately be below zero, listed rather than assumed.
+#
+# `blocked_seconds` is elapsed minus CPU, so it goes negative whenever CPU time
+# exceeds the wall clock — which S-3.7 reports as `Boundedness.PARALLEL` and
+# deliberately does **not** clamp, because a zero there would say *never waited*
+# and that is a finding this must not be able to manufacture. Found by S-4.2:
+# every sweep records it, so a blanket non-negative rule rejected the first real
+# screening result on a workload fast enough for the timers to disagree.
+_SIGNED = frozenset({BLOCKED_SECONDS})
 
 # **`extra="forbid"` is the F6 control, not tidiness.** Pydantic's default is to
 # discard an unrecognised key without a word, so `Workload(..., work_verified=
@@ -124,14 +134,21 @@ class Observation(BaseModel):
         if not metrics:
             message = "an observation with no metrics records nothing"
             raise ValueError(message)
-        bad = sorted(
-            name for name, value in metrics.items() if not math.isfinite(value) or value < 0
+
+        infinite = sorted(name for name, value in metrics.items() if not math.isfinite(value))
+        if infinite:
+            message = f"these metrics are not numbers: {infinite}"
+            raise ValueError(message)
+
+        negative = sorted(
+            name for name, value in metrics.items() if value < 0 and name not in _SIGNED
         )
-        if bad:
+        if negative:
             message = (
-                f"these metrics are not usable measurements: {bad}. A raw count or duration is "
-                "finite and non-negative; the negative case S-3.2 allows is a metric with the "
-                "framework baseline already subtracted, which an observation does not hold"
+                f"these metrics are negative and cannot be: {negative}. The negative case S-3.2 "
+                "allows is a metric with the framework baseline already subtracted, which an "
+                f"observation does not hold; the ones that may legitimately go below zero are "
+                f"{sorted(_SIGNED)}"
             )
             raise ValueError(message)
         return dict(metrics)
@@ -361,15 +378,26 @@ class BoundWorkload:
     that was never used — and S-2.6's whole argument is that a reset which did
     not happen is undetectable from the results, because a stale state and a
     correct one both report the same thing every time.
+
+    **`clear_caches` and `process_identity` are here because S-4.2 could not run
+    without them.** A reset returns the *database* to its baseline and says
+    nothing about what the process cached in memory, and `measure_once` refuses a
+    sweep that has neither guarantee — so a workload carrying only its reset
+    method described something that could not be measured. Both are optional
+    here and neither is defaulted: which one an adapter can supply is a fact
+    about the environment, and inventing one on the workload's behalf would be
+    inventing the guarantee itself.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - see the note on scale_volume
         self,
         descriptor: Workload,
         *,
         invoke: Callable[[], object],
         scale: Callable[[int], object],
         reset: VerifiedReset,
+        clear_caches: Callable[[], object] | None = None,
+        process_identity: Callable[[], object] | None = None,
     ) -> None:
         # Widened to `object` for S-1.6's reason: the annotations say both are
         # callable, so a guard written against them is typed out of existence,
@@ -398,6 +426,8 @@ class BoundWorkload:
         self.invoke = invoke
         self.scale = scale
         self.reset = reset
+        self.clear_caches = clear_caches
+        self.process_identity = process_identity
 
     @property
     def id(self) -> str:
