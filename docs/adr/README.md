@@ -43,6 +43,7 @@ Decisions found while building the lab bench:
 | 016 | Malformed input must not produce a well-formed answer | E1 audit |
 | 017 | An instrument must survive the input it cannot summarize | E1 audit |
 | 018 | A comparison owns the order its samples were taken in | S-1.6 |
+| 019 | The noise floor is simulated against the test that will be used | S-1.7 |
 
 ## Format
 
