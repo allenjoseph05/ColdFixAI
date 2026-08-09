@@ -88,6 +88,7 @@ Decisions found while building the primitives:
 | 051 | Verifying work must not require an N+1 — F6's first condition corrected | S-4.1 |
 | 052 | The N+1 is linear, so "superlinear" is the wrong test | S-4.3 |
 | 053 | A screen with no entry point, and four things only a project shows | Epic 4 composition |
+| 054 | The commit sha is the wrong repo identity, and the machine is not in the key | S-5.1 |
 
 ## Format
 
