@@ -58,12 +58,28 @@ and here it would be an estimate of whether a cost control is working.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
 
 from coldfix.cost.accounting import AccountingError, TokenUsage
+
+LogSource = Callable[[], str]
+"""Where the log block's text comes from, when something else owns the log.
+
+S-5.8's `PrunedLog` renders the whole block — notice plus one summary per
+experiment — and this module renders a block per *entry*. A caller holding both
+therefore has two append-only logs and no correct way to join them: appending
+each summary loses S-5.8's retrieval notice, so the agent is never told the
+detail can be fetched, and appending the rendered block after every experiment
+re-appends every earlier experiment with it. Both keep the byte-prefix property,
+which is why neither shows up as a cache failure.
+
+So a log can be owned elsewhere. `append` is then refused rather than ignored —
+an `Investigation` has exactly one log, and which object owns it is decided once,
+at construction.
+"""
 
 # A request may carry at most four `cache_control` breakpoints. AC 1's structure
 # has exactly four cacheable boundaries, which is not a coincidence — the fifth
@@ -199,6 +215,14 @@ class Investigation:
     playbook: str
     source: str
     model: str
+    log_source: LogSource | None = None
+    """Where the log block comes from, when another object owns the log.
+
+    `None` keeps `append` and the internal list. Set it to S-5.8's
+    `PrunedLog.render` and this prompt renders that log instead — see `LogSource`
+    for why holding both and joining them by hand has no correct form.
+    """
+
     _log: list[str] = field(default_factory=list, repr=False)
     _usage: list[TokenUsage] = field(default_factory=list, repr=False)
 
@@ -225,8 +249,10 @@ class Investigation:
 
         Raises:
             ContextError: an empty entry, which would change the log's bytes
-                without recording anything.
+                without recording anything; or a log owned elsewhere, which this
+                prompt may render but must not also write to.
         """
+        self._refuse_if_owned_elsewhere("appended to")
         if not entry.strip():
             message = "an empty log entry invalidates the cached suffix and records nothing"
             raise ContextError(message)
@@ -234,7 +260,25 @@ class Investigation:
 
     @property
     def entries(self) -> Sequence[str]:
+        """The entries this prompt holds. Refused when the log is owned elsewhere.
+
+        Not an empty tuple in that case: the entries exist, they are somewhere
+        else, and returning nothing would let `is_append_only` compare two empty
+        lists and report the property holding over a log it never saw.
+        """
+        self._refuse_if_owned_elsewhere("read as entries from")
         return tuple(self._log)
+
+    def _refuse_if_owned_elsewhere(self, what: str) -> None:
+        if self.log_source is None:
+            return
+        message = (
+            f"this prompt's log is rendered by {self.log_source!r} and cannot be {what} here. One "
+            "log, one owner: a prompt that could both render another log and hold its own would "
+            "send whichever the caller happened to write to, and both are append-only, so the "
+            "wrong one is a cache that still looks like it is working"
+        )
+        raise ContextError(message)
 
     def log_text(self) -> str:
         """The whole log as **one** block.
@@ -244,7 +288,12 @@ class Investigation:
         S-5.4 caps investigation at 40 experiments — so a log rendered per
         experiment stops caching at experiment 21, exactly halfway to its own
         budget, with no error.
+
+        Delegates to `log_source` when another object owns the log. One block
+        either way, which is the part that decides whether anything caches.
         """
+        if self.log_source is not None:
+            return self.log_source()
         return "\n".join(self._log)
 
     def stable_prefix(self) -> str:
