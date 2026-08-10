@@ -97,6 +97,7 @@ Decisions found while building the primitives:
 | 060 | The cheap tier is the hardest to cache | S-5.7 |
 | 061 | Pruning is a rendering decision, and retrieval is not free | S-5.8 |
 | 062 | The vendor comparison is built, and the second column is left empty | S-5.9 (partial) |
+| 063 | Two append-only logs, and a cache nobody told about the router | Epic 5 composition |
 
 ## Format
 
