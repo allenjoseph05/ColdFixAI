@@ -148,8 +148,16 @@ class CheckpointedState(BaseModel):
     workloads: Sequence[JsonValue] = ()
     """What grounding produced. S-7.9's artifact."""
 
-    screening: Sequence[JsonValue] = ()
-    """The growth table, ranked by suspicion. S-4.3's `Ranking`."""
+    screening: Mapping[str, JsonValue] = Field(default_factory=dict)
+    """The growth table, ranked by suspicion, **keyed by workload id**. S-4.3's.
+
+    Keyed rather than the sequence this was until Epic 6's composition check.
+    F14 invalidates screening results *per workload* — the workloads whose files
+    a patch touched — and a flat sequence of opaque entries cannot be filtered
+    that way: nothing says which workload an entry belongs to, so S-6.4's policy
+    produced a correct answer that had nowhere to go. Neither story could see it
+    alone, because one owns the shape and the other owns the rule.
+    """
 
     target: JsonValue | None = None
     """The workload under investigation, or `None` between investigations."""
