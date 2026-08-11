@@ -104,6 +104,7 @@ Decisions found while building the primitives:
 | 067 | Unrecorded is not untouched | S-6.4 |
 | 068 | A correct answer with nowhere to go | Epic 6 composition |
 | 069 | The double is built against the real response | S-0.7b |
+| 070 | A declared version is not an installed one | S-7.1 |
 
 ## Format
 
