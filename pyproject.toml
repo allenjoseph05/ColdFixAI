@@ -27,6 +27,14 @@ packages = ["src/coldfix"]
 
 [dependency-groups]
 dev = [
+    # S-7.3 resolves a route table by asking the framework, because a URLconf
+    # built in a loop or by a DRF router has no routes to read out of a file.
+    # A *dev* dependency for the same reason `langgraph` is one: nothing under
+    # `src/` imports Django — the introspection program is source text run in
+    # the subject's own interpreter — and the alternative to installing it is
+    # testing route resolution against a fake, which would assert only what the
+    # fake was written to believe.
+    "django>=5.0",
     "langgraph>=1.2.10",
     "mypy>=1.13",
     "pytest>=8.3",
