@@ -105,6 +105,7 @@ Decisions found while building the primitives:
 | 068 | A correct answer with nowhere to go | Epic 6 composition |
 | 069 | The double is built against the real response | S-0.7b |
 | 070 | A declared version is not an installed one | S-7.1 |
+| 071 | Two probes, not one error message | S-7.2 |
 
 ## Format
 
