@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
+    "anthropic>=0.121.0",
     # S-3.17's search engine, not a test tool. `hypothesis.target()` is targeted
     # property-based testing (Löscher & Sagonas, ISSTA 2017) — an existing search
     # engine whose fitness function the caller supplies, which is what lets input
