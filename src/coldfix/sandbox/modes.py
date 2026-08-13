@@ -51,7 +51,7 @@ from types import TracebackType
 from typing import ClassVar, Self
 
 from coldfix.bench.execute import DEFAULT_MAX_OUTPUT_CHARS, ExecutionResult, execute
-from coldfix.sandbox.patching import DEFAULT_POLICY, PatchPolicy
+from coldfix.sandbox.patching import DEFAULT_PATCH_POLICY, PatchPolicy
 from coldfix.sandbox.patching import apply_patch as _apply_patch
 from coldfix.sandbox.runner import DEFAULT_LIMITS, ResourceLimits, Sandbox
 from coldfix.sandbox.worktrees import Repository, Worktree
@@ -106,7 +106,7 @@ class Session:
         repository: Repository,
         worktree: Worktree,
         sandbox: Sandbox,
-        policy: PatchPolicy = DEFAULT_POLICY,
+        policy: PatchPolicy = DEFAULT_PATCH_POLICY,
     ) -> None:
         self._repository = repository
         self._worktree = worktree
@@ -240,7 +240,7 @@ class Workbench:
     image: str
     worktree_root: Path
     limits: ResourceLimits = DEFAULT_LIMITS
-    policy: PatchPolicy = DEFAULT_POLICY
+    policy: PatchPolicy = DEFAULT_PATCH_POLICY
 
     def open(self, revision: str, *, mode: ExecutionMode) -> DiagnosticSession | CandidateSession:
         """Create a worktree at `revision` and bind a sandbox to it.
