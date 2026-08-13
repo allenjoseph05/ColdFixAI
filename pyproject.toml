@@ -35,6 +35,12 @@ dev = [
     # testing route resolution against a fake, which would assert only what the
     # fake was written to believe.
     "django>=5.0",
+    # S-7.4 mints a DRF token in the subject's interpreter, which is the one
+    # credential in AC 2 that no amount of Django alone can create. Here for the
+    # same reason and on the same terms as `django` above: without it that branch
+    # ships unverified, and a fake token model would assert only that this file
+    # knows what `Token.objects.get_or_create` is called.
+    "djangorestframework>=3.18.0",
     "langgraph>=1.2.10",
     "mypy>=1.13",
     "pytest>=8.3",
