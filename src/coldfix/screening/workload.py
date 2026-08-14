@@ -53,6 +53,7 @@ import json
 import math
 import re
 from collections.abc import Callable, Mapping
+from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -210,6 +211,44 @@ class FixtureRecipe(BaseModel):
         return hashlib.sha256(rendered.encode()).hexdigest()[:16]
 
 
+class EnvironmentAnchor(BaseModel):
+    """What the workload's dependencies were resolved against. S-7.12 / ADR 010.
+
+    Here rather than in Epic 7's own envelope because ADR 010's argument is about
+    **reproducibility**: *anchoring makes the dependency set a recorded input
+    rather than a function of when the tool happened to run*, and a measurement
+    is only reproducible if the resolution inputs travel with it. S-0.4's
+    byte-identical guard counters are void if a rerun silently resolves a
+    different Django.
+    """
+
+    model_config = _STRICT
+
+    anchor: date
+    """The day the package index was read as of."""
+
+    commit: str | None = None
+    """The commit the anchor was derived from. `None` means it was overridden —
+    which is why there is no separate flag: two fields that could disagree about
+    whether an override happened would eventually disagree."""
+
+    reason: str = Field(min_length=1)
+    """Why this date. For a derived anchor that is the commit; for an override it
+    is the operator's reason, which ADR 010 requires because a contemporary
+    dependency may carry a since-fixed incompatibility or a known vulnerability
+    and *why this run differs* is the whole value of recording it."""
+
+    python_version: str | None = None
+    """The interpreter the repository claimed, where it claimed one."""
+
+    dependencies: tuple[str, ...] = ()
+    """The resolved set, pinned. AC 4's *resolved dependency set*."""
+
+    @property
+    def overridden(self) -> bool:
+        return self.commit is None
+
+
 class Workload(BaseModel):
     """One runnable, scalable, resettable unit of work, and what was measured of it.
 
@@ -233,6 +272,16 @@ class Workload(BaseModel):
 
     fixture: FixtureRecipe
     reset_method: ResetStrategy
+    environment: EnvironmentAnchor | None = None
+    """What the dependencies were resolved against. Added at S-7.12.
+
+    Optional because a workload can be described before its environment is stood
+    up, and because artifacts predating S-7.12 exist. `None` means *not
+    recorded*, never *resolved against today*: ADR 010's whole argument is that
+    resolving against today is what breaks a 2019 repository, so the absence of
+    an anchor is a gap in the record rather than a default.
+    """
+
     observations: tuple[Observation, ...] = ()
     """Every scale point measured so far, ascending. May be empty.
 

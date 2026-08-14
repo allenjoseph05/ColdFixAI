@@ -178,4 +178,9 @@ markers = [
     # a database server that answers — a daemon that is up but cannot pull or
     # run Postgres fails these for a different reason and should say so.
     "postgres: needs a real Postgres server; skipped when one cannot be started",
+    # Separate again, because what it needs is neither slow nor local: S-7.12's
+    # AC 5 asks that a dependency set resolve differently at an anchor than at
+    # HEAD, and nothing but a real package index can show that. A fake resolver
+    # would return whichever answer the test wrote into it.
+    "index: needs a reachable package index; skipped when PyPI cannot be read",
 ]
