@@ -47,7 +47,7 @@ import ast
 import json
 import os
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -620,8 +620,35 @@ def rank(mechanisms: Sequence[Mechanism]) -> tuple[Scored, ...]:
     )
 
 
-def prefer(discovery: Discovery) -> Chosen:
+def _builds(mechanism: Mechanism, entity: str | None) -> bool:
+    """Whether this mechanism makes the entity the workload needs.
+
+    Matched on the last dotted segment, case-insensitively, because a factory's
+    `Meta.model` may be `Book`, `shop.Book` or `"shop.Book"` and a workload's
+    entity is a model label — three spellings of one model, and a comparison that
+    demanded one of them would silently prefer the wrong factory.
+    """
+    if entity is None or mechanism.model is None:
+        return False
+    return mechanism.model.rsplit(".", 1)[-1].lower() == entity.rsplit(".", 1)[-1].lower()
+
+
+def prefer(discovery: Discovery, *, entity: str | None = None) -> Chosen:
     """AC 2: what to use, or why synthesis is needed after all.
+
+    **`entity` was added by the Epic 7 composition check, and it was a real
+    defect.** Ranking scores a mechanism by how well it can seed *two scales*,
+    which is a property of the mechanism and not of the workload — so two
+    factories that are equally good at that tie, and the tie-break is
+    alphabetical. Composed, that chose `AuthorFactory` over `BookFactory`, seeded
+    a hundred authors, drove `/books/` and measured an empty list: one query and
+    thirteen bytes. Every S-7.5 test passed, because none of them had a second
+    factory to choose between.
+
+    Nothing here infers which entity a route serves — that is the Explorer's to
+    know, and guessing it from a URL segment would be the kind of inference this
+    module has avoided everywhere else. Given one, a mechanism that builds it
+    wins; not given one, the ranking is unchanged.
 
     Preference is over what *exists*; synthesis is the floor, not a competitor.
     But existing is not sufficient — a mechanism that cannot vary its size cannot
@@ -636,7 +663,8 @@ def prefer(discovery: Discovery) -> Chosen:
         and entry.mechanism.kind is not Kind.PYTEST_FIXTURE
     ]
     if usable:
-        return usable[0].mechanism
+        wanted = [entry for entry in usable if _builds(entry.mechanism, entity)]
+        return (wanted or usable)[0].mechanism
 
     if discovery.mechanisms:
         return NeedsSynthesis(
@@ -1028,6 +1056,34 @@ def measure_spread(  # noqa: PLR0913 - a GROUP BY needs the child, the field it
         child=child,
         per_parent=tuple(sorted(counts + [0] * childless, reverse=True)),
     )
+
+
+def factory_seeder(
+    mechanism: Mechanism, *, module: str, source: str | None = None
+) -> Callable[..., tuple[FixtureRecipe, Mapping[str, int]]]:
+    """A seeder that fills the subject using **its own factory**, for S-7.8 to drive.
+
+    **Added by the Epic 7 composition check**, which found that AC 2 — *use them
+    in preference to synthesis* — was honoured inside this module and nowhere
+    else: the only code that seeded at scale synthesized from the schema
+    unconditionally, so a repository shipping a perfectly good `BookFactory` was
+    measured against rows this system invented.
+
+    `module` is the caller's to supply, exactly as `exercise_factory` requires and
+    for the same reason: a `src/` layout means the checkout root is not the import
+    root, and guessing produces `ModuleNotFoundError` where the interesting
+    failure should be a factory raising.
+    """
+
+    def seed(
+        *, root: Path, python: Sequence[str], scale: int, timeout: float
+    ) -> tuple[FixtureRecipe, Mapping[str, int]]:
+        exercised = exercise_factory(
+            root, python=python, mechanism=mechanism, module=module, count=scale, timeout=timeout
+        )
+        return recipe_from(exercised, source=source), exercised.grew
+
+    return seed
 
 
 def recipe_from(exercise: Exercise, *, source: str | None = None) -> FixtureRecipe:

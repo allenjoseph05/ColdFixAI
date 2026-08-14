@@ -277,6 +277,27 @@ class Candidate:
     refers to it (`reverse("book-list")`) and how S-7.9 will address it."""
 
     @property
+    def request_path(self) -> str | None:
+        """The path a client can actually request, or `None` if there is not one.
+
+        **Added by the Epic 7 composition check, which found that there was no
+        such thing.** The resolver reports `books/` and every downstream story
+        takes a path — S-7.4 probes one, S-7.8 drives one — so each caller was
+        left to prepend the slash, and the composed run requested `books/` and
+        got a 404 that read downstream as *this route needs a credential*.
+
+        **`None` for a parsed route, and that is this module's own distinction
+        rather than caution.** A parse establishes that a `path()` call appears
+        in a file; it does not establish what prefix an `include()` mounted it
+        under, so `books/` from a parse may be `/api/books/` in the running
+        application. A fragment is not an address, and returning one would be the
+        guess `routes_are_complete` exists to prevent.
+        """
+        if self.kind is not Kind.HTTP_ROUTE or self.discovery is not Discovery.RESOLVED:
+            return None
+        return "/" + self.name.lstrip("^/")
+
+    @property
     def parameters(self) -> tuple[str, ...]:
         """The path parameters a route requires before it can be requested.
 
@@ -392,6 +413,21 @@ class Enumeration:
         endpoints when what happened is that nobody could read them.
         """
         return self.resolution.available and not self.resolution.problems
+
+    @property
+    def drivable(self) -> tuple[Candidate, ...]:
+        """Candidates that can actually be requested, in preference order.
+
+        **Added by the Epic 7 composition check.** The ranked list mixes parsed
+        and resolved routes because AC 1 is enumeration and AC 2 is order — but
+        only a resolved route has an address, so a caller taking `scored[0]` can
+        get a candidate it cannot drive. Every downstream story wants *the best
+        one I can actually request*, and leaving each of them to filter is how
+        one of them ends up not filtering.
+        """
+        return tuple(
+            entry.candidate for entry in self.scored if entry.candidate.request_path is not None
+        )
 
     @property
     def dynamically_registered(self) -> tuple[Candidate, ...]:

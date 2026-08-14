@@ -49,7 +49,7 @@ import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from coldfix.bench.execute import ExecutionError, execute
 from coldfix.explorer.entrypoints import settings_module
@@ -61,6 +61,8 @@ from coldfix.sandbox.reset import ResetStrategy
 from coldfix.screening.workload import (
     MINIMUM_SCALE_RATIO,
     RESPONSE_BYTES,
+    EnvironmentAnchor,
+    FixtureRecipe,
     Observation,
     Workload,
 )
@@ -83,6 +85,27 @@ DRIVE_TIMEOUT_SECONDS = 600.0
 whatever database the subject configured."""
 
 _MARKER = "<<<COLDFIX-WORK>>>"
+
+
+class Seeder(Protocol):
+    """How the subject is filled with data before a scale point is driven.
+
+    **Added by the Epic 7 composition check.** S-7.5 exists to *use a
+    repository's own factories in preference to synthesis*, and until the epic was
+    run end to end the only code that seeded at scale called `synthesize`
+    unconditionally — so that acceptance criterion was satisfied inside its own
+    module and unreachable from everywhere else.
+
+    A seam rather than a decision: the default is still synthesis, because it
+    needs nothing but a schema, and a caller that has located a factory passes
+    one. S-7.5 is deliberate that the *module path* of a factory is the caller's
+    to supply — a `src/` layout means the checkout root is not the import root —
+    so deriving it here would be the guess that story declined to make.
+    """
+
+    def __call__(
+        self, *, root: Path, python: Sequence[str], scale: int, timeout: float
+    ) -> tuple[FixtureRecipe, Mapping[str, int]]: ...
 
 
 class WorkVerificationError(Exception):
@@ -368,14 +391,16 @@ def verify_work(  # noqa: PLR0913 - what to drive, where, how to seed it, how th
     *,
     python: Sequence[str],
     path: str,
-    target: str,
     workload_id: str,
     description: str,
     reset: ResetStrategy,
     reset_between: Sequence[str] | None = None,
     scales: Sequence[int] = DEFAULT_SCALES,
+    target: str | None = None,
     per_parent: int = 1,
     distribution: Distribution = Distribution.UNIFORM,
+    seed: Seeder | None = None,
+    environment: EnvironmentAnchor | None = None,
     headers: Mapping[str, str] | None = None,
     cookies: Mapping[str, str] | None = None,
     repeats: int = DEFAULT_REPEATS,
@@ -420,29 +445,42 @@ def verify_work(  # noqa: PLR0913 - what to drive, where, how to seed it, how th
         )
         raise WorkVerificationError(message)
 
+    if seed is None and target is None:
+        message = (
+            "synthesis needs a target model to seed, and no seeder was supplied either. One of "
+            "the two has to say what the rows are: `target` names what to build from the schema, "
+            "and `seed` is the repository's own mechanism (S-7.5, preferred where there is one)"
+        )
+        raise WorkVerificationError(message)
+
     root = Path(root)
     drives: list[Drive] = []
     recipe = None
 
     for scale in ordered:
         _reset(root, python=python, command=reset_between, timeout=timeout)
-        seeded = synthesize(
-            root,
-            python=python,
-            target=target,
-            count=scale,
-            per_parent=per_parent,
-            distribution=distribution,
-            timeout=min(timeout, SYNTHESIS_TIMEOUT_SECONDS),
-        )
-        recipe = seeded.recipe()
+        if seed is not None:
+            seeded_recipe, created = seed(root=root, python=python, scale=scale, timeout=timeout)
+        else:
+            assert target is not None
+            synthesized = synthesize(
+                root,
+                python=python,
+                target=target,
+                count=scale,
+                per_parent=per_parent,
+                distribution=distribution,
+                timeout=min(timeout, SYNTHESIS_TIMEOUT_SECONDS),
+            )
+            seeded_recipe, created = synthesized.recipe(), synthesized.created
+        recipe = seeded_recipe
         drives.append(
             drive(
                 root,
                 python=python,
                 path=path,
                 scale=scale,
-                created=seeded.created,
+                created=created,
                 headers=headers,
                 cookies=cookies,
                 repeats=repeats,
@@ -460,6 +498,7 @@ def verify_work(  # noqa: PLR0913 - what to drive, where, how to seed it, how th
         entry_point=path,
         fixture=recipe,
         reset_method=reset,
+        environment=environment,
         observations=tuple(entry.observation() for entry in drives),
     )
     return Verification(workload=workload, drives=tuple(drives))
