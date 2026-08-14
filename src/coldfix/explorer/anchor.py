@@ -54,6 +54,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from coldfix.bench.execute import ExecutionError, execute
+from coldfix.screening.workload import EnvironmentAnchor
 
 ANCHOR_TIMEOUT_SECONDS = 300.0
 """A resolution against a package index, not a local computation."""
@@ -149,6 +150,21 @@ class Resolved:
     python_version: str | None
     requirements: tuple[str, ...]
     pins: tuple[str, ...]
+
+    def recorded(self) -> EnvironmentAnchor:
+        """The artifact form. AC 4, and the join the composition check found missing.
+
+        S-7.12 computed an anchor and S-4.1 gained a field to hold one, and until
+        the epic was run end to end there was **no way to get from the first to
+        the second** — the only code that builds a `Workload` never took one.
+        """
+        return EnvironmentAnchor(
+            anchor=self.anchor.on,
+            commit=self.anchor.commit,
+            reason=self.anchor.reason,
+            python_version=self.python_version,
+            dependencies=self.pins,
+        )
 
     def describe(self) -> str:
         lines = [f"Resolved {len(self.pins)} package(s) as of {self.anchor.describe()}"]
