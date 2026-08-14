@@ -1086,6 +1086,11 @@ def recipe_from(exercise: Exercise, *, source: str | None = None) -> FixtureReci
     return FixtureRecipe(
         entity=entity,
         per_parent=per_parent,
+        # S-7.7 widened the artifact, and a measured spread already knows this:
+        # the parent count is how many parents were counted. Recording it makes a
+        # discovered fixture describable in the same terms as a synthesized one,
+        # which is what lets the two be compared at all.
+        parents=len(spread.per_parent) if spread is not None else None,
         distribution=Distribution.UNIFORM,
         source=source or f"{exercise.mechanism.kind.value} {exercise.mechanism.name}",
         seed=None,

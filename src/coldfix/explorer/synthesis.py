@@ -55,7 +55,7 @@ from typing import Any
 
 from coldfix.bench.execute import ExecutionError, execute
 from coldfix.explorer.entrypoints import settings_module
-from coldfix.primitives.scaling import Distribution
+from coldfix.primitives.scaling import Allocation, Distribution, allocate
 from coldfix.screening.workload import FixtureRecipe
 
 SYNTHESIS_TIMEOUT_SECONDS = 300.0
@@ -268,6 +268,13 @@ class Value:
     literal: object = None
     template: str = ""
     model: str = ""
+    assignment: tuple[int, ...] = ()
+    """For a reference: which parent, by position, each child row points at.
+
+    S-7.7. The shape lives here rather than in the subject, because it is
+    arithmetic — S-3.3's `allocate` is deterministic and already tested — and a
+    subject that decided its own spread would be a second generator to keep in
+    step with the first. Empty means round-robin, which is what uniform is."""
 
     def as_json(self) -> dict[str, object]:
         return {
@@ -275,6 +282,7 @@ class Value:
             "literal": self.literal,
             "template": self.template,
             "model": self.model,
+            "assignment": list(self.assignment),
         }
 
 
@@ -302,12 +310,16 @@ class Plan:
     count: int
     per_parent: int
     steps: tuple[Step, ...]
+    distribution: Distribution = Distribution.UNIFORM
+    allocation: Allocation | None = None
+    """How the target's children landed on their parents, where the target has
+    parents at all. `None` for a model nothing points at from above."""
 
     def as_json(self) -> dict[str, object]:
         return {"steps": [step.as_json() for step in self.steps]}
 
     def describe(self) -> str:
-        lines = [f"synthesize {self.count} × {self.target}"]
+        lines = [f"synthesize {self.count} × {self.target} ({self.distribution.value})"]
         lines.extend(
             f"  {step.count} × {step.model}: {', '.join(sorted(step.values)) or 'defaults only'}"
             for step in self.steps
@@ -337,10 +349,24 @@ class Synthesis:
         an exclusion drawn under synthesized data is only true of uniform data,
         and `CLAUDE.md`'s rule is that exclusions carry their preconditions.
         """
+        allocation = self.plan.allocation
+        if allocation is None:
+            return (
+                "nothing points at this model from above, so there is no per-parent shape and "
+                "no per-parent cost for one to hide"
+            )
+        if allocation.distribution is Distribution.UNIFORM:
+            return (
+                f"every parent holds the same {allocation.largest} child(ren). Uniform data is "
+                "provably the blindest shape for any per-parent cost (S-3.3), so a cost that "
+                "only appears on a heavy parent cannot appear here — pass a distribution"
+            )
         return (
-            f"every parent holds the same {self.plan.per_parent} child(ren). Uniform data is "
-            "provably the blindest shape for any per-parent cost (S-3.3), so a cost that only "
-            "appears on a heavy parent cannot appear here. S-7.7 makes the shape a parameter"
+            f"{allocation.distribution.value}: the heaviest of {allocation.groups} parents holds "
+            f"{allocation.largest} of {allocation.total} children, and the largest tenth holds "
+            f"{allocation.head_mass:.0%}. A per-parent cost is paid here where a uniform fixture "
+            "would never pay it — and a *flat* result under this shape is a much stronger "
+            "exclusion than a flat result under uniform data"
         )
 
     def describe(self) -> str:
@@ -351,18 +377,25 @@ class Synthesis:
         return "\n".join(lines)
 
     def recipe(self) -> FixtureRecipe:
-        """AC 3 of S-7.5, from the other side: the artifact S-4.1 carries.
+        """AC 3 of S-7.5 and AC 3 of S-7.7: the artifact S-4.1 carries.
 
-        `UNIFORM` here is a statement about what was *built* rather than a reading
-        of what was found — synthesis chooses the shape, and until S-7.7 the only
-        shape it can choose is the blindest one. That asymmetry with S-7.5, where
-        the distribution is measured and a non-uniform spread is refused, is the
-        difference between describing found data and describing made data.
+        Every field is a statement about what was *built*, because synthesis
+        chooses the shape rather than reading one — the asymmetry with S-7.5,
+        where the distribution is measured and a non-uniform spread is refused.
+
+        **`per_parent` is the heaviest parent, not the mean.** S-4.1 widened the
+        field at S-7.7 rather than have it mean two things: the whole reason to
+        build a long tail is the request that takes minutes while every other
+        request stays fast, and that request is made by the heaviest parent.
+        `parents` travels with it so `allocate` can rebuild the same fixture
+        anywhere.
         """
+        allocation = self.plan.allocation
         return FixtureRecipe(
             entity=self.plan.target,
-            per_parent=self.plan.per_parent,
-            distribution=Distribution.UNIFORM,
+            per_parent=allocation.largest if allocation else self.plan.per_parent,
+            parents=allocation.groups if allocation else None,
+            distribution=self.plan.distribution,
             source=f"synthesized from schema ({len(self.plan.steps)} step(s))",
             seed=None,
         )
@@ -447,6 +480,12 @@ def resolve(spec, index):
         rows = pool.get(spec["model"]) or []
         if not rows:
             raise LookupError("no rows of " + spec["model"] + " were created to point at")
+        # An empty assignment is round-robin, which is what uniform is. A
+        # non-empty one is S-7.7's shape, decided by the planner: the subject
+        # indexes it and decides nothing.
+        assignment = spec.get("assignment") or []
+        if assignment:
+            return rows[assignment[index % len(assignment)] % len(rows)]
         return rows[index % len(rows)]
     raise LookupError("unknown value kind " + kind)
 
@@ -659,19 +698,26 @@ def plan(  # noqa: PLR0913 - the schema, what to build, how many, how they sprea
     target: str,
     count: int,
     per_parent: int = 1,
+    distribution: Distribution = Distribution.UNIFORM,
     also_fill: Mapping[str, frozenset[str]] | None = None,
     vary: Mapping[str, frozenset[str]] | None = None,
 ) -> Plan:
     """AC 1: walk the foreign keys and put the parents first.
+
+    S-7.7 adds `distribution`, and it applies to **the target's own parents** —
+    the relationship the workload traverses. Levels above it stay uniform: a
+    shape applied at every level compounds into one nobody asked for, and the
+    cost S-3.3 is about is paid where the request walks, not three joins up.
 
     `also_fill` and `vary` are what the database has taught so far — columns it
     refused as empty, and columns whose value it refused as repeated. A first plan
     passes neither; every revision passes more.
 
     Raises:
-        SynthesisError: a required column this cannot fill, or a chain that
-            cycles. Both are AC 4: reported with the model and the field rather
-            than left to fail as an opaque insert.
+        SynthesisError: a required column this cannot fill, a chain that cycles,
+            or a shape that will not fit the parent population. All three are
+            AC 4: reported with the model and the field rather than left to fail
+            as an opaque insert.
     """
     if target not in schema:
         known = ", ".join(sorted(schema)[:8]) or "nothing"
@@ -686,6 +732,9 @@ def plan(  # noqa: PLR0913 - the schema, what to build, how many, how they sprea
 
     order = _order_from(schema, target)
     counts = _counts_for(order, target=target, count=count, per_parent=per_parent)
+    allocation = _allocation_for(
+        schema[target], distribution=distribution, count=count, parents=counts
+    )
 
     steps = []
     for label in order:
@@ -705,16 +754,64 @@ def plan(  # noqa: PLR0913 - the schema, what to build, how many, how they sprea
                 model=label,
                 count=counts[label],
                 values=_values_for(
-                    model, also_fill.get(label, frozenset()), vary.get(label, frozenset())
+                    model,
+                    also_fill.get(label, frozenset()),
+                    vary.get(label, frozenset()),
+                    allocation if label == target else None,
                 ),
             )
         )
 
-    return Plan(target=target, count=count, per_parent=per_parent, steps=tuple(steps))
+    return Plan(
+        target=target,
+        count=count,
+        per_parent=per_parent,
+        steps=tuple(steps),
+        distribution=distribution,
+        allocation=allocation,
+    )
+
+
+def _allocation_for(
+    model: SchemaModel,
+    *,
+    distribution: Distribution,
+    count: int,
+    parents: Mapping[str, int],
+) -> Allocation | None:
+    """How the target's children land on their parents, or nothing if it has none.
+
+    **A shape that will not fit is refused, never quietly flattened.** Asking for
+    a long tail with `per_parent=1` gives one parent per child, and since
+    `allocate` guarantees every parent at least one child the only allocation that
+    exists is uniform — so the recipe would name a shape the data does not have,
+    in the one field that exists to stop exactly that. The refusal says which
+    knob to turn.
+    """
+    required = model.required_parents
+    if not required:
+        return None
+
+    groups = parents.get(required[0], 1)
+    built = allocate(distribution, groups=groups, total=count)
+
+    if distribution is not Distribution.UNIFORM and built.largest == min(built.counts):
+        message = (
+            f"a {distribution.value} spread of {count} {model.label} over {groups} parents is "
+            f"flat: every parent must hold at least one child, so {groups} parents and {count} "
+            "children leave nothing to skew with. Raise per_parent to make fewer, heavier "
+            "parents, or ask for more rows"
+        )
+        raise SynthesisError(message)
+
+    return built
 
 
 def _values_for(
-    model: SchemaModel, also_fill: frozenset[str], vary: frozenset[str]
+    model: SchemaModel,
+    also_fill: frozenset[str],
+    vary: frozenset[str],
+    allocation: Allocation | None = None,
 ) -> dict[str, Value]:
     values: dict[str, Value] = {}
     for schema_field in model.fields:
@@ -722,12 +819,29 @@ def _values_for(
         if not wanted or schema_field.auto:
             continue
         if schema_field.relates_to is not None:
-            values[schema_field.name] = Value(kind="reference", model=schema_field.relates_to)
+            values[schema_field.name] = Value(
+                kind="reference",
+                model=schema_field.relates_to,
+                assignment=_assignment_from(allocation)
+                if allocation is not None and schema_field.relates_to == model.required_parents[0]
+                else (),
+            )
         else:
             values[schema_field.name] = _filler_for(
                 schema_field, unique=schema_field.unique or schema_field.name in vary
             )
     return values
+
+
+def _assignment_from(allocation: Allocation) -> tuple[int, ...]:
+    """Which parent, by position, each child row points at.
+
+    The allocation says parent 0 holds five children and parent 1 holds one; this
+    turns that into the per-row list the subject indexes. Built here because
+    `allocate` is deterministic, so the assignment is a property of the plan and
+    lands in the replay key rather than being decided again at write time.
+    """
+    return tuple(position for position, held in enumerate(allocation.counts) for _ in range(held))
 
 
 def _order_from(schema: Mapping[str, SchemaModel], target: str) -> list[str]:
@@ -870,6 +984,7 @@ def synthesize(  # noqa: PLR0913 - the subject, its interpreter, what to build, 
     target: str,
     count: int,
     per_parent: int = 1,
+    distribution: Distribution = Distribution.UNIFORM,
     timeout: float = SYNTHESIS_TIMEOUT_SECONDS,
 ) -> Synthesis:
     """AC 1 to 4: build rows, learn what the models did not declare, and report either way.
@@ -899,6 +1014,7 @@ def synthesize(  # noqa: PLR0913 - the subject, its interpreter, what to build, 
             target=target,
             count=count,
             per_parent=per_parent,
+            distribution=distribution,
             also_fill=also_fill,
             vary=vary,
         )
