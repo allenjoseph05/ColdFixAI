@@ -531,6 +531,23 @@ def test_the_recipe_records_what_was_measured(migrated: Path) -> None:
     assert recipe.digest()
 
 
+def test_the_recipe_records_how_many_parents_were_counted(migrated: Path) -> None:
+    """S-7.7 widened the artifact and a measured spread already knows this. It is
+    what lets a discovered fixture be described in the same terms as a synthesized
+    one — and without it, two fixtures differing only in parent count share a
+    replay key."""
+    discovery = discover(migrated)
+    factory = next(m for m in discovery.mechanisms if m.name == "AuthorWithBooksFactory")
+    exercise = exercise_factory(
+        migrated, python=[sys.executable], mechanism=factory, module="shop.factories", count=5
+    )
+
+    recipe = recipe_from(exercise)
+
+    assert recipe.parents == 5
+    assert recipe.per_parent == 3
+
+
 def test_a_childless_parent_makes_the_spread_not_uniform(migrated: Path) -> None:
     """A parent holding nothing is absent from a GROUP BY over the child table.
     Left out, *nine parents with one book and one with none* is indistinguishable
