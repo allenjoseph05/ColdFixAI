@@ -46,6 +46,10 @@ SECONDS = "seconds"
 MATERIALIZED = "materialized"
 RESERVED_METRICS = frozenset({SECONDS, MATERIALIZED})
 
+# Every counter contributes two metrics: how many events, and the sum of their
+# amounts. The second is named by suffixing the first.
+TOTAL_SUFFIX = ".total"
+
 
 class MeasurementError(Exception):
     """A measurement could not be taken, or could not be trusted."""
@@ -181,7 +185,14 @@ def measure_once(
         seconds = perf_counter() - started
 
     metrics: dict[str, float] = {SECONDS: seconds, MATERIALIZED: float(materialized)}
-    metrics.update({name: float(tally.events) for name, tally in tallies.items()})
+    for name, tally in tallies.items():
+        # Both numbers, always, for every hook. A hook that only counts makes
+        # the two equal — which is a fact about that hook rather than noise —
+        # and a hook that measures a quantity would otherwise be recorded as
+        # its own operation count, silently: `db.rows` read as events is the
+        # number of queries, which is a plausible number and the wrong one.
+        metrics[name] = float(tally.events)
+        metrics[f"{name}{TOTAL_SUFFIX}"] = tally.total
 
     if extra_counters is not None:
         extra = extra_counters()

@@ -35,12 +35,25 @@ from dataclasses import dataclass, field
 from functools import wraps
 from pathlib import Path
 from types import FrameType
-from typing import Any
+from typing import Any, Protocol
 
-# `Record` is what a hook calls when the thing it watches happens. `Hook` is
-# what a framework adapter registers: given that callback, hand back a context
+
+class Record(Protocol):
+    """What a hook calls when the thing it watches happens.
+
+    The amount defaults to one, so a hook that only counts calls `record()` and
+    a hook that measures a quantity calls `record(rows)`. Both are the same
+    instrument: S-3.6's counters need *queries* and *rows returned* from one
+    attachment, and the project's guard-counter rule needs them from the same
+    run, because queries falling while rows explode is only visible if both were
+    counted at once.
+    """
+
+    def __call__(self, amount: float = 1.0) -> None: ...
+
+
+# What a framework adapter registers: given that callback, hand back a context
 # manager that has the instrumentation installed for its duration.
-Record = Callable[[], None]
 Hook = Callable[[Record], AbstractContextManager[None]]
 
 # Frames belonging to this package are dropped from captured stacks. An
@@ -91,6 +104,16 @@ class Count:
     hook_name: str
     capture_stacks: bool
     events: int = 0
+    total: float = 0.0
+    """The sum of every amount recorded.
+
+    Equal to `events` for a hook that only counts, because the amount defaults
+    to one. A hook that measures — rows returned, bytes transferred — makes this
+    the quantity and leaves `events` as the number of operations it arrived in.
+    Both numbers come from one attachment, which is what lets a guard counter be
+    read from the same run as the counter it guards.
+    """
+
     stacks: list[traceback.StackSummary] = field(default_factory=list)
 
 
@@ -142,8 +165,9 @@ def count(hook_name: str, *, capture_stacks: bool = False) -> Iterator[Count]:
 
     tally = Count(hook_name=hook_name, capture_stacks=capture_stacks)
 
-    def record() -> None:
+    def record(amount: float = 1.0) -> None:
         tally.events += 1
+        tally.total += amount
         if capture_stacks:
             # `sys._getframe` is private but is the documented-in-practice way
             # to read the caller's frame without the cost of `inspect`. Frame 1
