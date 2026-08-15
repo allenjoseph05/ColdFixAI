@@ -15,6 +15,7 @@ fast subset.
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import pytest
@@ -22,12 +23,15 @@ import pytest
 from coldfix.bench.execute import ExecutionTimeoutError, execute
 from coldfix.sandbox import (
     WORKSPACE_MOUNTPOINT,
+    InternalNetwork,
     MemoryLimitExceededError,
+    NotAnInternalNetworkError,
     ResourceLimits,
     Sandbox,
     SandboxStartError,
     docker_available,
 )
+from coldfix.sandbox.runner import docker_run_argv
 
 pytestmark = [pytest.mark.docker, pytest.mark.slow]
 
@@ -330,3 +334,51 @@ def test_an_absent_image_is_refused_rather_than_fetched(sandbox: Sandbox) -> Non
         absent.run(["python", "-c", "print(1)"], timeout=TIMEOUT)
 
     assert coldfix_containers() == before
+
+
+# ------------------------------------------------- the one widening (ADR 029)
+
+
+def test_a_bridged_network_is_refused(sandbox: Sandbox) -> None:
+    """The check that keeps AC 3 true after the network field was added.
+
+    `bridge` is docker's default and has a route off the host. If
+    `InternalNetwork` accepted it, a workload could reach its database and the
+    internet, and the two are indistinguishable from inside a container.
+    """
+    with pytest.raises(NotAnInternalNetworkError, match="not internal"):
+        InternalNetwork(name="bridge")
+
+
+def test_a_network_that_does_not_exist_is_refused() -> None:
+    with pytest.raises(NotAnInternalNetworkError):
+        InternalNetwork(name=f"coldfix-absent-{uuid.uuid4().hex[:8]}")
+
+
+def test_an_internal_network_is_accepted_and_reaches_the_argv(tmp_path: Path) -> None:
+    """Created, verified, and carried into the invocation as its name."""
+    network = InternalNetwork.create(f"coldfix-net-test-{uuid.uuid4().hex[:8]}")
+    try:
+        attached = Sandbox(image=IMAGE, workspace=tmp_path, network=network)
+
+        argv = docker_run_argv(attached, "c1", ["true"])
+
+        network_values = [argv[i + 1] for i, part in enumerate(argv[:-1]) if part == "--network"]
+        assert network_values == [network.name]
+    finally:
+        network.destroy()
+
+
+def test_creation_verifies_rather_than_trusting_the_command(tmp_path: Path) -> None:
+    """`create` re-inspects, because a name already taken is not an error.
+
+    Attaching to a pre-existing *bridged* network of the same name would
+    succeed silently if creation were trusted.
+    """
+    name = f"coldfix-net-collide-{uuid.uuid4().hex[:8]}"
+    execute(["docker", "network", "create", name], timeout=TIMEOUT)
+    try:
+        with pytest.raises(NotAnInternalNetworkError):
+            InternalNetwork.create(name)
+    finally:
+        execute(["docker", "network", "rm", name], timeout=TIMEOUT)
