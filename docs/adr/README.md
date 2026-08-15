@@ -73,6 +73,7 @@ Decisions found while building the primitives:
 | 036 | Wall minus CPU is exact; attribution by category is not, and says so | S-3.7 |
 | 037 | An envelope check needs a ratio and a floor, and the floor is measured | S-3.8 |
 | 038 | The divergence point is a suffix comparison, and a sample suffices | S-3.9 |
+| 039 | A sweep is a search, a plan is an opinion, and a revert is checked | S-3.10 |
 
 ## Format
 
