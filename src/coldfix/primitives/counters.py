@@ -55,6 +55,7 @@ from coldfix.bench.counting import (
     register_hook,
     unregister_hook,
 )
+from coldfix.primitives.envelope import BYTES_WRITTEN, ENVELOPE
 from coldfix.primitives.off_cpu import BLOCKED_DISK, BLOCKED_LOCK, BLOCKED_NETWORK
 
 # The six the story names. Dotted and lowercase, matching the primitive registry's
@@ -63,8 +64,18 @@ DB_QUERY = "db.query"
 DB_ROWS = "db.rows"
 DB_BYTES = "db.bytes"
 HTTP_REQUEST = "http.request"
+HTTP_BYTES = "http.bytes"
 FILE_OPEN = "file.open"
 ALLOCATION = "memory.allocation"
+ALLOCATION_BYTES = "memory.bytes"
+
+# The event readings of S-3.7's blocked-time hooks. Each blocked-time counter is
+# a *total* of seconds, and the thing it can be traded against is the number of
+# calls those seconds arrived in — fewer waits that each take longer, or more
+# waits that are each shorter. Both readings come from one attachment.
+BLOCKED_DISK_CALLS = f"{BLOCKED_DISK}.calls"
+BLOCKED_NETWORK_CALLS = f"{BLOCKED_NETWORK}.calls"
+BLOCKED_LOCK_CALLS = f"{BLOCKED_LOCK}.calls"
 
 
 class CounterError(Exception):
@@ -141,14 +152,15 @@ class Counter:
     amount: str
     """What the recorded amount means, or `"one per event"` where it only counts."""
 
-    guard: str | None
-    """The counter this one can be traded against.
+    guard: str
+    """What this one can be traded against, and it is never absent.
 
     `01-primitives.md` §2: every metric pairs with the resource it can be traded
     against, because halving the queries while quadrupling the rows returned is
-    not an improvement. Declared here; S-3.8 is what enforces the pairing and
-    adds the global envelope, since a guard *pair* is a denylist and fails by
-    omission.
+    not an improvement. S-3.8 made it mandatory and resolvable — the target is
+    either another counter or an envelope metric, checked at import — because a
+    guard that was allowed to be `None` is a guard nobody has to think about,
+    and `08-audit.md` F10 is about exactly the trades nobody thought about.
     """
 
     shape: CounterShape = CounterShape.EVENT_HOOK
@@ -190,7 +202,15 @@ CATALOGUE: Mapping[str, Counter] = {
             reads=Reading.EVENTS,
             event="one outbound HTTP request",
             amount="bytes in the response",
-            guard=f"{HTTP_REQUEST}, by response size",
+            guard=HTTP_BYTES,
+        ),
+        Counter(
+            name=HTTP_BYTES,
+            hook=HTTP_REQUEST,
+            reads=Reading.TOTAL,
+            event="one outbound HTTP request",
+            amount="bytes in the response",
+            guard=HTTP_REQUEST,
         ),
         Counter(
             name=FILE_OPEN,
@@ -198,7 +218,11 @@ CATALOGUE: Mapping[str, Counter] = {
             reads=Reading.EVENTS,
             event="one call to the builtin `open`",
             amount="one per event",
-            guard=None,
+            # An envelope metric rather than a counter, because the trade for
+            # opening fewer files is writing more through the ones left open,
+            # and nothing here counts that. S-3.8 made the guard a reference
+            # that may point either way for exactly this case.
+            guard=BYTES_WRITTEN,
             adapter_supplied=False,
         ),
         # S-3.7. Blocked time is counted with the same mechanism as everything
@@ -211,7 +235,15 @@ CATALOGUE: Mapping[str, Counter] = {
             reads=Reading.TOTAL,
             event="one call to a declared disk waiting point",
             amount="seconds elapsed in that call",
-            guard=None,
+            guard=BLOCKED_DISK_CALLS,
+        ),
+        Counter(
+            name=BLOCKED_DISK_CALLS,
+            hook=BLOCKED_DISK,
+            reads=Reading.EVENTS,
+            event="one call to a declared disk waiting point",
+            amount="seconds elapsed in that call",
+            guard=BLOCKED_DISK,
         ),
         Counter(
             name=BLOCKED_NETWORK,
@@ -219,7 +251,15 @@ CATALOGUE: Mapping[str, Counter] = {
             reads=Reading.TOTAL,
             event="one call to a declared network waiting point",
             amount="seconds elapsed in that call",
-            guard=None,
+            guard=BLOCKED_NETWORK_CALLS,
+        ),
+        Counter(
+            name=BLOCKED_NETWORK_CALLS,
+            hook=BLOCKED_NETWORK,
+            reads=Reading.EVENTS,
+            event="one call to a declared network waiting point",
+            amount="seconds elapsed in that call",
+            guard=BLOCKED_NETWORK,
         ),
         Counter(
             name=BLOCKED_LOCK,
@@ -227,7 +267,15 @@ CATALOGUE: Mapping[str, Counter] = {
             reads=Reading.TOTAL,
             event="one call to a declared lock acquisition",
             amount="seconds elapsed in that call",
-            guard=None,
+            guard=BLOCKED_LOCK_CALLS,
+        ),
+        Counter(
+            name=BLOCKED_LOCK_CALLS,
+            hook=BLOCKED_LOCK,
+            reads=Reading.EVENTS,
+            event="one call to a declared lock acquisition",
+            amount="seconds elapsed in that call",
+            guard=BLOCKED_LOCK,
         ),
         Counter(
             name=ALLOCATION,
@@ -235,13 +283,59 @@ CATALOGUE: Mapping[str, Counter] = {
             reads=Reading.EVENTS,
             event="one allocation tracemalloc attributed to the subject",
             amount="bytes allocated",
-            guard=f"{ALLOCATION}, by bytes",
+            guard=ALLOCATION_BYTES,
+            shape=CounterShape.BLOCK_METER,
+            overhead=CounterOverhead.HEAVY,
+            adapter_supplied=False,
+        ),
+        Counter(
+            name=ALLOCATION_BYTES,
+            hook=ALLOCATION,
+            reads=Reading.TOTAL,
+            event="one allocation tracemalloc attributed to the subject",
+            amount="bytes allocated",
+            guard=ALLOCATION,
             shape=CounterShape.BLOCK_METER,
             overhead=CounterOverhead.HEAVY,
             adapter_supplied=False,
         ),
     )
 }
+
+
+def guard_of(name: str) -> tuple[str, bool]:
+    """What `name` is traded against, and whether that target is a counter.
+
+    `False` means the guard is an envelope metric (S-3.8) rather than another
+    counter — which is the right answer for a counter whose trade is a global
+    resource nothing here counts, and is why the guard is a reference rather
+    than a counter name.
+
+    Raises:
+        UnknownCounterError: `name` is not in the catalogue.
+    """
+    guard = describe(name).guard
+    return guard, guard in CATALOGUE
+
+
+def _check_guards_resolve(catalogue: Mapping[str, Counter] = CATALOGUE) -> None:
+    """Refuse to import a catalogue whose guards point at nothing.
+
+    AC 1 made structural. A guard naming a counter that does not exist is a
+    guard that silently guards nothing, and the story it belongs to is the one
+    about checks that fail by omission.
+    """
+    for counter in catalogue.values():
+        if counter.guard not in catalogue and counter.guard not in ENVELOPE:
+            message = (
+                f"{counter.name} declares a guard of {counter.guard!r}, which is neither a "
+                "counter in this catalogue nor a metric in the global envelope. A guard that "
+                "resolves to nothing guards nothing"
+            )
+            raise CounterError(message)
+
+
+_check_guards_resolve()
 
 
 def describe(name: str) -> Counter:
