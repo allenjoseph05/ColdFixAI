@@ -32,13 +32,15 @@ from typing import Any, ClassVar
 import pytest
 
 from coldfix.bench.counting import calls_to, register_hook, unregister_hook
+from coldfix.primitives.measurement import (
+    CacheControl,
+    CacheControlError,
+    MetricKind,
+)
 from coldfix.primitives.registry import REGISTRY, Capability
 from coldfix.primitives.scaling import (
     Allocation,
-    CacheControl,
-    CacheControlError,
     Distribution,
-    MetricKind,
     ScaleSweepError,
     ScalingResult,
     ShapeComparison,
