@@ -36,6 +36,7 @@ from coldfix.primitives.scaling import (
     BaselineError,
     CacheControl,
     CacheControlError,
+    Distribution,
     MetricKind,
     MetricSetError,
     ScaleSweepError,
@@ -149,6 +150,10 @@ def sweep(subject: Subject, **overrides: Any) -> Result:
         "invoke": subject.invoke,
         "reset": verified(RecordingReset(subject)),
         "scales": SCALES,
+        # Declared, because `build_store` gives every author the same number of
+        # books. S-3.3 is what makes that admission load-bearing: growth measured
+        # under uniform data is a statement about uniform data.
+        "distribution": Distribution.UNIFORM,
         "counters": [QUERIES],
         "process_identity": subject.process_identity,
     }
