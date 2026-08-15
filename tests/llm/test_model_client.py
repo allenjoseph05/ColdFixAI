@@ -37,6 +37,9 @@ from coldfix.llm.client import (
 )
 
 MESSAGES: Sequence[MessageParam] = [{"role": "user", "content": "What does the growth table show?"}]
+TEMPERATURE = 0.0
+"""What these tests send unless they are about temperature."""
+
 SYSTEM = "You find performance problems by running experiments."
 
 
@@ -82,6 +85,7 @@ def recording(**overrides: Any) -> Recording:
         system=overrides.pop("system", SYSTEM),
         messages=overrides.pop("messages", MESSAGES),
         max_tokens=overrides.pop("max_tokens", 1_000),
+        temperature=overrides.pop("temperature", TEMPERATURE),
         response=payload(model=model, **overrides),
     )
 
@@ -101,6 +105,7 @@ def test_a_payload_the_sdk_rejects_cannot_be_recorded() -> None:
             system=SYSTEM,
             messages=MESSAGES,
             max_tokens=1_000,
+            temperature=TEMPERATURE,
             response={"role": "assistant", "content": "not a list of blocks"},
         )
 
@@ -157,6 +162,7 @@ def test_text_survives_a_non_text_block_arriving_first() -> None:
         system=SYSTEM,
         messages=MESSAGES,
         max_tokens=1_000,
+        temperature=TEMPERATURE,
         response={
             **payload(model="claude-opus-5"),
             "content": [
@@ -201,7 +207,11 @@ def test_a_refusal_is_replayable_and_says_so() -> None:
     client = ReplayingClient([recording(text="", stop_reason="refusal")])
 
     reply = client.complete(
-        model="claude-sonnet-5", system=SYSTEM, messages=MESSAGES, max_tokens=1_000
+        model="claude-sonnet-5",
+        system=SYSTEM,
+        messages=MESSAGES,
+        max_tokens=1_000,
+        temperature=TEMPERATURE,
     )
 
     assert reply.refused
@@ -213,7 +223,11 @@ def test_a_truncated_answer_is_distinguishable_from_a_finished_one() -> None:
     client = ReplayingClient([recording(stop_reason="max_tokens")])
 
     reply = client.complete(
-        model="claude-sonnet-5", system=SYSTEM, messages=MESSAGES, max_tokens=1_000
+        model="claude-sonnet-5",
+        system=SYSTEM,
+        messages=MESSAGES,
+        max_tokens=1_000,
+        temperature=TEMPERATURE,
     )
 
     assert reply.truncated
@@ -242,6 +256,7 @@ def test_an_unrecorded_request_is_refused() -> None:
             system=SYSTEM,
             messages=[{"role": "user", "content": "a different question"}],
             max_tokens=1_000,
+            temperature=TEMPERATURE,
         )
 
 
@@ -252,7 +267,11 @@ def test_a_recording_for_one_model_does_not_serve_another() -> None:
 
     with pytest.raises(NoRecordingError):
         client.complete(
-            model="claude-haiku-4-5", system=SYSTEM, messages=MESSAGES, max_tokens=1_000
+            model="claude-haiku-4-5",
+            system=SYSTEM,
+            messages=MESSAGES,
+            max_tokens=1_000,
+            temperature=TEMPERATURE,
         )
 
 
@@ -261,7 +280,13 @@ def test_the_refusal_lists_what_is_recorded() -> None:
     client = ReplayingClient([recording()])
 
     with pytest.raises(NoRecordingError) as raised:
-        client.complete(model="claude-opus-5", system=SYSTEM, messages=MESSAGES, max_tokens=1_000)
+        client.complete(
+            model="claude-opus-5",
+            system=SYSTEM,
+            messages=MESSAGES,
+            max_tokens=1_000,
+            temperature=TEMPERATURE,
+        )
 
     assert "Recorded:" in str(raised.value)
     assert "a recording never made" in str(raised.value)
@@ -270,8 +295,50 @@ def test_the_refusal_lists_what_is_recorded() -> None:
 def test_an_empty_client_refuses_everything_by_name() -> None:
     with pytest.raises(NoRecordingError, match="Recorded: none"):
         ReplayingClient().complete(
-            model="claude-opus-5", system=SYSTEM, messages=MESSAGES, max_tokens=1_000
+            model="claude-opus-5",
+            system=SYSTEM,
+            messages=MESSAGES,
+            max_tokens=1_000,
+            temperature=TEMPERATURE,
         )
+
+
+def test_temperature_is_part_of_the_request_identity() -> None:
+    """Added at S-8.1, for the reason the model is part of it.
+
+    `03-agents.md` §2.4 sends the Diagnostician's two calls at 0.8 and 0.0 —
+    *hypothesis generation benefits from diversity; result interpretation must
+    not vary* — and those are frequently the **same question about the same
+    log**. Without the temperature in the digest, the recording made for the call
+    that must not vary would answer the call that is supposed to, and nothing
+    would fail.
+    """
+    client = ReplayingClient([recording(temperature=0.0)])
+
+    with pytest.raises(NoRecordingError, match="a different temperature"):
+        client.complete(
+            model="claude-sonnet-5",
+            system=SYSTEM,
+            messages=MESSAGES,
+            max_tokens=1_000,
+            temperature=0.8,
+        )
+
+
+def test_the_same_request_at_the_same_temperature_replays() -> None:
+    """The control. A digest that separated every request would pass the test
+    above and serve nothing."""
+    client = ReplayingClient([recording(temperature=0.8)])
+
+    reply = client.complete(
+        model="claude-sonnet-5",
+        system=SYSTEM,
+        messages=MESSAGES,
+        max_tokens=1_000,
+        temperature=0.8,
+    )
+
+    assert reply.text
 
 
 def test_max_tokens_is_part_of_the_request_identity() -> None:
@@ -281,17 +348,31 @@ def test_max_tokens_is_part_of_the_request_identity() -> None:
     client = ReplayingClient([recording(max_tokens=1_000)])
 
     with pytest.raises(NoRecordingError):
-        client.complete(model="claude-sonnet-5", system=SYSTEM, messages=MESSAGES, max_tokens=4_000)
+        client.complete(
+            model="claude-sonnet-5",
+            system=SYSTEM,
+            messages=MESSAGES,
+            max_tokens=4_000,
+            temperature=TEMPERATURE,
+        )
 
 
 def test_the_same_request_replays() -> None:
     client = ReplayingClient([recording()])
 
     first = client.complete(
-        model="claude-sonnet-5", system=SYSTEM, messages=MESSAGES, max_tokens=1_000
+        model="claude-sonnet-5",
+        system=SYSTEM,
+        messages=MESSAGES,
+        max_tokens=1_000,
+        temperature=TEMPERATURE,
     )
     second = client.complete(
-        model="claude-sonnet-5", system=SYSTEM, messages=MESSAGES, max_tokens=1_000
+        model="claude-sonnet-5",
+        system=SYSTEM,
+        messages=MESSAGES,
+        max_tokens=1_000,
+        temperature=TEMPERATURE,
     )
 
     assert first == second
@@ -321,7 +402,11 @@ def test_recordings_load_from_a_directory(tmp_path: Path) -> None:
     client = ReplayingClient.from_directory(tmp_path)
 
     reply = client.complete(
-        model="claude-sonnet-5", system=SYSTEM, messages=MESSAGES, max_tokens=1_000
+        model="claude-sonnet-5",
+        system=SYSTEM,
+        messages=MESSAGES,
+        max_tokens=1_000,
+        temperature=TEMPERATURE,
     )
     assert reply.text.startswith("Queries grow linearly")
 
@@ -329,8 +414,12 @@ def test_recordings_load_from_a_directory(tmp_path: Path) -> None:
 def test_the_digest_is_stable_across_processes() -> None:
     """A recording is found by digest, so an unstable one is a store that never
     hits — S-5.1's finding, in a second place."""
-    once = request_digest(model="m", system="s", messages=MESSAGES, max_tokens=10)
-    again = request_digest(model="m", system="s", messages=MESSAGES, max_tokens=10)
+    once = request_digest(
+        model="m", system="s", messages=MESSAGES, max_tokens=10, temperature=TEMPERATURE
+    )
+    again = request_digest(
+        model="m", system="s", messages=MESSAGES, max_tokens=10, temperature=TEMPERATURE
+    )
 
     assert once == again
 
@@ -354,7 +443,9 @@ def test_a_replayed_call_prices_through_the_ledger() -> None:
     )
 
     def call(model: str) -> tuple[str, TokenUsage]:
-        reply = client.complete(model=model, system=SYSTEM, messages=MESSAGES, max_tokens=1_000)
+        reply = client.complete(
+            model=model, system=SYSTEM, messages=MESSAGES, max_tokens=1_000, temperature=TEMPERATURE
+        )
         return reply.text, reply.usage
 
     outcome = session.run(
