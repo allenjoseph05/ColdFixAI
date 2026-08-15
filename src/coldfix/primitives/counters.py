@@ -55,6 +55,7 @@ from coldfix.bench.counting import (
     register_hook,
     unregister_hook,
 )
+from coldfix.primitives.off_cpu import BLOCKED_DISK, BLOCKED_LOCK, BLOCKED_NETWORK
 
 # The six the story names. Dotted and lowercase, matching the primitive registry's
 # rule, because both end up in the same prompt.
@@ -199,6 +200,34 @@ CATALOGUE: Mapping[str, Counter] = {
             amount="one per event",
             guard=None,
             adapter_supplied=False,
+        ),
+        # S-3.7. Blocked time is counted with the same mechanism as everything
+        # else — the events are the waiting calls and the amount is the seconds
+        # they waited — which is what lets a primitive read *waited on the
+        # database* beside *queried the database* without a second instrument.
+        Counter(
+            name=BLOCKED_DISK,
+            hook=BLOCKED_DISK,
+            reads=Reading.TOTAL,
+            event="one call to a declared disk waiting point",
+            amount="seconds elapsed in that call",
+            guard=None,
+        ),
+        Counter(
+            name=BLOCKED_NETWORK,
+            hook=BLOCKED_NETWORK,
+            reads=Reading.TOTAL,
+            event="one call to a declared network waiting point",
+            amount="seconds elapsed in that call",
+            guard=None,
+        ),
+        Counter(
+            name=BLOCKED_LOCK,
+            hook=BLOCKED_LOCK,
+            reads=Reading.TOTAL,
+            event="one call to a declared lock acquisition",
+            amount="seconds elapsed in that call",
+            guard=None,
         ),
         Counter(
             name=ALLOCATION,

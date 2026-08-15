@@ -70,6 +70,7 @@ Decisions found while building the primitives:
 | 033 | A replay stub that is not size-representative is an empty stub in disguise | S-3.4 |
 | 034 | A threshold oracle has a third answer, and needs it | S-3.5 |
 | 035 | Five percent of what: the counter budget needs a denominator | S-3.6 |
+| 036 | Wall minus CPU is exact; attribution by category is not, and says so | S-3.7 |
 
 ## Format
 
