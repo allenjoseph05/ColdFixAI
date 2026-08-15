@@ -15,8 +15,11 @@ against each, the mechanical check that would catch a wrong cheap answer:
 | Falsification test | fails on unpatched code | yes |
 | Evidence chain | schema requires a measurement | yes |
 | Attack execution | outputs differ or they do not | yes |
+| Experiment design | spec validates against the primitive's schema | yes |
 | **Hypothesis generation** | **none exists** | **no** |
 | **Attack design** | **none exists** | **no** |
+
+The design row was added at S-8.2 and §3 was updated with it; see `StepType`.
 
 So the class is a *property of the step type* — creative exactly where no
 validator exists — and a call site that declares the wrong one is refused rather
@@ -104,7 +107,23 @@ _TIER_RANK: Mapping[Tier, int] = {Tier.CHEAP: 0, Tier.MID: 1, Tier.FRONTIER: 2}
 
 
 class StepType(StrEnum):
-    """§3's eight rows. The unit a mechanical check is defined against."""
+    """§3's rows. The unit a mechanical check is defined against.
+
+    **`EXPERIMENT_DESIGN` was added at S-8.2 and §3 was updated with it.** The
+    table was written with eight rows and the loop it prices has nine steps:
+    `02-architecture.md` §2.2 puts *design experiment* between forming a
+    hypothesis and executing one, and S-8.2's AC calls it a mechanical step
+    routed to the mid tier with cascade. That is unimplementable without a row,
+    because the class is derived from this table and `cascade` refuses any type
+    whose check is `None` — so the omission would have forced the design step to
+    borrow another row's name, and the tier it is routed to would have been
+    decided by a row about something else.
+
+    Its check is the one AC 2 states: the specification is validated against the
+    chosen primitive's schema. That is the same *kind* of check as the evidence
+    chain's — a schema, run over an artifact, with no judgement in it — which is
+    why the row belongs on the cascade-safe side. See ADR 085.
+    """
 
     EXPLORER_ACTION = "explorer action"
     ABLATION_STUB = "ablation stub"
@@ -112,6 +131,7 @@ class StepType(StrEnum):
     FALSIFICATION_TEST = "falsification test"
     EVIDENCE_CHAIN = "evidence chain"
     ATTACK_EXECUTION = "attack execution"
+    EXPERIMENT_DESIGN = "experiment design"
     HYPOTHESIS_GENERATION = "hypothesis generation"
     ATTACK_DESIGN = "attack design"
 
@@ -144,6 +164,9 @@ STEP_KINDS: Mapping[StepType, StepKind] = {
     StepType.FALSIFICATION_TEST: StepKind(StepType.FALSIFICATION_TEST, "fails on unpatched code"),
     StepType.EVIDENCE_CHAIN: StepKind(StepType.EVIDENCE_CHAIN, "schema requires a measurement"),
     StepType.ATTACK_EXECUTION: StepKind(StepType.ATTACK_EXECUTION, "outputs differ or they do not"),
+    StepType.EXPERIMENT_DESIGN: StepKind(
+        StepType.EXPERIMENT_DESIGN, "the specification validates against the primitive's schema"
+    ),
     StepType.HYPOTHESIS_GENERATION: StepKind(StepType.HYPOTHESIS_GENERATION, None),
     StepType.ATTACK_DESIGN: StepKind(StepType.ATTACK_DESIGN, None),
 }
