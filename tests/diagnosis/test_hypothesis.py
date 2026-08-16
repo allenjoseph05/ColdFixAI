@@ -87,6 +87,7 @@ def log_with_one_experiment() -> ExperimentLog:
     log.append(
         hypothesis="the serializer dominates",
         primitive="ablation.stub",
+        rationale="the serializer is the only component not yet stubbed",
         target="shop.books.list",
         design="stub the serializer, compare",
         measurement={"seconds": 0.4},

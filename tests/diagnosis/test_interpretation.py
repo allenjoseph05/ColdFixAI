@@ -95,6 +95,7 @@ def a_log() -> ExperimentLog:
     log.append(
         hypothesis="the serializer dominates",
         primitive="ablation.stub",
+        rationale="the serializer is the only component not yet stubbed",
         target="shop.books.list",
         design='ablation.stub(attribute="to_representation") on shop.books.list',
         measurement={"seconds": 0.4},
@@ -233,6 +234,7 @@ def test_identical_inputs_produce_the_same_request_in_a_second_process() -> None
         "from coldfix.llm.client import request_digest;"
         "log = ExperimentLog();"
         "log.append(hypothesis='the serializer dominates', primitive='ablation.stub',"
+        " rationale='the serializer is the only component not yet stubbed',"
         " target='shop.books.list',"
         " design='ablation.stub(attribute=\"to_representation\") on shop.books.list',"
         " measurement={'seconds': 0.4}, verdict=Verdict.REJECTED,"
@@ -460,6 +462,7 @@ def test_the_reading_is_what_the_log_records() -> None:
     experiment = a_log().append(
         hypothesis=HYPOTHESIS.statement,
         primitive=SPEC.primitive,
+        rationale=HYPOTHESIS.rationale,
         target=SPEC.target,
         design=SPEC.render(),
         measurement=reading.measurement,

@@ -115,6 +115,7 @@ def a_log() -> ExperimentLog:
     log.append(
         hypothesis="the serializer dominates",
         primitive="ablation.stub",
+        rationale="the serializer is the only component not yet stubbed",
         target="shop.books.list",
         design='ablation.stub(attribute="to_representation") on shop.books.list',
         measurement={"seconds": 0.4},
@@ -496,6 +497,7 @@ def test_the_rendering_is_what_the_log_records() -> None:
     experiment = log.append(
         hypothesis=HYPOTHESIS.statement,
         primitive=draft.spec.primitive,
+        rationale=HYPOTHESIS.rationale,
         target=draft.spec.target,
         design=draft.spec.render(),
         measurement={"db.query": 1004.0},

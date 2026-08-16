@@ -43,6 +43,7 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
+from itertools import pairwise
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -103,6 +104,19 @@ class Experiment(BaseModel):
     """Which instrument ran. S-3.1's registry name, and what S-8.7's switch is
     visible in — two consecutive records naming different primitives is the
     thesis behaviour, on the record."""
+
+    rationale: str = Field(min_length=1)
+    """Why this instrument was worth its cost given what was already known.
+
+    **Added at S-8.7, whose AC 3 requires the switch *and its rationale* to appear
+    in the log.** The primitive alone shows *that* the agent changed instrument;
+    it is this that says why, and the thesis claim is about the choosing rather
+    than about the change. S-8.1 already produces it — the field is where it
+    stops being discarded.
+
+    Required rather than defaulted, on S-5.4's argument: a default would make
+    AC 3 hold only for the callers that remembered.
+    """
 
     target: str = Field(min_length=1)
     """What the instrument was pointed at: a workload, a call site, a component."""
@@ -175,6 +189,7 @@ class ExperimentLog:
         *,
         hypothesis: str,
         primitive: str,
+        rationale: str,
         target: str,
         design: str,
         measurement: Mapping[str, float],
@@ -205,6 +220,7 @@ class ExperimentLog:
                 index=len(self._experiments) + 1,
                 hypothesis=hypothesis,
                 primitive=primitive,
+                rationale=rationale,
                 target=target,
                 design=design,
                 measurement=measurement,
@@ -283,6 +299,44 @@ class ExperimentLog:
     def records(self) -> Sequence[ExperimentRecord]:
         """The pruned view, for a caller that wants summaries rather than artifacts."""
         return self._pruned.records
+
+    def switches(self) -> Sequence[tuple[Experiment, Experiment]]:
+        """Consecutive pairs where the instrument changed. S-8.7's AC 3.
+
+        A **view**, not a record: the switch is not a separate thing that
+        happened, it is a property of two adjacent entries, and storing it would
+        be a second statement of what the log already says — the shape S-8.5
+        refused for `invalidated_if` and S-8.6 for `confidence`.
+
+        Read from the artifacts rather than from the pruned summaries, because a
+        pair is only a switch if both halves are real experiments.
+        """
+        entries = self.experiments
+        return tuple(
+            (earlier, later)
+            for earlier, later in pairwise(entries)
+            if earlier.primitive != later.primitive
+        )
+
+    def describe_switches(self) -> str:
+        """The switches and **why each was made**, which is the other half of AC 3.
+
+        The primitive alone shows *that* the instrument changed. The thesis claim
+        is about the choosing, so the rationale travels with it — and the verdict
+        that provoked the switch is named too, because *switched after a
+        rejection* and *switched after a confirmation* are different behaviours
+        and only the first is the one being claimed.
+        """
+        switches = self.switches()
+        if not switches:
+            return "No instrument switch: every experiment used the same primitive."
+        lines = [f"{len(switches)} instrument switch(es):"]
+        lines.extend(
+            f"  {earlier.primitive} -> {later.primitive} after experiment {earlier.index} "
+            f"came back {earlier.verdict.value}: {later.rationale}"
+            for earlier, later in switches
+        )
+        return "\n".join(lines)
 
     def digest(self) -> str:
         """A stable hash of the whole log, in order.

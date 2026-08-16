@@ -34,6 +34,7 @@ def logged(log: ExperimentLog, **overrides: object) -> Experiment:
     fields: dict[str, object] = {
         "hypothesis": "the author lookup is an N+1",
         "primitive": "scale_volume",
+        "rationale": "queries have not been counted against volume yet",
         "target": "shop.books.list",
         "design": "sweep n in (10, 100), count db.query",
         "measurement": {"db.query": 101.0, "seconds": 0.08},
@@ -224,7 +225,7 @@ def test_the_digest_is_stable_across_interpreters() -> None:
     program = (
         "from coldfix.diagnosis.log import ExperimentLog, Verdict;"
         "log=ExperimentLog();"
-        "log.append(hypothesis='h', primitive='p', target='t', design='d',"
+        "log.append(hypothesis='h', primitive='p', rationale='r', target='t', design='d',"
         " measurement={'db.query': 2.0}, verdict=Verdict.NARROWED, outcome='o');"
         "print(log.digest())"
     )
@@ -236,6 +237,7 @@ def test_the_digest_is_stable_across_interpreters() -> None:
     here.append(
         hypothesis="h",
         primitive="p",
+        rationale="r",
         target="t",
         design="d",
         measurement={"db.query": 2.0},

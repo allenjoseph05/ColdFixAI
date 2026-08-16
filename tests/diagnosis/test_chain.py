@@ -49,6 +49,7 @@ def excluded(log: ExperimentLog) -> Experiment:
     return log.append(
         hypothesis="the database is the bottleneck",
         primitive="scaling.volume",
+        rationale="queries have not been counted against volume yet",
         target="shop.books.list",
         design="scaling.volume(scales=[10, 100, 1000], distribution='uniform')",
         measurement={"db.query": 7.0},
@@ -63,6 +64,7 @@ def confirmed(
     return log.append(
         hypothesis="the serializer re-renders the author for every book",
         primitive=primitive,
+        rationale="the serializer is the only component not yet stubbed",
         target="BookSerializer.to_representation",
         design=f"{primitive}(attribute='to_representation') on shop.books.list",
         measurement={"seconds": 8.24, "seconds_ablated": 0.9},
@@ -178,6 +180,7 @@ def test_a_link_cannot_be_built_around_an_experiment_with_no_measurement() -> No
             index=1,
             hypothesis="h",
             primitive="ablation.stub",
+            rationale="r",
             target="t",
             design="d",
             measurement={},
