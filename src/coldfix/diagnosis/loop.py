@@ -51,8 +51,10 @@ from coldfix.diagnosis.exclusions import Conditions, ExclusionRegister
 from coldfix.diagnosis.hypothesis import Hypothesis, generate
 from coldfix.diagnosis.interpretation import Interpretation, interpret
 from coldfix.diagnosis.log import Experiment, ExperimentLog, Verdict
+from coldfix.diagnosis.reseed import Reseeding, Seeder, reseed
 from coldfix.llm.client import ModelClient
 from coldfix.primitives.registry import Selection
+from coldfix.screening.workload import FixtureRecipe
 
 RETRIES_PER_HYPOTHESIS = 3
 """How often the loop will re-ask before calling a repeated proposal a stall.
@@ -259,6 +261,43 @@ class Investigation:
         )
         self.steps.append(step)
         return step
+
+    # -------------------------------------------------------------- S-8.8
+
+    def reseed(
+        self,
+        recipe: FixtureRecipe,
+        scales: Sequence[float],
+        seeder: Seeder,
+        *,
+        finding_id: str | None = None,
+    ) -> Reseeding:
+        """Ask for different data, and adopt the conditions it puts in force.
+
+        The only thing in this system that moves a condition on purpose, which is
+        what makes S-8.5's *may be reopened* a property something exercises rather
+        than a property nothing reaches.
+
+        **The conditions are adopted here and only on success**, because
+        `reseed` raises without having changed anything when the seeding fails —
+        see its docstring for what adopting them early would cost.
+
+        Raises:
+            PointlessReseedError: the request would move no condition.
+            ReseedError: the fixtures could not be rebuilt.
+            BudgetExhaustedError: the experiment cap is already reached.
+        """
+        outcome = reseed(
+            recipe=recipe,
+            scales=scales,
+            current=self.conditions,
+            register=self.exclusions,
+            seeder=seeder,
+            budget=self.session.budget,
+            finding_id=finding_id,
+        )
+        self.conditions = outcome.after
+        return outcome
 
     def switched(self) -> bool:
         """Whether an instrument changed hands at any point. AC 3's subject."""
