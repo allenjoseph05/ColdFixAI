@@ -36,19 +36,20 @@ import pytest
 
 import coldfix.primitives  # noqa: F401 - registers the thirteen
 from coldfix.bench.counting import calls_to, register_hook, unregister_hook
-from coldfix.cost.accounting import ExchangeRate
+from coldfix.cost.accounting import ExchangeRate, Phase
+from coldfix.cost.budget import Disposition
 from coldfix.cost.routing import STEP_KINDS, StepType
 from coldfix.cost.session import Session
 from coldfix.diagnosis import design as design_module
 from coldfix.diagnosis import hypothesis as hypothesis_module
 from coldfix.diagnosis import interpretation as interpretation_module
+from coldfix.diagnosis.chain import Symptom
 from coldfix.diagnosis.design import ExperimentSpec, JSONValue
 from coldfix.diagnosis.exclusions import Conditions, Exclusion, ExclusionRegister
 from coldfix.diagnosis.hypothesis import Hypothesis
 from coldfix.diagnosis.log import ExperimentLog, ExperimentLogError, Verdict
 from coldfix.diagnosis.loop import (
     Investigation,
-    LoopError,
     NoNewInstrumentError,
     confirming_links,
     run_investigation,
@@ -56,6 +57,7 @@ from coldfix.diagnosis.loop import (
 from coldfix.diagnosis.loop import (
     Investigation as Loop,
 )
+from coldfix.diagnosis.progress import INVESTIGATION_STALL_AFTER, ProgressError, Stopped
 from coldfix.diagnosis.schema import schema_of
 from coldfix.llm.client import Recording, ReplayingClient
 from coldfix.primitives.ablation import ablate
@@ -257,6 +259,8 @@ def a_session() -> Session:
         playbook="Django: count queries with force_debug_cursor.",
         source="shop/views.py::ListView.list_books",
         rate=ExchangeRate(Decimal("0.92"), date(2026, 8, 16)),
+        # S-8.9 refuses an investigation budget at any other value.
+        stall_after=INVESTIGATION_STALL_AFTER,
     )
 
 
@@ -571,7 +575,6 @@ def test_the_thesis_run(query_counter: None) -> None:
         execute=execute,
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
-        max_steps=4,
     )
 
     first, second = result.log.experiments
@@ -655,6 +658,10 @@ def _thesis_recordings(investigation: Investigation, subject: Subject) -> Replay
 
 
 def _recordings_for(investigation: Investigation, plan: list[Turn]) -> ReplayingClient:
+    return ReplayingClient(_recording_list(investigation, plan))
+
+
+def _recording_list(investigation: Investigation, plan: list[Turn]) -> list[Recording]:
     """Walk a planned run once, recording the request each call will make.
 
     Every question is rendered by the module that will send it, so a change to
@@ -735,7 +742,7 @@ def _recordings_for(investigation: Investigation, plan: list[Turn]) -> Replaying
         if experiment.verdict is Verdict.REJECTED:
             register.record(experiment, CONDITIONS)
 
-    return ReplayingClient(recordings)
+    return recordings
 
 
 # ============================ the four properties a sabotage pass found untested
@@ -767,7 +774,6 @@ def test_the_loop_records_the_rationale_the_agent_actually_gave(query_counter: N
         execute=execute,
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
-        max_steps=4,
     )
 
     first, second = result.log.experiments
@@ -778,6 +784,10 @@ def test_the_loop_records_the_rationale_the_agent_actually_gave(query_counter: N
 
 
 def _synthetic(investigation: Investigation, verdicts: list[Verdict]) -> ReplayingClient:
+    return ReplayingClient(_synthetic_recordings(investigation, verdicts))
+
+
+def _synthetic_recordings(investigation: Investigation, verdicts: list[Verdict]) -> list[Recording]:
     """A run with fixed measurements, for the paths a real subject cannot reach.
 
     The thesis run measures for real; these two need a *narrowed* verdict and an
@@ -814,7 +824,7 @@ def _synthetic(investigation: Investigation, verdicts: list[Verdict]) -> Replayi
         )
         for index, verdict in enumerate(verdicts)
     ]
-    return _recordings_for(investigation, plan)
+    return _recording_list(investigation, plan)
 
 
 def test_a_narrowed_verdict_does_not_end_the_investigation() -> None:
@@ -838,7 +848,6 @@ def test_a_narrowed_verdict_does_not_end_the_investigation() -> None:
         execute=lambda spec: {"db.query": 2.0},
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
-        max_steps=4,
     )
 
     assert [item.verdict for item in result.log.experiments] == [
@@ -847,29 +856,33 @@ def test_a_narrowed_verdict_does_not_end_the_investigation() -> None:
     ]
 
 
-def test_the_loop_is_bounded_and_says_what_it_learned_when_it_stops() -> None:
-    """A `while True` around a paid API is not a thing to ship even briefly.
+def test_the_loop_is_bounded_by_the_experiment_cap_and_stops_with_a_result() -> None:
+    """**S-8.9 replaced S-8.7's loop guard with the real cap.** There is now
+    exactly one number that stops this, and it is the forty `04-cost.md` costed.
 
-    The bound is a loop guard rather than a budget — S-8.9 owns the caps — and
-    what it raises names the partial result, because the exclusions are what the
-    run bought.
+    Reaching it is not an exception: `00-BRIEF.md` §9 ships null results as
+    answers, so the run comes back with `stopped` set and the exclusions it
+    bought.
     """
     investigation = an_investigation(ReplayingClient([]), lambda spec: {"db.query": 2.0})
     investigation.instruments = instruments("scaling.volume", "ablation.stub", "scaling.shape")
+    investigation.session.budget.tighten(Phase.INVESTIGATE, 2)
     client = _synthetic(investigation, [Verdict.REJECTED, Verdict.REJECTED])
 
-    with pytest.raises(LoopError, match="partial result"):
-        run_investigation(
-            investigation.session,
-            client,
-            instruments=investigation.instruments,
-            source=investigation.source,
-            conditions=CONDITIONS,
-            execute=lambda spec: {"db.query": 2.0},
-            measured_prefix_tokens=100,
-            measured_prompt_tokens=900,
-            max_steps=2,
-        )
+    result = run_investigation(
+        investigation.session,
+        client,
+        instruments=investigation.instruments,
+        source=investigation.source,
+        conditions=CONDITIONS,
+        execute=lambda spec: {"db.query": 2.0},
+        measured_prefix_tokens=100,
+        measured_prompt_tokens=900,
+    )
+
+    assert result.stopped is Stopped.CAP
+    assert len(result.log.experiments) == 2
+    assert len(result.exclusions.exclusions) == 2
 
 
 def test_switches_ignores_two_experiments_that_used_the_same_instrument() -> None:
@@ -898,3 +911,114 @@ def test_switches_ignores_two_experiments_that_used_the_same_instrument() -> Non
     assert len(switches) == 1
     assert switches[0][0].primitive == "scaling.volume"
     assert switches[0][1].primitive == "ablation.stub"
+
+
+# ============ S-8.9: the loop's three ways to stop, and what each has to show
+
+
+def test_running_out_of_instruments_is_reported_as_such_and_not_as_the_cap() -> None:
+    """Three ways to run out, and a reader's next action differs for each — so
+    the loop must not collapse them. Untested until a sabotage relabelled this
+    one as the cap and nothing failed."""
+    investigation = an_investigation(ReplayingClient([]), lambda spec: {"db.query": 2.0})
+    investigation.instruments = instruments("scaling.volume")
+    # One instrument, one rejection, then three repeat proposals it has to
+    # refuse — which is `propose` running out rather than the cap doing it.
+    first_turn = _synthetic_recordings(investigation, [Verdict.REJECTED])
+    repeats = _repeat_recordings(investigation, "scaling.volume")
+
+    result = run_investigation(
+        investigation.session,
+        ReplayingClient([*first_turn, *repeats]),
+        instruments=investigation.instruments,
+        source=investigation.source,
+        conditions=CONDITIONS,
+        execute=lambda spec: {"db.query": 2.0},
+        measured_prefix_tokens=100,
+        measured_prompt_tokens=900,
+    )
+
+    assert result.stopped is Stopped.INSTRUMENTS
+    assert result.stopped.disposition is Disposition.ESCALATE
+
+
+def test_a_stopped_investigation_hands_over_the_exclusions_it_bought() -> None:
+    """AC 3 through the loop. A partial chain assembled without them would report
+    an investigation that learned nothing, when what it learned is exactly the
+    exclusions — `00-BRIEF.md` §9's proven negative."""
+    investigation = an_investigation(ReplayingClient([]), lambda spec: {"db.query": 2.0})
+    investigation.instruments = instruments("scaling.volume", "ablation.stub", "scaling.shape")
+    investigation.session.budget.tighten(Phase.INVESTIGATE, 2)
+    client = _synthetic(investigation, [Verdict.REJECTED, Verdict.REJECTED])
+
+    result = run_investigation(
+        investigation.session,
+        client,
+        instruments=investigation.instruments,
+        source=investigation.source,
+        conditions=CONDITIONS,
+        execute=lambda spec: {"db.query": 2.0},
+        measured_prefix_tokens=100,
+        measured_prompt_tokens=900,
+    )
+    chain = result.partial_chain(Symptom(metric="seconds", magnitude=8.24, at_scale=1000))
+
+    assert len(chain.exclusions) == 2
+    assert chain.stopped is Stopped.CAP
+    assert "hypothesis 0" in chain.describe()
+
+
+def test_a_running_investigation_has_no_partial_chain_to_give() -> None:
+    """A partial chain is what a run that *ended* without a cause has to show.
+    One taken mid-run would report an investigation as finished while it is still
+    buying evidence."""
+    investigation = an_investigation(ReplayingClient([]), lambda spec: {"db.query": 2.0})
+
+    with pytest.raises(ProgressError, match="has not stopped"):
+        investigation.partial_chain(Symptom(metric="seconds", magnitude=1.0, at_scale=10))
+
+
+def _repeat_recordings(investigation: Investigation, primitive: str) -> list[Recording]:
+    """The three refusals `propose` needs before it gives up on one instrument."""
+    register = ExclusionRegister()
+    log = ExperimentLog()
+    experiment = log.append(
+        hypothesis="hypothesis 0",
+        primitive=primitive,
+        rationale="reason 0",
+        target="shop.books.list",
+        design=f"{primitive}(scales=[10, 20, 40], distribution='uniform') on shop.books.list",
+        measurement={"db.query": 2.0},
+        verdict=Verdict.REJECTED,
+        outcome="outcome 0",
+    )
+    register.record(experiment, CONDITIONS)
+
+    repeat = json.dumps(
+        {"statement": "again", "primitive": primitive, "rationale": "one more sweep"}
+    )
+    note = (
+        f"{primitive} has already answered under the conditions in force and was proposed "
+        "again. Choose a different instrument, or say which condition would have to change "
+        "for this one to be worth repeating."
+    )
+    notes: list[str] = []
+    recordings = []
+    for _ in range(3):
+        question = hypothesis_module.render_question(
+            log=log,
+            exclusions=(*register.render(CONDITIONS), *notes),
+            source=investigation.source,
+            instruments=investigation.instruments,
+        )
+        recordings.append(
+            recorded(
+                system=hypothesis_module._SYSTEM,
+                question=question,
+                reply=repeat,
+                model="claude-opus-5",
+                temperature=hypothesis_module.HYPOTHESIS_TEMPERATURE,
+            )
+        )
+        notes.append(note)
+    return recordings

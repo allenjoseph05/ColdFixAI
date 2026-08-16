@@ -62,7 +62,7 @@ from coldfix.cost.accounting import (
     TokenUsage,
     total_of,
 )
-from coldfix.cost.budget import Budget, worst_case_usd
+from coldfix.cost.budget import DEFAULT_STALL_AFTER, Budget, StepUnit, worst_case_usd
 from coldfix.cost.cascade import EscalationLog, cascade, dearer_than
 from coldfix.cost.context import Block, Investigation, Viability
 from coldfix.cost.pruning import PrunedLog
@@ -223,6 +223,14 @@ class Session:
     source: str
     rate: ExchangeRate
     ceiling_eur: Decimal | None = None
+    stall_after: int = DEFAULT_STALL_AFTER
+    """How many identical conclusions in a row count as a stalled phase.
+
+    Passed through rather than fixed, because `Session` is the only thing that
+    constructs the `Budget` and a phase needing its own value would otherwise
+    have no way to ask for one. S-7.10 set grounding's at 15 and S-8.9 sets an
+    investigation's at 8; the default is a default, not any phase's answer."""
+
     router: Router = field(default_factory=Router)
     ledger: Ledger = field(default_factory=Ledger)
     log: PrunedLog = field(default_factory=PrunedLog)
@@ -237,6 +245,7 @@ class Session:
             ledger=self.ledger,
             rate=self.rate,
             ceiling_eur=self.ceiling_eur,
+            stall_after=self.stall_after,
         )
 
     # ------------------------------------------------------------------ prompts
@@ -344,7 +353,19 @@ class Session:
             value = cascaded.value
             escalated = cascaded.escalated
 
-        self.budget.record_step(step.phase, step.finding_id, conclusion)
+        # **Only where the phase's cap counts model calls**, and S-5.4 predicted
+        # the defect this fixes in its own docstring: *§12.1 budgets 120 model
+        # calls per finding in investigate against a cap of 40 experiments — so
+        # an experiment is about three calls, and a cap counted in calls would
+        # halt investigation at a third of its intended budget.* This line
+        # counted every call, so the forty-experiment cap was a thirteen-
+        # experiment cap until S-8.9 ran a whole loop against it.
+        #
+        # A phase counted in experiments, attempts or rounds has its unit counted
+        # by whoever owns that unit — for investigate, S-8.9's loop, which is the
+        # only thing that knows when an experiment finished.
+        if self.budget.caps[step.phase].unit is StepUnit.STEP:
+            self.budget.record_step(step.phase, step.finding_id, conclusion)
 
         return StepOutcome(
             value=value,

@@ -633,7 +633,15 @@ def test_a_prompt_cannot_be_shorter_than_its_own_prefix() -> None:
 
 def test_the_investigate_cap_stops_the_run_with_a_partial_chain_not_a_halt() -> None:
     """S-5.4's disposition table survives composition, which is where it matters:
-    forty experiments that established something and ran out is an answer."""
+    forty experiments that established something and ran out is an answer.
+
+    **This test used to count one `session.run` as one experiment**, which is the
+    3x conflation S-5.4's own docstring predicts — *§12.1 budgets 120 model calls
+    per finding against a cap of 40 experiments, so an experiment is about three
+    calls.* Nothing ran a real investigate loop when it was written, so a call and
+    an experiment looked like the same thing. S-8.9's loop is what counts an
+    experiment now, and this stands in for it.
+    """
     session = make_session()
     session.budget.tighten(Phase.INVESTIGATE, 2)
 
@@ -644,8 +652,8 @@ def test_the_investigate_cap_stops_the_run_with_a_partial_chain_not_a_halt() -> 
             measured_prefix_tokens=2_000,
             measured_prompt_tokens=2_100,
             call=api(),
-            conclusion=f"conclusion-{index}",
         )
+        session.budget.record_step(Phase.INVESTIGATE, "F1", f"conclusion-{index}")
 
     with pytest.raises(BudgetExhaustedError) as raised:
         session.run(
@@ -662,7 +670,11 @@ def test_the_investigate_cap_stops_the_run_with_a_partial_chain_not_a_halt() -> 
 
 def test_a_phase_that_keeps_concluding_the_same_thing_escalates() -> None:
     """A stall and an exhaustion call for opposite actions, and the composed flow
-    has to keep them distinguishable."""
+    has to keep them distinguishable.
+
+    The experiment is recorded separately from the calls that made it, for the
+    reason the test above records.
+    """
     session = make_session()
 
     with pytest.raises(ProgressStalledError) as raised:
@@ -673,8 +685,8 @@ def test_a_phase_that_keeps_concluding_the_same_thing_escalates() -> None:
                 measured_prefix_tokens=2_000,
                 measured_prompt_tokens=2_100,
                 call=api(),
-                conclusion="queries flat",
             )
+            session.budget.record_step(Phase.INVESTIGATE, "F1", "queries flat")
 
     assert raised.value.stall.repeated == 3
     assert "queries flat" in raised.value.stall.conclusion

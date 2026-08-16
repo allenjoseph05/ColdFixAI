@@ -171,9 +171,15 @@ class GroundingRun:
             )
             raise GroundingError(message)
         if self.budget.stall_after != GROUNDING_STALL_AFTER:
-            # Not a correction — a refusal. S-5.4's default of three is right for
-            # an investigation and wrong here, and silently substituting the
-            # right one would hide that the caller asked for something else.
+            # Not a correction — a refusal. Silently substituting the right value
+            # would hide that the caller asked for something else.
+            #
+            # **This comment used to say three was right for an investigation.**
+            # It is not: `03-agents.md` §4.5 puts the investigate check at eight,
+            # and S-8.9 refuses that phase's budget at any other value the same
+            # way this refuses grounding's. S-5.4's default of three is a default,
+            # not a phase's answer — every phase that has looked has needed its
+            # own.
             message = (
                 f"this budget stalls after {self.budget.stall_after} steps and grounding's "
                 f"progress check is {GROUNDING_STALL_AFTER} (AC 2). Construct the budget with "
