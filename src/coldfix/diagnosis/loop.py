@@ -45,12 +45,23 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
+from coldfix.cost.accounting import Phase
+from coldfix.cost.budget import BudgetExhaustedError, Disposition, ProgressStalledError
 from coldfix.cost.session import Session
+from coldfix.diagnosis.chain import Symptom
 from coldfix.diagnosis.design import ExperimentSpec, design
 from coldfix.diagnosis.exclusions import Conditions, ExclusionRegister
 from coldfix.diagnosis.hypothesis import Hypothesis, generate
 from coldfix.diagnosis.interpretation import Interpretation, interpret
 from coldfix.diagnosis.log import Experiment, ExperimentLog, Verdict
+from coldfix.diagnosis.progress import (
+    PartialChain,
+    ProgressError,
+    Stopped,
+    check_stall_configuration,
+    partial_chain,
+    progress_conclusion,
+)
 from coldfix.diagnosis.reseed import Reseeding, Seeder, reseed
 from coldfix.llm.client import ModelClient
 from coldfix.primitives.registry import Selection
@@ -134,6 +145,9 @@ class Investigation:
     log: ExperimentLog = field(default_factory=ExperimentLog)
     exclusions: ExclusionRegister = field(default_factory=ExclusionRegister)
     steps: list[Step] = field(default_factory=list)
+    stopped: Stopped | None = None
+    """Why the investigation ended without a cause, or `None` while it is still
+    running or when it found one. S-8.9's three ways to run out."""
 
     # -------------------------------------------------------------- AC 1
 
@@ -299,6 +313,33 @@ class Investigation:
         self.conditions = outcome.after
         return outcome
 
+    # -------------------------------------------------------------- S-8.9
+
+    def partial_chain(self, symptom: Symptom) -> PartialChain:
+        """What this investigation learned, when it did not find a cause.
+
+        `symptom` comes from screening rather than from here: the investigation
+        did not observe it, and a loop that invented one would be manufacturing
+        the one part of the artifact that predates it.
+
+        Raises:
+            ProgressError: it is still running, or it confirmed something and
+                owes an evidence chain instead.
+        """
+        if self.stopped is None:
+            message = (
+                "this investigation has not stopped, so there is nothing partial about it yet. "
+                "A partial chain is what a run that ended without a cause has to show"
+            )
+            raise ProgressError(message)
+        return partial_chain(
+            symptom=symptom,
+            stopped=self.stopped,
+            conditions=self.conditions,
+            experiments=self.log.experiments,
+            exclusions=self.exclusions.exclusions,
+        )
+
     def switched(self) -> bool:
         """Whether an instrument changed hands at any point. AC 3's subject."""
         return bool(self.log.switches())
@@ -326,24 +367,27 @@ def run_investigation(  # noqa: PLR0913 - the subject, its instruments, its
     execute: Executor,
     measured_prefix_tokens: int,
     measured_prompt_tokens: int,
-    max_steps: int = 8,
+    finding_id: str | None = None,
 ) -> Investigation:
-    """Run until something is confirmed, or until the instruments are exhausted.
+    """Run until something is confirmed, or until the budget says to stop.
 
     **The same function the demo runs.** A test hands it a replaying client and a
     subject built from a planted defect; the video hands it `AnthropicClient` and
     a real repository. A second implementation for the demo would be a demo of
     the second implementation.
 
-    `max_steps` is a loop bound rather than a budget — S-8.9 owns the caps, and a
-    budget invented here would guess at a shape that story designs. Without some
-    bound this is a `while True` around a paid API, which is not a thing to ship
-    even briefly.
+    **There is no `max_steps`, and its absence is S-8.9 arriving.** S-8.7 carried
+    a loop bound because the caps were another story's and a `while True` around
+    a paid API is not a thing to ship even briefly. The bound is now S-5.4's
+    compiled cap of forty experiments, which means there is exactly one number
+    that stops this and it is the one `04-cost.md` costed.
 
-    Raises:
-        NoNewInstrumentError: the applicable experiments are exhausted.
-        LoopError: the bound was reached with nothing confirmed.
+    **Stopping is not failing.** Every way this ends without a cause produces a
+    result rather than an exception — `investigation.stopped` says which, and
+    `partial_chain` assembles what was learned. `00-BRIEF.md` §9: null results
+    ship as answers.
     """
+    check_stall_configuration(session.budget)
     investigation = Investigation(
         session=session,
         client=client,
@@ -353,21 +397,40 @@ def run_investigation(  # noqa: PLR0913 - the subject, its instruments, its
         execute=execute,
     )
 
-    for _ in range(max_steps):
-        step = investigation.step(
-            measured_prefix_tokens=measured_prefix_tokens,
-            measured_prompt_tokens=measured_prompt_tokens,
-        )
-        if step.verdict is Verdict.CONFIRMED:
+    while True:
+        try:
+            # **No `authorize` here, and its absence was found by sabotage.** One
+            # was written, and removing it changed no outcome: `Session.run`
+            # authorizes inside its first attempt, before any spend, and that
+            # check is the same one. A second call could not refuse anything the
+            # first would not — S-7.4's redundant condition, collapsed.
+            step = investigation.step(
+                measured_prefix_tokens=measured_prefix_tokens,
+                measured_prompt_tokens=measured_prompt_tokens,
+            )
+        except BudgetExhaustedError as error:
+            # S-5.4: *the halt is the global ceiling's alone.* A euro ceiling is
+            # a run-wide stop rather than this investigation's outcome, and
+            # reporting it as *the experiment cap was reached* would be a false
+            # statement about why the run ended.
+            if error.exhaustion.disposition is Disposition.HALT:
+                raise
+            investigation.stopped = Stopped.CAP
+            return investigation
+        except NoNewInstrumentError:
+            investigation.stopped = Stopped.INSTRUMENTS
             return investigation
 
-    message = (
-        f"{max_steps} experiments ran and none confirmed a cause. The log holds "
-        f"{len(investigation.log.experiments)} experiment(s) and "
-        f"{len(investigation.exclusions.exclusions)} exclusion(s), which is a partial result "
-        "rather than nothing — the exclusions are what was learned"
-    )
-    raise LoopError(message)
+        try:
+            session.budget.record_step(
+                Phase.INVESTIGATE, finding_id, progress_conclusion(step.verdict)
+            )
+        except ProgressStalledError:
+            investigation.stopped = Stopped.STALL
+            return investigation
+
+        if step.verdict is Verdict.CONFIRMED:
+            return investigation
 
 
 def confirming_links(investigation: Investigation) -> tuple[Experiment, ...]:
