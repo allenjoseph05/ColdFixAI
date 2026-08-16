@@ -149,6 +149,22 @@ class Investigation:
     """Why the investigation ended without a cause, or `None` while it is still
     running or when it found one. S-8.9's three ways to run out."""
 
+    def __post_init__(self) -> None:
+        """Wire this investigation's log into the prompt the session assembles.
+
+        **Found by composing the epic: there were two append-only logs again.**
+        `Session` builds a `PrunedLog` for the block `04-cost.md` §4 caches, and
+        `ExperimentLog` wraps its own — so the session's block rendered an empty
+        log forever while the real one rode in the uncached question. Epic 5's
+        composition found this exact defect inside its own epic and recorded why
+        it is silent: caching is a prefix match, so a log wrong in *content* is
+        still append-only and still reports hits.
+
+        S-8.4 exposed `.pruned` for precisely this join and nothing used it. One
+        log, one owner, one rendering.
+        """
+        self.session.log = self.log.pruned
+
     # -------------------------------------------------------------- AC 1
 
     def settled_instruments(self) -> tuple[str, ...]:
