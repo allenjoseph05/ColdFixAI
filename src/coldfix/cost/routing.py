@@ -16,10 +16,12 @@ against each, the mechanical check that would catch a wrong cheap answer:
 | Evidence chain | schema requires a measurement | yes |
 | Attack execution | outputs differ or they do not | yes |
 | Experiment design | spec validates against the primitive's schema | yes |
+| Result interpretation | the verdict cites measurements the harness recorded | yes |
 | **Hypothesis generation** | **none exists** | **no** |
 | **Attack design** | **none exists** | **no** |
 
-The design row was added at S-8.2 and §3 was updated with it; see `StepType`.
+The last two rows were added by Epic 8 and §3 was updated with them; see
+`StepType` for why the table was short of them.
 
 So the class is a *property of the step type* — creative exactly where no
 validator exists — and a call site that declares the wrong one is refused rather
@@ -109,20 +111,27 @@ _TIER_RANK: Mapping[Tier, int] = {Tier.CHEAP: 0, Tier.MID: 1, Tier.FRONTIER: 2}
 class StepType(StrEnum):
     """§3's rows. The unit a mechanical check is defined against.
 
-    **`EXPERIMENT_DESIGN` was added at S-8.2 and §3 was updated with it.** The
-    table was written with eight rows and the loop it prices has nine steps:
-    `02-architecture.md` §2.2 puts *design experiment* between forming a
-    hypothesis and executing one, and S-8.2's AC calls it a mechanical step
-    routed to the mid tier with cascade. That is unimplementable without a row,
-    because the class is derived from this table and `cascade` refuses any type
-    whose check is `None` — so the omission would have forced the design step to
-    borrow another row's name, and the tier it is routed to would have been
-    decided by a row about something else.
+    **§3's table is not an enumeration of the loop's steps, and §2 proves it.**
+    Two rows were added by Epic 8, and the second is the one that shows the table
+    was incomplete rather than merely outgrown.
 
-    Its check is the one AC 2 states: the specification is validated against the
-    chosen primitive's schema. That is the same *kind* of check as the evidence
-    chain's — a schema, run over an artifact, with no judgement in it — which is
-    why the row belongs on the cascade-safe side. See ADR 085.
+    `EXPERIMENT_DESIGN` (S-8.2, ADR 085). `02-architecture.md` §2.2 puts *design
+    experiment* between forming a hypothesis and executing one; §3 had no row for
+    it. Its check is the one S-8.2's AC states — the specification is validated
+    against the chosen primitive's schema — which is the same *kind* of check as
+    the evidence chain's: a schema, run over an artifact, with no judgement in it.
+
+    `RESULT_INTERPRETATION` (S-8.3, ADR 086). **This one is a documented
+    omission, not a judgement call.** `04-cost.md` §2's own mechanical table
+    lists *Interpret a growth table — Diagnostician — ~40 calls/run*, which makes
+    it the **most frequent step this agent takes**, and §3 gives it no row at all.
+    A step with no row has no derivable class, so the single largest mechanical
+    workload in the system could not be routed away from the frontier — which is
+    the exact drift §2 exists to prevent.
+
+    Neither addition touches the two rows that matter: hypothesis generation and
+    attack design still record *none exists*, and a test asserts it from the
+    stories that edited the table.
     """
 
     EXPLORER_ACTION = "explorer action"
@@ -132,6 +141,7 @@ class StepType(StrEnum):
     EVIDENCE_CHAIN = "evidence chain"
     ATTACK_EXECUTION = "attack execution"
     EXPERIMENT_DESIGN = "experiment design"
+    RESULT_INTERPRETATION = "result interpretation"
     HYPOTHESIS_GENERATION = "hypothesis generation"
     ATTACK_DESIGN = "attack design"
 
@@ -166,6 +176,9 @@ STEP_KINDS: Mapping[StepType, StepKind] = {
     StepType.ATTACK_EXECUTION: StepKind(StepType.ATTACK_EXECUTION, "outputs differ or they do not"),
     StepType.EXPERIMENT_DESIGN: StepKind(
         StepType.EXPERIMENT_DESIGN, "the specification validates against the primitive's schema"
+    ),
+    StepType.RESULT_INTERPRETATION: StepKind(
+        StepType.RESULT_INTERPRETATION, "the verdict cites measurements the harness recorded"
     ),
     StepType.HYPOTHESIS_GENERATION: StepKind(StepType.HYPOTHESIS_GENERATION, None),
     StepType.ATTACK_DESIGN: StepKind(StepType.ATTACK_DESIGN, None),

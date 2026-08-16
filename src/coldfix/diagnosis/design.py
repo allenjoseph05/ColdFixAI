@@ -43,7 +43,6 @@ The validator is the schema's, and it is not replaceable.
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -57,6 +56,7 @@ from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step, StepOutcome
 from coldfix.diagnosis.hypothesis import Hypothesis
 from coldfix.diagnosis.log import ExperimentLog
+from coldfix.diagnosis.replies import read_object
 from coldfix.diagnosis.schema import PrimitiveSchema, schema_of
 from coldfix.llm.client import ModelClient
 from coldfix.primitives.registry import Selection
@@ -93,8 +93,6 @@ parameter to accept its default, and never name one the harness supplies.
 
 Choose the smallest settings that could still show the hypothesis to be wrong. \
 An experiment that cannot come back negative is not an experiment."""
-
-_JSON = re.compile(r"\{.*\}", re.DOTALL)
 
 
 class DesignError(Exception):
@@ -241,32 +239,17 @@ def render_question(
     )
 
 
-def parse(  # noqa: PLR0911 - every return is one distinct way a reply is not a
-    # specification, and each carries the sentence a retry needs to correct it. A
-    # single *that reply was rejected* would collapse them and leave the cascade
-    # retrying with nothing new to go on, which is the one thing it must not do.
-    text: str,
-    *,
-    primitive: str,
-    schema: PrimitiveSchema,
-) -> Draft:
+def parse(text: str, *, primitive: str, schema: PrimitiveSchema) -> Draft:
     """Read one specification out of a reply, and check it against the schema.
 
     Returns a `Draft` rather than raising, because every failure here is a *wrong
     answer* — the retryable kind. The mechanical check §3 names for this step is
     exactly this function returning a draft that is valid.
     """
-    found = _JSON.search(text)
-    if found is None:
-        return Draft(None, f"no JSON object in the reply: {text.strip()[:200]!r}")
-
-    try:
-        payload = json.loads(found.group(0))
-    except json.JSONDecodeError as error:
-        return Draft(None, f"the reply was not valid JSON: {error}")
-
-    if not isinstance(payload, dict):
-        return Draft(None, f"a specification must be an object, got {type(payload).__name__}")
+    read = read_object(text)
+    if read.value is None:
+        return Draft(None, read.rejection)
+    payload = read.value
 
     target = payload.get("target")
     if not isinstance(target, str):
