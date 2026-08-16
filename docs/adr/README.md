@@ -75,6 +75,7 @@ Decisions found while building the primitives:
 | 038 | The divergence point is a suffix comparison, and a sample suffices | S-3.9 |
 | 039 | A sweep is a search, a plan is an opinion, and a revert is checked | S-3.10 |
 | 040 | A skipped revision is not a cheap one, and one threshold oracle serves both searches | S-3.11 |
+| 041 | A fitted coefficient needs a floor, and a peak needs a measured range | S-3.12 |
 
 ## Format
 
