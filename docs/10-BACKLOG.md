@@ -1113,9 +1113,20 @@ AC:
 ### S-9.8 — Verdict and routing
 Depends: S-9.2–S-9.7
 AC:
-- Verdict schema: `sound` / `unsound` + objection / `unrepresentative` + reason
-- `unsound` returns to investigate with the objection in context
+- Verdict schema: `sound` / `unsound` + objection / `unrepresentative` + reason / `negative_sound` / `inconclusive` + what is missing
+- `unsound` returns to investigate with the objection in context **only while the investigation has budget left**; with none it escalates
 - Cost of the audit is under 15 calls
+
+Notes (**amended 2026-08-17, ADR 094**): the last two verdicts and the budget condition were added after S-0.8. An audit whose only lever is *run more experiments* makes the one failure that spike actually measured — non-termination — worse; and `00-BRIEF.md` §9 makes a null result shippable output, which the original vocabulary had no way to express.
+
+### S-9.9 — Sufficiency and the null result
+Depends: S-9.1, S-8.9
+Why: **added 2026-08-17 (ADR 094).** S-0.8 measured the agent declining to stop 60 times out of 60, and concluded the stopping decision "probably cannot be the agent's own". S-8.9's cap bounds the damage without deciding sufficiency — and an investigation stopped by it produces a `PartialChain` that **nothing else in Epic 9 can audit**, because every other story assumes a finding exists.
+AC:
+- Audits a `PartialChain`: were the exclusions established under adequate conditions?
+- Distinguishes *nothing was found and that is a result* from *this run stopped too early*
+- A run judged sufficient is not returned to investigate, whatever budget remains
+- A test proves an investigation the agent would have continued can be stopped by the audit
 
 ---
 
