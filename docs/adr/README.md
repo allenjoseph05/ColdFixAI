@@ -95,6 +95,7 @@ Decisions found while building the primitives:
 | 058 | "Creative" is a property, and a tier is what it costs | S-5.5 |
 | 059 | The never-cascade rule is a consequence, not a special case | S-5.6 |
 | 060 | The cheap tier is the hardest to cache | S-5.7 |
+| 061 | Pruning is a rendering decision, and retrieval is not free | S-5.8 |
 
 ## Format
 
