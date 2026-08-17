@@ -80,6 +80,8 @@ Decisions found while building the primitives:
 | 043 | Sensitivity is not cost, and the gate is the reason it is a separate primitive | S-3.14 |
 | 044 | A ramp is a trend, not a power law, and this primitive inverts the invariant | S-3.15 |
 | 045 | Amplification is a multiple, because every retry has a limit and its curve is a step | S-3.16 |
+| 046 | The fuzzer we wrap is Hypothesis, because AFL guides on the wrong thing | S-3.17 |
+| 047 | A payload that costs ten times as much is withheld, not printed | S-3.17 |
 
 ## Format
 
