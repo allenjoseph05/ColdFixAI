@@ -41,6 +41,12 @@ dev = [
     # ships unverified, and a fake token model would assert only that this file
     # knows what `Token.objects.get_or_create` is called.
     "djangorestframework>=3.18.0",
+    # S-7.5 locates a project's existing factories and then *runs* one, because a
+    # `FixtureRecipe` records how many rows of what a run produced and a parse
+    # establishes none of that. On the same terms again: nothing under `src/`
+    # imports it, the exercising program is source text, and the alternative is a
+    # fake factory that seeds exactly what this project expects a factory to seed.
+    "factory-boy>=3.3.3",
     "langgraph>=1.2.10",
     "mypy>=1.13",
     "pytest>=8.3",
