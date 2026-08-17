@@ -86,6 +86,7 @@ Decisions found while building the primitives:
 | 049 | The deterministic unit is a bytecode instruction, and two corrections make it one | S-3.19 |
 | 050 | A toolkit is what was imported, and a floor measures one dimension | Epic 3 composition |
 | 051 | Verifying work must not require an N+1 — F6's first condition corrected | S-4.1 |
+| 052 | The N+1 is linear, so "superlinear" is the wrong test | S-4.3 |
 
 ## Format
 
