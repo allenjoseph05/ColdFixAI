@@ -79,6 +79,7 @@ Decisions found while building the primitives:
 | 042 | A gap inside the noise names an innocent neighbour | S-3.13 |
 | 043 | Sensitivity is not cost, and the gate is the reason it is a separate primitive | S-3.14 |
 | 044 | A ramp is a trend, not a power law, and this primitive inverts the invariant | S-3.15 |
+| 045 | Amplification is a multiple, because every retry has a limit and its curve is a step | S-3.16 |
 
 ## Format
 
