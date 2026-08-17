@@ -168,7 +168,25 @@ class FixtureRecipe(BaseModel):
     """The primary entity `scale(n)` seeds n of."""
 
     per_parent: int = Field(gt=0)
-    """Children seeded per parent. The number S-3.3's `Σk²` argument is about."""
+    """Children held by the **heaviest** parent. The number S-3.3's `Σk²` argument
+    is about, and under `UNIFORM` it is simply children per parent.
+
+    Widened at S-7.7 rather than reinterpreted. A skewed fixture has no single
+    children-per-parent, and the mean is the one reading that is never the
+    interesting one: the whole reason to build a long tail is the request that
+    takes minutes while every other request stays fast, and that request is made
+    by the heaviest parent. Recording the mean here would name the shape in
+    `distribution` and then describe it with the number that shape exists to
+    avoid."""
+
+    parents: int | None = None
+    """How many parents the children were spread across.
+
+    With `entity`, `per_parent` and `distribution` this makes the fixture
+    reproducible: S-3.3's `allocate` is deterministic, so the same shape over the
+    same parent count is the same fixture on every machine. `None` means the
+    recipe predates S-7.7 or its source never had a parent population to speak
+    of — not that there was one parent."""
 
     distribution: Distribution
     source: str = Field(min_length=1)
