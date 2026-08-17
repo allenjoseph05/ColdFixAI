@@ -89,6 +89,7 @@ Decisions found while building the primitives:
 | 052 | The N+1 is linear, so "superlinear" is the wrong test | S-4.3 |
 | 053 | A screen with no entry point, and four things only a project shows | Epic 4 composition |
 | 054 | The commit sha is the wrong repo identity, and the machine is not in the key | S-5.1 |
+| 055 | Determinism is a claim about the answer, and replay is a mode not a branch | S-5.2 |
 
 ## Format
 

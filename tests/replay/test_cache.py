@@ -45,6 +45,7 @@ from coldfix.primitives.counters import DB_QUERY, DB_ROWS
 from coldfix.primitives.measurement import CacheControl, MetricKind
 from coldfix.primitives.scaling import Distribution, ScalePoint, ScalingResult
 from coldfix.replay.cache import (
+    Determinism,
     Environment,
     ExperimentKey,
     ExperimentSpec,
@@ -360,8 +361,8 @@ def test_a_miss_runs_the_experiment_and_the_next_call_does_not(cache: ReplayCach
         runs += 1
         return result()
 
-    first = cache.run(key(), ScalingResult, measure)
-    second = cache.run(key(), ScalingResult, measure)
+    first = cache.run(key(), ScalingResult, measure, determinism=Determinism.DETERMINISTIC)
+    second = cache.run(key(), ScalingResult, measure, determinism=Determinism.DETERMINISTIC)
 
     assert runs == 1
     assert first.hit is False
@@ -375,8 +376,8 @@ def test_a_replayed_measurement_says_so(cache: ReplayCache) -> None:
     A replayed number is a measurement — it happened — but it did not happen now,
     and a `Recall` is what carries that distinction to whoever writes the report.
     """
-    cache.run(key(), ScalingResult, result)
-    replayed = cache.run(key(), ScalingResult, result)
+    cache.run(key(), ScalingResult, result, determinism=Determinism.DETERMINISTIC)
+    replayed = cache.run(key(), ScalingResult, result, determinism=Determinism.DETERMINISTIC)
 
     assert "Replayed from a recording" in replayed.provenance()
     assert "Nothing ran" in replayed.provenance()
@@ -410,8 +411,8 @@ def test_the_statistics_separate_a_cold_cache_from_a_broken_one(cache: ReplayCac
     from the hit rate alone, which is why `unreadable` is counted apart."""
     assert cache.statistics.hit_rate is None
 
-    cache.run(key(), ScalingResult, result)
-    cache.run(key(), ScalingResult, result)
+    cache.run(key(), ScalingResult, result, determinism=Determinism.DETERMINISTIC)
+    cache.run(key(), ScalingResult, result, determinism=Determinism.DETERMINISTIC)
 
     assert cache.statistics == type(cache.statistics)(hits=1, misses=1, recordings=1, unreadable=0)
     assert cache.statistics.hit_rate == 0.5
@@ -792,6 +793,10 @@ def investigate(cache: ReplayCache) -> tuple[Plan, list[Subject]]:
             ExperimentKey.of(bound.descriptor, sweep, repo_sha=SHA),
             ScreenedWorkload,
             lambda bound=bound: screen_growth(bound, counters=[DB_QUERY]),  # type: ignore[misc]
+            # A screening sweep concludes from counts, which reproduce to the
+            # integer. S-5.2's default is `SAMPLED`, which fails closed, so a
+            # screen that did not say this would re-run every time.
+            determinism=Determinism.DETERMINISTIC,
         )
         screened.append(recalled.value)
 
@@ -810,6 +815,12 @@ def test_a_recorded_investigation_replays_with_the_world_removed(
     stronger than counting calls, because a count only covers the routes somebody
     thought to count — and it is the same argument S-4.2 made for walking the
     import graph instead of asserting no client was configured.
+
+    **The second pass is also asserted to be a replay**, which S-5.2 found this
+    test was missing: the planted fixture needs neither a socket nor a
+    subprocess, so removing both leaves a *live* screen perfectly able to run and
+    produce the same plan. Poisoning the world proves nothing reached for it; the
+    hit count is what proves nothing needed to.
     """
     recorded, _ = investigate(ReplayCache(tmp_path))
 
@@ -822,8 +833,11 @@ def test_a_recorded_investigation_replays_with_the_world_removed(
     monkeypatch.setattr(subprocess, "Popen", refuse)
     monkeypatch.setattr(subprocess, "run", refuse)
 
-    replayed, _ = investigate(ReplayCache(tmp_path))
+    second = ReplayCache(tmp_path)
+    replayed, _ = investigate(second)
 
+    assert second.statistics.hits == len(PLANTED)
+    assert second.statistics.misses == 0
     assert replayed.investigate == recorded.investigate
     assert replayed.deferred == recorded.deferred
     assert replayed.healthy == recorded.healthy

@@ -39,6 +39,31 @@ from a different experiment, silently. Two things narrow that:
 **A cached experiment's side effects do not happen.** A hit skips the seeding,
 the reset cycle and the run. Anything downstream that depends on the subject
 being in the state the experiment left it in must not sit behind this cache.
+
+---
+
+**S-5.2 adds the mode and the mark, and neither is a new code path.**
+
+`ReplayMode` decides what `run` does with the store — measure what is missing,
+never measure, or never look — and every caller above here makes the same call in
+all three. That is what makes replay a way of debugging *the agent that calls
+this* rather than a second route through it: the agent runs unchanged and every
+experiment it asks for is answered from disk.
+
+`Determinism` is the mark, and it is a claim about the **answer**, not about the
+bytes. Every measurement carries durations and no duration repeats, so a
+byte-equality reading would make nothing reproducible and no hit ever legitimate.
+While recording, a sampled experiment is re-run and its recording refreshed;
+while replaying it is played back, because the two modes are doing opposite jobs
+— one must not treat an afternoon's sample as a standing fact, the other must not
+let the session being debugged stop being the session that was recorded.
+
+There is deliberately **no artifact here describing an investigation**. The
+ordered account of what was asked and why — hypothesis, design, verdict — is
+S-8.4's append-only experiment log, and inventing a second one would be guessing
+at a schema that story already specifies (the argument S-1.7 recorded for leaving
+`Certification` unlogged). What this module answers instead is the question replay
+actually raises: `recordings()` says what is on the disk.
 """
 
 from __future__ import annotations
@@ -55,6 +80,7 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import (
@@ -82,6 +108,12 @@ _DIRT_CHARS = 16
 
 _GIT_TIMEOUT_SECONDS = 60.0
 
+# How many of a store's experiments a missing-recording refusal lists before it
+# gives a count instead. A production store holds every experiment of every run
+# against the repository, and an error that printed all of them would bury the
+# sentence saying what went wrong.
+_LISTED_ON_A_MISS = 10
+
 
 class ReplayError(Exception):
     """A recording could not be made, read, or trusted."""
@@ -103,6 +135,87 @@ class RepositoryError(ReplayError):
     Raised rather than falling back to a constant, because a constant is a key
     field that never changes: every recording made under it would be returned
     for every later version of the code.
+    """
+
+
+class ModeError(ReplayError):
+    """This cache is not in a mode where that operation means anything."""
+
+
+class MissingRecordingError(ReplayError):
+    """Replay was asked for an experiment the store does not hold.
+
+    A refusal rather than a fallback to running it. The point of replay mode is
+    that there is no subject — no repository checked out, no container, no
+    database — so "run it instead" is not a slower answer, it is a crash
+    somewhere further down with a cause nobody will connect to the cache. And
+    where a subject *does* happen to be present, a silent fallback is worse: the
+    session being debugged would quietly stop being the session that was
+    recorded.
+    """
+
+
+class Determinism(StrEnum):
+    """Whether re-running an experiment gives the same **answer**.
+
+    Read that carefully, because the obvious reading makes this useless. It is
+    not a claim about bytes. Every measurement `measure_once` takes carries
+    `seconds`, `cpu_seconds` and `blocked_seconds`, and no duration ever repeats
+    — so under a byte-equality reading nothing in this system is deterministic,
+    nothing may ever be replayed, and S-5.1 was pointless.
+
+    What the two values distinguish is whether the thing the experiment is *for*
+    reproduces. A screening sweep concludes from counts, which reproduce to the
+    integer, and S-4.3 already forbids a duration from raising a flag on its own;
+    an interleaved timing comparison, a load curve or a fuzzing campaign concludes
+    from a distribution, and a second run answers differently.
+
+    **It is declared, and nothing here can check it.** Only the primitive knows
+    what its own answer rests on. The declaration therefore lives at the call
+    site nearest that knowledge, and the default is the safe one.
+    """
+
+    DETERMINISTIC = "deterministic"
+    """Re-running answers the same. May be replayed."""
+
+    SAMPLED = "sampled"
+    """Re-running answers differently. Recorded, never replayed while recording.
+
+    The default, because it fails closed: an experiment nobody classified is
+    re-run, which costs time and never costs correctness. The other default
+    would spend the first wrong declaration on a silently stale answer.
+    """
+
+
+class ReplayMode(StrEnum):
+    """What this cache does with the store. Three behaviours, not a flag.
+
+    A mode rather than a pair of booleans at every call site, because the branch
+    that lives in no module is the one Epic 4's composition check found every
+    caller reimplementing — and S-15.1's agreement study, whose acceptance
+    criterion is *N runs with the cache disabled*, is precisely a caller that
+    would otherwise write `if use_cache:` around every experiment.
+    """
+
+    RECORD = "record"
+    """Measure what is not recorded, replay what is and may be. The normal path."""
+
+    REPLAY = "replay"
+    """Never measure. A hit is returned, a miss is refused.
+
+    The debugging mode: the agent under test runs unchanged, and every experiment
+    it asks for is answered from disk. **Sampled experiments are replayed here**,
+    which is the opposite of what `RECORD` does with them and is deliberate — the
+    purpose is to reproduce a session exactly, and an experiment that re-ran would
+    make the session being debugged stop being the session that was recorded. The
+    `Recall` says which it is.
+    """
+
+    OFF = "off"
+    """Measure everything, read nothing, write nothing.
+
+    S-15.1 runs diagnosis ten times with the cache disabled, because agreement
+    between ten replays of one recording is 100% and means nothing.
     """
 
 
@@ -252,7 +365,37 @@ class Recording(BaseModel):
     different result types under one key is a caller error rather than a stale
     entry, and the two want opposite treatment."""
 
+    determinism: Determinism = Determinism.SAMPLED
+    """What the experiment was recorded as, which is half of what decides a replay.
+
+    Defaulted so that a recording written before this field existed reads as
+    sampled — the conservative half — rather than failing to parse and being
+    counted as an unreadable entry.
+    """
+
     value: JsonValue
+
+
+@dataclass(frozen=True)
+class StoredExperiment:
+    """One entry's identity, without the measurement inside it.
+
+    What `recordings()` returns, and what a missing-recording refusal lists. The
+    value is deliberately left behind: enumerating a store to say what is in it
+    should not cost the parse of every measurement it holds.
+    """
+
+    digest: str
+    key: ExperimentKey
+    result_type: str
+    determinism: Determinism
+    recorded_at: datetime
+
+    def describe(self) -> str:
+        return (
+            f"{self.key.workload_id} / {self.key.experiment_spec.primitive} "
+            f"({self.determinism.value}, {self.recorded_at.isoformat(timespec='seconds')})"
+        )
 
 
 @dataclass(frozen=True)
@@ -269,15 +412,39 @@ class Recall[T]:
     hit: bool
     recorded_at: datetime
     environment: Environment
+    determinism: Determinism = Determinism.SAMPLED
+
+    @property
+    def reproducible(self) -> bool:
+        """Whether a fresh run is expected to answer the same.
+
+        Expected, not guaranteed: `Determinism` is declared by the caller nearest
+        the primitive and nothing in this module can check it.
+        """
+        return self.determinism is Determinism.DETERMINISTIC
 
     def provenance(self) -> str:
         """One sentence a report can quote about where this number came from."""
         when = self.recorded_at.isoformat(timespec="seconds")
         if not self.hit:
             return f"Measured {when} on {self.environment.node}."
-        return (
+
+        played = (
             f"Replayed from a recording made {when} on {self.environment.node} "
             f"({self.environment.system}, Python {self.environment.python}). Nothing ran."
+        )
+        if self.reproducible:
+            return (
+                f"{played} The experiment is declared deterministic, so a fresh run is expected "
+                "to answer the same."
+            )
+        # The sentence that has to be here. A sampled experiment replayed is a
+        # record of one afternoon, and the mode that returns it is the debugging
+        # mode — so anything quoting this as a current measurement is quoting a
+        # number that no longer holds.
+        return (
+            f"{played} This experiment is sampled, so a fresh run would answer differently: "
+            "this is a record of what happened, not a current measurement."
         )
 
 
@@ -323,13 +490,30 @@ class ReplayCache:
     sees either the previous recording or the new one.
     """
 
-    def __init__(self, root: Path, *, environment: Environment | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        mode: ReplayMode = ReplayMode.RECORD,
+        environment: Environment | None = None,
+    ) -> None:
+        self._mode = mode
         self._environment = environment if environment is not None else Environment.current()
         self._directory = Path(root) / self._environment.slug()
         self._hits = 0
         self._misses = 0
         self._recordings = 0
         self._unreadable = 0
+
+    @property
+    def mode(self) -> ReplayMode:
+        """Readable, because a report assembled from this cache's results wants it.
+
+        Ten diagnoses that agree is a different number depending on whether the
+        cache was off, and a run that does not say which was in effect has left
+        out the thing that decides how to read it.
+        """
+        return self._mode
 
     @property
     def environment(self) -> Environment:
@@ -350,7 +534,12 @@ class ReplayCache:
         )
 
     def run[T](
-        self, key: ExperimentKey, result_type: type[T], compute: Callable[[], T]
+        self,
+        key: ExperimentKey,
+        result_type: type[T],
+        compute: Callable[[], T],
+        *,
+        determinism: Determinism = Determinism.SAMPLED,
     ) -> Recall[T]:
         """Return the recorded result for `key`, or run `compute` and record it.
 
@@ -358,8 +547,19 @@ class ReplayCache:
         looks up and records separately has to remember to do the second, and the
         run that gets forgotten is the expensive one.
 
+        **The same call in all three modes**, which is what makes replay a way of
+        debugging the agent that calls it rather than a second code path through
+        it. `RECORD` measures what is not recorded, `REPLAY` never measures, `OFF`
+        always measures. Nothing above here branches.
+
+        `determinism` is the caller's claim about *this* experiment, and a replay
+        while recording needs it from both sides — the claim made now and the one
+        the recording was made under. The stricter of the two wins, so neither a
+        recording made from a sample nor a request that expects one can be served
+        from the other.
+
         `compute` is not called on a hit — not with a short-circuit inside it, not
-        under a flag. That is what makes AC 4's *zero model calls and zero
+        under a flag. That is what makes S-5.1's *zero model calls and zero
         container starts* testable by removing the mechanisms rather than by
         counting invocations.
 
@@ -367,18 +567,65 @@ class ReplayCache:
         result, and caching the failure would make it permanent.
 
         Raises:
+            MissingRecordingError: replay mode, and there is no recording.
             ResultTypeError: an entry exists under this key holding another type.
             ReplayError: the recording could not be written.
         """
-        recalled = self.recall(key, result_type)
-        if recalled is not None:
-            return recalled
+        if self._mode is ReplayMode.REPLAY:
+            return self.replay(key, result_type)
+
+        # The determinism is checked before the store is read, so a sampled
+        # experiment does not even look. A lookup that found an entry and then
+        # declined to use it would report a hit rate counting answers it refused.
+        if self._mode is ReplayMode.RECORD and determinism is Determinism.DETERMINISTIC:
+            recalled = self.recall(key, result_type)
+            if recalled is not None and recalled.reproducible:
+                return recalled
 
         value = compute()
-        self.record(key, value, result_type)
+        if self._mode is not ReplayMode.OFF:
+            self.record(key, value, result_type, determinism=determinism)
         return Recall(
-            value=value, hit=False, recorded_at=datetime.now(UTC), environment=self._environment
+            value=value,
+            hit=False,
+            recorded_at=datetime.now(UTC),
+            environment=self._environment,
+            determinism=determinism,
         )
+
+    def replay[T](self, key: ExperimentKey, result_type: type[T]) -> Recall[T]:
+        """The recording for `key`, refusing if there is none. Replay mode only.
+
+        **There is no `compute` parameter**, and that is the point rather than a
+        convenience. A debugging session has no subject — no checkout, no
+        container, no database — so a caller able to pass one would be a caller
+        who still had to build all of it. The unsafe state has no argument to
+        arrive through, which is the construction this project uses for every
+        other ordering requirement.
+
+        Sampled experiments are replayed here. `RECORD` re-runs them, because a
+        fresh investigation must not treat one afternoon's sample as a standing
+        fact; replay is the opposite job — reproducing a session — and an
+        experiment that re-ran would make the session being debugged stop being
+        the session that was recorded. The `Recall` says which it is.
+
+        Raises:
+            ModeError: this cache is recording or off.
+            MissingRecordingError: nothing is recorded under this key.
+            ResultTypeError: the entry holds a different result type.
+        """
+        if self._mode is not ReplayMode.REPLAY:
+            message = (
+                f"this cache is {self._mode.value}, so `replay` is not what it does. Replaying "
+                "in either of the other modes would answer from a recording at a moment the "
+                "caller had asked to measure"
+            )
+            raise ModeError(message)
+
+        recalled = self.recall(key, result_type)
+        if recalled is None:
+            raise MissingRecordingError(self._nothing_recorded(key))
+        return recalled
 
     def recall[T](self, key: ExperimentKey, result_type: type[T]) -> Recall[T] | None:
         """The recorded result for `key`, or `None` if there is nothing usable.
@@ -433,14 +680,70 @@ class ReplayCache:
             hit=True,
             recorded_at=recording.recorded_at,
             environment=recording.environment,
+            determinism=recording.determinism,
         )
 
-    def record[T](self, key: ExperimentKey, value: T, result_type: type[T]) -> None:
+    def recordings(self) -> tuple[StoredExperiment, ...]:
+        """Every experiment this store holds, oldest first.
+
+        The inventory, not a log. `04-cost.md` §6 makes an entry a measurement
+        keyed by experiment, and the ordered account of an investigation — the
+        hypothesis behind each experiment, its design, its verdict — is S-8.4's
+        artifact and is deliberately not guessed at here. What this answers is
+        the question replay actually raises: *what is on this disk*.
+
+        Unreadable entries are skipped rather than raising, since one corrupt
+        file must not make it impossible to see the rest, and they are counted.
+        """
+        found: list[StoredExperiment] = []
+        for path in sorted(self._directory.glob("*.json")):
+            try:
+                recording = Recording.model_validate_json(path.read_text(encoding="utf-8"))
+            except (OSError, ValidationError):
+                self._unreadable += 1
+                continue
+            found.append(
+                StoredExperiment(
+                    digest=path.stem,
+                    key=recording.key,
+                    result_type=recording.result_type,
+                    determinism=recording.determinism,
+                    recorded_at=recording.recorded_at,
+                )
+            )
+        return tuple(sorted(found, key=lambda stored: (stored.recorded_at, stored.digest)))
+
+    def record[T](
+        self,
+        key: ExperimentKey,
+        value: T,
+        result_type: type[T],
+        *,
+        determinism: Determinism = Determinism.SAMPLED,
+    ) -> None:
         """Store `value` as the result of `key`, replacing whatever was there.
 
+        **Only a recording cache writes**, and the other two are refused here
+        rather than merely avoided by `run`. Replay is the case that matters: a
+        session that wrote back what it played back would stamp every recording
+        with today's date, so the act of debugging a run would destroy the record
+        of when the run happened — and a replay asked for as deterministic would
+        promote a sampled recording permanently. Off is the same rule for
+        S-15.1's reason: disabled has to mean neither half, or a study's ten
+        independent runs are left in the store for whatever runs next.
+
         Raises:
+            ModeError: this cache is replaying, or off.
             ReplayError: the value could not be serialized, or not written.
         """
+        if self._mode is not ReplayMode.RECORD:
+            message = (
+                f"this cache is {self._mode.value}, so it does not write. A replay that recorded "
+                "what it played back would restamp the session it was reading, and a disabled "
+                "cache that recorded would leave its runs behind for the next one"
+            )
+            raise ModeError(message)
+
         try:
             rendered: JsonValue = _adapter(result_type).dump_python(value, mode="json")
         except (ValueError, TypeError) as error:
@@ -455,6 +758,7 @@ class ReplayCache:
             environment=self._environment,
             recorded_at=datetime.now(UTC),
             result_type=_type_name(result_type),
+            determinism=determinism,
             value=rendered,
         )
 
@@ -475,6 +779,30 @@ class ReplayCache:
             raise ReplayError(message) from error
 
         self._recordings += 1
+
+    def _nothing_recorded(self, key: ExperimentKey) -> str:
+        """Why the replay stopped, and what the store does hold instead.
+
+        A bare "not found" is close to useless here, because the four things that
+        could be wrong all look identical from the call site: a different working
+        tree, a different fixture, a spec spelled differently, or an experiment
+        the recorded session never ran. Listing the store separates them at a
+        glance — a workload that appears under a different `repo_sha` is the
+        first case, one that does not appear at all is the last.
+        """
+        held = self.recordings()
+        shown = "\n".join(f"  - {stored.describe()}" for stored in held[:_LISTED_ON_A_MISS])
+        remainder = len(held) - _LISTED_ON_A_MISS
+        if remainder > 0:
+            shown = f"{shown}\n  ... and {remainder} more"
+        inventory = shown or "  (nothing at all — this store is empty)"
+
+        return (
+            f"nothing is recorded for {key.workload_id} / {key.experiment_spec.primitive} under "
+            f"repo {key.repo_sha} and fixture {key.fixture_hash} ({key.digest()}), and this "
+            f"cache is in replay mode, so there is no subject to measure instead. "
+            f"{self._directory} holds:\n{inventory}"
+        )
 
     def _path(self, key: ExperimentKey) -> Path:
         """The file holding this key's recording.
