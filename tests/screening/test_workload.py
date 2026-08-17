@@ -24,7 +24,7 @@ import pytest
 from pydantic import ValidationError
 
 from coldfix.primitives.counters import DB_QUERY
-from coldfix.primitives.measurement import SECONDS
+from coldfix.primitives.measurement import BLOCKED_SECONDS, SECONDS
 from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetMechanism, ResetNotPreparedError, ResetStrategy
 from coldfix.sandbox.verification import VerificationReport, VerifiedReset
@@ -207,10 +207,29 @@ def test_observations_recording_different_metrics_are_refused() -> None:
         a_workload(DOES_REAL_WORK[0], partial)
 
 
-def test_a_metric_that_is_not_a_measurement_is_refused() -> None:
-    for value in (float("nan"), float("inf"), -1.0):
-        with pytest.raises(ValidationError, match="not usable measurements"):
+def test_a_metric_that_is_not_a_number_is_refused() -> None:
+    for value in (float("nan"), float("inf")):
+        with pytest.raises(ValidationError, match="not numbers"):
             Observation(scale=10, metrics={DB_QUERY: value})
+
+
+def test_a_count_below_zero_is_refused() -> None:
+    with pytest.raises(ValidationError, match="negative and cannot be"):
+        Observation(scale=10, metrics={DB_QUERY: -1.0})
+
+
+def test_blocked_time_below_zero_is_a_measurement_and_not_an_error() -> None:
+    """Found by S-4.2, on the first real screening result.
+
+    `blocked_seconds` is elapsed minus CPU, so it goes below zero whenever CPU
+    time exceeds the wall clock — which S-3.7 reports as `PARALLEL` and
+    deliberately does not clamp, because a zero there would say *never waited*
+    and that is a finding this must not be able to manufacture. A blanket
+    non-negative rule rejected it.
+    """
+    observation = Observation(scale=10, metrics={DB_QUERY: 3, BLOCKED_SECONDS: -0.0004})
+
+    assert observation.metrics[BLOCKED_SECONDS] < 0
 
 
 def test_an_observation_with_no_metrics_records_nothing() -> None:
