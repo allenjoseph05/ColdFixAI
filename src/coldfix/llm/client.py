@@ -1,0 +1,300 @@
+"""One model call, and a double that replays a recorded one instead of making it.
+
+S-0.7b. `docs/10-BACKLOG.md` deferred this with a precise reason: *the SDK and
+provider strategy are undecided, and writing a mock against a guessed interface
+is the speculative abstraction `CLAUDE.md` forbids.* Its dependencies — S-0.2,
+E1, S-4.1 — are all done, so the guess is no longer necessary and the mock is
+built against the real thing.
+
+**A recording is a real API response, validated by the vendor's own model.** The
+store holds the JSON an `anthropic.types.Message` parses, and loading one runs it
+through that model — so a recording that is not something the API could have
+returned fails to load rather than being replayed. This is the project's own
+lesson applied to its most-used double: *a test double more forgiving than the
+real thing turns a structural assertion into a decoration.*
+
+**Both clients share one translation.** `translate` is the only place an API
+response becomes an artifact of this system, so a test that passes against the
+replaying client exercised the same parsing the real one uses. A double with its
+own translation would be testing the double.
+
+**An unrecorded request is refused, never answered.** A mock that returns a
+plausible default is the most dangerous kind: every agent test would pass, and
+what they would be testing is the default. The refusal lists what *is* recorded,
+because the four things that could be wrong — different model, different prompt,
+recording never made, recording made under another key — look identical from the
+call site.
+
+**`stop_reason` is carried, and `text` is never taken from `content[0]`.** The
+API can decline a request: HTTP 200, `stop_reason: "refusal"`, and an **empty**
+content list. Code that indexes the first block breaks on it, and a double that
+always answers `end_turn` hides that failure until production. A refusal is
+replayable here, and it yields empty text with `refused` set rather than an
+exception or an invented answer.
+
+**The TTL comes from the caller, not the response.** S-5.3 records it per call
+because a cache write bills 1.25x at five minutes and 2x at an hour, and the
+response does not say which was asked for — the request did.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from hashlib import sha256
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
+
+from anthropic.types import Message, MessageParam
+
+from coldfix.cost.accounting import TokenUsage
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle only matters to type checkers
+    from anthropic import Anthropic
+
+# `stop_reason` values this system has to behave differently for. The rest —
+# `end_turn`, `stop_sequence`, `tool_use`, `pause_turn` — are ordinary outcomes.
+REFUSAL = "refusal"
+TRUNCATED = "max_tokens"
+
+
+class ModelClientError(Exception):
+    """A model call could not be made, or a recorded one could not be replayed."""
+
+
+class NoRecordingError(ModelClientError):
+    """This request has no recording, and nothing here will invent one.
+
+    The failure a forgiving double hides. If an unrecorded request returned a
+    default, every agent test would pass and all of them would be testing the
+    default rather than the agent.
+    """
+
+
+@dataclass(frozen=True)
+class ModelResponse:
+    """What one call returned, in the terms this system accounts in.
+
+    `usage` is S-5.3's `TokenUsage` rather than the vendor's, because that is
+    what the ledger prices and what refuses to collapse the two cache figures
+    into one.
+    """
+
+    model: str
+    text: str
+    usage: TokenUsage
+    stop_reason: str
+
+    @property
+    def refused(self) -> bool:
+        """Whether the model declined. Check before reading `text`.
+
+        A refusal is a successful HTTP response with empty content, so a caller
+        that treats an empty answer as a short answer is reading a decline as a
+        result.
+        """
+        return self.stop_reason == REFUSAL
+
+    @property
+    def truncated(self) -> bool:
+        """Whether the answer was cut off at `max_tokens` rather than finished."""
+        return self.stop_reason == TRUNCATED
+
+
+def translate(message: Message, *, cache_ttl: str = "5m") -> ModelResponse:
+    """Turn a vendor response into this system's artifact. The only such place.
+
+    `text` is the concatenation of the text blocks and is **never**
+    `content[0].text`: a refusal carries an empty content list, and extended
+    thinking puts a non-text block first.
+    """
+    text = "".join(block.text for block in message.content if block.type == "text")
+    usage = message.usage
+    return ModelResponse(
+        model=message.model,
+        text=text,
+        usage=TokenUsage(
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cache_creation_input_tokens=usage.cache_creation_input_tokens or 0,
+            cache_read_input_tokens=usage.cache_read_input_tokens or 0,
+            cache_ttl=cache_ttl,
+        ),
+        stop_reason=message.stop_reason or "end_turn",
+    )
+
+
+def request_digest(
+    *,
+    model: str,
+    system: str,
+    messages: Sequence[MessageParam],
+    max_tokens: int,
+) -> str:
+    """What identifies a request, for finding its recording.
+
+    **The model is part of it.** Two models answer the same prompt differently
+    and bill differently, so a recording made against one must never serve the
+    other — S-5.5 routes the same step to different tiers, which is exactly when
+    that would happen.
+
+    Hashed over a canonical rendering rather than a joined string, for S-5.1's
+    reason: any separator that can occur inside a field makes two different
+    requests hash alike.
+    """
+    payload = json.dumps(
+        {"model": model, "system": system, "messages": list(messages), "max_tokens": max_tokens},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return sha256(payload.encode()).hexdigest()
+
+
+class ModelClient(Protocol):
+    """What the agents call. Two implementations, which is why it is a protocol."""
+
+    def complete(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: Sequence[MessageParam],
+        max_tokens: int,
+        cache_ttl: str = "5m",
+    ) -> ModelResponse: ...
+
+
+@dataclass(frozen=True)
+class AnthropicClient:
+    """The real one. Thin on purpose: everything interesting is elsewhere.
+
+    Routing is S-5.5's, budgets are S-5.4's, the prompt is S-5.7's and the
+    accounting is S-5.3's. What is left here is the call and the translation.
+    """
+
+    client: Anthropic
+
+    def complete(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: Sequence[MessageParam],
+        max_tokens: int,
+        cache_ttl: str = "5m",
+    ) -> ModelResponse:
+        message = self.client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=system,
+            messages=list(messages),
+        )
+        return translate(message, cache_ttl=cache_ttl)
+
+
+@dataclass(frozen=True)
+class Recording:
+    """One request, and the response the API gave it.
+
+    The response is held as the vendor's own parsed model, so anything stored
+    here is something the API could have returned.
+    """
+
+    digest: str
+    message: Message
+
+    @classmethod
+    def of(
+        cls,
+        *,
+        model: str,
+        system: str,
+        messages: Sequence[MessageParam],
+        max_tokens: int,
+        response: Mapping[str, object],
+    ) -> Recording:
+        """Build one from a raw API payload, refusing anything the SDK rejects.
+
+        Raises:
+            ModelClientError: the payload is not a response the API could have
+                returned. Refused here rather than at replay, so a malformed
+                recording is a failure to load rather than a wrong answer.
+        """
+        try:
+            parsed = Message.model_validate(response)
+        except Exception as error:
+            message = (
+                f"this is not a response the API could have returned: {error}. A recording that "
+                "the vendor's own model rejects would make every test against it a test of a "
+                "fiction, which is the one thing a double must not be"
+            )
+            raise ModelClientError(message) from error
+
+        return cls(
+            digest=request_digest(
+                model=model, system=system, messages=messages, max_tokens=max_tokens
+            ),
+            message=parsed,
+        )
+
+
+class ReplayingClient:
+    """Answers only from recordings, and cannot reach the network.
+
+    **It holds no vendor client at all**, which is what makes *no test hits a
+    real API* structural rather than a rule: there is nothing here to call with.
+    """
+
+    def __init__(self, recordings: Sequence[Recording] = ()) -> None:
+        self._recordings: dict[str, Message] = {r.digest: r.message for r in recordings}
+        self._served: list[str] = []
+
+    @classmethod
+    def from_directory(cls, root: Path) -> ReplayingClient:
+        """Load recordings written as `<digest>.json` holding an API response."""
+        recordings: list[Recording] = []
+        for path in sorted(Path(root).glob("*.json")):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            recordings.append(
+                Recording(digest=path.stem, message=Message.model_validate(payload["response"]))
+            )
+        return cls(recordings)
+
+    @property
+    def served(self) -> tuple[str, ...]:
+        """Which recordings were used, so a test can assert what was asked."""
+        return tuple(self._served)
+
+    def complete(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: Sequence[MessageParam],
+        max_tokens: int,
+        cache_ttl: str = "5m",
+    ) -> ModelResponse:
+        """Replay this request's recording.
+
+        Raises:
+            NoRecordingError: no recording matches. Never a default.
+        """
+        digest = request_digest(
+            model=model, system=system, messages=messages, max_tokens=max_tokens
+        )
+        recorded = self._recordings.get(digest)
+        if recorded is None:
+            known = ", ".join(sorted(self._recordings)) or "none"
+            message = (
+                f"no recording for this request to {model} (digest {digest}). Recorded: {known}. "
+                "Nothing here invents a response: a double that answered anyway would make every "
+                "agent test pass while testing the default. Four things look identical from here "
+                "— a different model, a changed prompt, a recording never made, and one made "
+                "under a different max_tokens"
+            )
+            raise NoRecordingError(message)
+
+        self._served.append(digest)
+        return translate(recorded, cache_ttl=cache_ttl)
