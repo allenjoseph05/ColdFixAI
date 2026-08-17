@@ -154,8 +154,16 @@ def audit_session(
     rate: ExchangeRate,
     source: str,
     ceiling_eur: Decimal | None = None,
+    system: str = _SYSTEM,
 ) -> Session:
     """A session belonging to the auditor, with the auditor's prompt as its prefix.
+
+    `system` defaults to the finding auditor's and is a parameter because a
+    **second** adversarial audit exists: S-10.3 attacks a falsification test
+    rather than a diagnosis, so its prompt differs while every isolation argument
+    below applies unchanged. `CLAUDE.md` keeps things concrete until a second case
+    turns up; this is the second case, and the alternative was a copy of this
+    function that would drift.
 
     Separate from the Diagnostician's because `Session` caches one assembled
     prompt per model and that prompt carries its owner's system text. Sharing one
@@ -169,7 +177,7 @@ def audit_session(
     should not add to.
     """
     return Session(
-        system=_SYSTEM,
+        system=system,
         playbook="(none: an auditor works from the measurements, not from a playbook)",
         source=source,
         rate=rate,
@@ -177,15 +185,20 @@ def audit_session(
     )
 
 
-def refuse_shared_session(session: Session) -> None:
+def refuse_shared_session(session: Session, *, expected: str = _SYSTEM) -> None:
     """Refuse a session that belongs to some other agent.
+
+    `expected` is the prompt this particular auditor should own — the finding
+    auditor's by default, S-10.3's when a falsification test is the subject. Two
+    audits with two prompts is still one rule: **a session whose prefix belongs to
+    somebody else undoes the isolation silently.**
 
     Raises:
         AuditError: its system prompt is not the auditor's, so its cached prefix
             is somebody else's and running the audit through it would inherit
             what this module spent the rest of its length removing.
     """
-    if session.system != _SYSTEM:
+    if session.system != expected:
         message = (
             "this session's prompt is not the auditor's, so its cached prefix belongs to another "
             "agent and every call billed through it would carry that agent's system text and "
