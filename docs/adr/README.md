@@ -102,6 +102,7 @@ Decisions found while building the primitives:
 | 065 | Append-only is a trigger, and the replay cache is not a table | S-6.2 |
 | 066 | Bounded is a guarantee, not a measurement | S-6.3 |
 | 067 | Unrecorded is not untouched | S-6.4 |
+| 068 | A correct answer with nowhere to go | Epic 6 composition |
 
 ## Format
 

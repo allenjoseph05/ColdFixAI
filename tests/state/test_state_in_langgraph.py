@@ -92,13 +92,14 @@ def test_an_unannotated_channel_replaces_in_the_same_graph() -> None:
     Without this, `test_a_node_returning_one_experiment_appends` would pass for
     a LangGraph that appended every list field regardless of annotation — and
     the annotation the story calls load-bearing would be carrying nothing.
-    `screening` is a plain `Sequence` and is overwritten wholesale.
+    `screening` carries no reducer and is overwritten wholesale — the previous
+    workload's entry is gone rather than merged.
     """
-    started = CheckpointedState(screening=[{"workload": "list_books"}])
+    started = CheckpointedState(screening={"list_books": {"growth": "quadratic"}})
 
-    result = run(one_node({"screening": [{"workload": "list_authors"}]}), started)
+    result = run(one_node({"screening": {"list_authors": {"growth": "linear"}}}), started)
 
-    assert result["screening"] == [{"workload": "list_authors"}]
+    assert result["screening"] == {"list_authors": {"growth": "linear"}}
 
 
 def test_dropping_the_annotation_loses_the_history() -> None:
