@@ -82,6 +82,7 @@ Decisions found while building the primitives:
 | 045 | Amplification is a multiple, because every retry has a limit and its curve is a step | S-3.16 |
 | 046 | The fuzzer we wrap is Hypothesis, because AFL guides on the wrong thing | S-3.17 |
 | 047 | A payload that costs ten times as much is withheld, not printed | S-3.17 |
+| 048 | The circular question is refused by a constructor, not by a convention | S-3.18 |
 
 ## Format
 
