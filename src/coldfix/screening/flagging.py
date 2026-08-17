@@ -156,6 +156,14 @@ class Ranking:
     no exponent (`log(0)` is undefined), and calling that *flat* would publish an
     exclusion nobody measured. S-4.5 needs this list to tell "healthy" from
     "could not tell".
+
+    **Only metrics that could have been flagged appear here**, which Epic 4's
+    composition check corrected. `blocked_seconds` is elapsed minus CPU and is
+    zero or negative on any workload fast enough that the two clocks agree, so it
+    is unfittable almost always — and it is also below the timing floor, so its
+    exponent could not have changed anything. Recording it made every null result
+    on a healthy workload say it did not cover everything, which is a caveat
+    attached to everything and therefore a caveat nobody reads.
     """
 
     @property
@@ -238,7 +246,7 @@ def rank(screened: Sequence[ScreenedWorkload]) -> Ranking:
         unclassified.extend(
             (result.workload.id, metric)
             for metric, measured in sorted(result.growth.items())
-            if measured.growth is None
+            if measured.growth is None and _above_the_noise(metric, measured, result)
         )
 
     ordered = sorted(
@@ -289,14 +297,25 @@ def _above_the_noise(metric: str, measured: MetricGrowth, screened: ScreenedWork
     S-0.4 measured. Counts are exempt because they reproduce to the integer.
     Nothing is dropped from the report — the duration is still measured, still
     fitted, and still shown; it just cannot raise a flag on its own.
+
+    **Both ends have to be measurable, and Epic 4's composition check is why.**
+    `cpu_seconds` comes from `process_time`, which on Windows moves in steps of
+    about 15.6ms — S-3.7 and S-3.13 both hit that granularity before this did.
+    A sub-millisecond workload therefore records zero ticks at the small scale
+    and one or two at the large one, so a *quantisation artefact* of 31ms clears
+    a 20ms floor and flags a workload that did nothing. Requiring the smaller
+    measurement to be above the floor as well is what makes the comparison a
+    comparison: below it, the denominator is rounding.
     """
     if measured.kind is not MetricKind.DURATION:
         return True
     observations = screened.workload.observations
     if len(observations) < _ENDS:
         return False
-    rise = observations[-1].metrics[metric] - observations[0].metrics[metric]
-    return rise >= TIMING_FLOOR_SECONDS
+
+    smallest = observations[0].metrics[metric]
+    rise = observations[-1].metrics[metric] - smallest
+    return smallest >= TIMING_FLOOR_SECONDS and rise >= TIMING_FLOOR_SECONDS
 
 
 def _is_high_and_flat(measured: MetricGrowth, screened: ScreenedWorkload) -> bool:

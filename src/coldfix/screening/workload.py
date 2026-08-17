@@ -387,6 +387,15 @@ class BoundWorkload:
     here and neither is defaulted: which one an adapter can supply is a fact
     about the environment, and inventing one on the workload's behalf would be
     inventing the guarantee itself.
+
+    **`extra_counters` is here because Epic 4's composition check found it in the
+    wrong place.** It began as a parameter to `screen`, which applied one
+    callable to every workload in the project — so a screen of six workloads read
+    one workload's guard counters six times and attributed them to the other
+    five. A guard counter is a fact about a particular subject, exactly as its
+    invocation and its reset are, so it belongs on the binding with them. Never
+    exercised until a screen ran more than one workload with guard counters at
+    once, which is a thing only a composition does.
     """
 
     def __init__(  # noqa: PLR0913 - see the note on scale_volume
@@ -398,6 +407,7 @@ class BoundWorkload:
         reset: VerifiedReset,
         clear_caches: Callable[[], object] | None = None,
         process_identity: Callable[[], object] | None = None,
+        extra_counters: Callable[[], Mapping[str, float]] | None = None,
     ) -> None:
         # Widened to `object` for S-1.6's reason: the annotations say both are
         # callable, so a guard written against them is typed out of existence,
@@ -428,6 +438,7 @@ class BoundWorkload:
         self.reset = reset
         self.clear_caches = clear_caches
         self.process_identity = process_identity
+        self.extra_counters = extra_counters
 
     @property
     def id(self) -> str:
