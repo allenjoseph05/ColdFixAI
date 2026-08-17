@@ -196,7 +196,7 @@ def test_a_metric_may_take_different_values_in_different_experiments() -> None:
     the sweep that ruled the database out and 1004 in the ablation that found the
     cause. A checker comparing one mapping to one measurement would call the
     second of those a fabrication."""
-    pairs = measured_pairs(a_log())
+    pairs = measured_pairs(a_log().experiments)
 
     assert pairs["db.query"] == {7.0, 1004.0}
     assert check_against_log({"db.query": 7.0}, a_log()) is None
