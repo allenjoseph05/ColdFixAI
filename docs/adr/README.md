@@ -99,6 +99,7 @@ Decisions found while building the primitives:
 | 062 | The vendor comparison is built, and the second column is left empty | S-5.9 (partial) |
 | 063 | Two append-only logs, and a cache nobody told about the router | Epic 5 composition |
 | 064 | The state is a model, and the framework validates nothing | S-6.1 |
+| 065 | Append-only is a trigger, and the replay cache is not a table | S-6.2 |
 
 ## Format
 
