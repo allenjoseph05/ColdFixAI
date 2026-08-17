@@ -92,6 +92,7 @@ Decisions found while building the primitives:
 | 055 | Determinism is a claim about the answer, and replay is a mode not a branch | S-5.2 |
 | 056 | "Cached tokens" is two numbers with opposite signs | S-5.3 |
 | 057 | Only the global ceiling halts | S-5.4 |
+| 058 | "Creative" is a property, and a tier is what it costs | S-5.5 |
 
 ## Format
 
