@@ -369,15 +369,29 @@ class Primitive:
         return f"{self.name}{signature.replace(return_annotation=inspect.Signature.empty)}"
 
     def verdict(self, profile: ProjectProfile) -> Verdict:
-        """Whether this primitive is offered for `profile`, and why or why not."""
+        """Whether this primitive is offered for `profile`, and why or why not.
+
+        Both conditions are evaluated and **the most decisive answer wins**, the
+        same rule `all_of` follows and for the same reason: the four states exist
+        because a reader's next action differs for each, so returning the wrong
+        one sends somebody to do the wrong thing. Composing Epic 3 is what made
+        that concrete — a subject known not to parse untrusted input, in an
+        environment with no mutation engine, was reported as *unsupported here*,
+        which reads as *install a fuzzer* for a subject that will never need one.
+        """
         missing = sorted(self.required_capabilities - profile.capabilities)
-        if missing:
-            needed = ", ".join(capability.value for capability in missing)
-            return Verdict(
-                Applicability.UNSUPPORTED,
-                f"this environment does not provide {needed}",
-            )
-        return self.applies(profile)
+        if not missing:
+            return self.applies(profile)
+
+        needed = ", ".join(capability.value for capability in missing)
+        unsupported = Verdict(
+            Applicability.UNSUPPORTED,
+            f"this environment does not provide {needed}",
+        )
+        return min(
+            (unsupported, self.applies(profile)),
+            key=lambda verdict: _DECISIVENESS[verdict.applicability],
+        )
 
 
 @dataclass(frozen=True)
