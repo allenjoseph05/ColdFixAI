@@ -93,6 +93,7 @@ Decisions found while building the primitives:
 | 056 | "Cached tokens" is two numbers with opposite signs | S-5.3 |
 | 057 | Only the global ceiling halts | S-5.4 |
 | 058 | "Creative" is a property, and a tier is what it costs | S-5.5 |
+| 059 | The never-cascade rule is a consequence, not a special case | S-5.6 |
 
 ## Format
 
