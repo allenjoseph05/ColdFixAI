@@ -1199,7 +1199,9 @@ AC:
 Notes: "must differ in approach" cannot be self-judged — the agent writes its own approach label and can rename the same idea.
 
 ### S-10.6 — Slack-reducing classifier — **SAFETY**
-Depends: S-10.4
+Depends: S-2.4, S-3.16
+**Build order (amended 2026-08-17, ADR 105): this comes BEFORE S-10.4.** `00-BRIEF.md` §4 says *implement it before the Surgeon can emit its first patch*, and S-10.4 is where a patch is first generated. The old `Depends: S-10.4` was a statement about subject matter rather than about inputs: this classifies **a diff**, S-2.4 already parses diffs, and S-3.16 already supplies the retry-amplification check. Epic 10's order is **S-10.1 → S-10.2 → S-10.3 → S-10.6 → S-10.4 → S-10.5**.
+
 Why: our own output is the class of change that pushes systems from stable into vulnerable.
 AC:
 - Pattern-matches the diff for: added cache or memoization, retry logic, connection reuse, pool size reduction, timeout reduction, added buffering
@@ -1521,7 +1523,7 @@ S-7.1 → ... → S-7.10
 S-8.1 → ... → S-8.6 → S-8.7
       ← M3 reached: the thesis demo
 S-9.1 → ... → S-9.8
-S-10.1 → ... → S-10.6
+S-10.1 → S-10.2 → S-10.3 → S-10.6 → S-10.4 → S-10.5   (ADR 105: the gate precedes the first patch)
 S-11.1 → ... → S-11.8
 S-12.1 → ... → S-12.6
       ← M4 reached: the contribution
