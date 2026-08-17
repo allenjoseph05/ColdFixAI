@@ -90,6 +90,7 @@ Decisions found while building the primitives:
 | 053 | A screen with no entry point, and four things only a project shows | Epic 4 composition |
 | 054 | The commit sha is the wrong repo identity, and the machine is not in the key | S-5.1 |
 | 055 | Determinism is a claim about the answer, and replay is a mode not a branch | S-5.2 |
+| 056 | "Cached tokens" is two numbers with opposite signs | S-5.3 |
 
 ## Format
 
