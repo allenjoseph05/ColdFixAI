@@ -61,6 +61,7 @@ from coldfix.diagnosis.chain import EvidenceChain
 from coldfix.diagnosis.log import Experiment
 from coldfix.diagnosis.replies import read_object
 from coldfix.llm.client import ModelClient
+from coldfix.repair.sessions import refuse_foreign_session
 
 SURGEON_TEMPERATURE = 0.2
 """`03-agents.md` §5.1: 0.2 on the first attempt, 0.6 on retries. S-10.5 owns the
@@ -438,6 +439,7 @@ def generate(  # noqa: PLR0913 - the chain and the two measured token counts are
             match what the chain recorded.
         BudgetExhaustedError: the repair phase's attempts are spent.
     """
+    refuse_foreign_session(session, _SYSTEM, FalsificationError)
     step = Step(
         step_type=StepType.FALSIFICATION_TEST,
         phase=Phase.REPAIR,
