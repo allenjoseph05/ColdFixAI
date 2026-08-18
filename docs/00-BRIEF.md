@@ -10,7 +10,7 @@ An agentic system that finds performance problems in software **by running exper
 
 **One-line claim:**
 
-> We automate the selection and sequencing of twelve established performance-analysis methods, using an agent to decide which experiment to run next based on what the previous one revealed.
+> We automate the selection and sequencing of fourteen established performance-analysis methods, using an agent to decide which experiment to run next based on what the previous one revealed.
 
 **Why an agent is required.** The methods are well-established and mechanizable. *Choosing which one applies to a given program*, sequencing them, and interpreting the results is documented in the fault-localization literature as requiring expert knowledge of the specific program. That selection problem is the agent's job, and the field named it as the bottleneck decades before LLMs existed.
 
@@ -40,7 +40,7 @@ The document set was written incrementally and earlier files contain superseded 
 
 - `architecture-spec.md` — pre-agentic design, wrong model
 - `agentic-architecture.md` — merged into `02` and `03`
-- `capability-catalogue.md` — says six primitives; there are twelve
+- `capability-catalogue.md` — says six primitives; there are fourteen
 
 **Known stale references:** `02-architecture.md` and `03-agents.md` were written against the six-primitive set. Their layer and agent designs remain correct; wherever they enumerate primitives, `01-primitives.md` governs.
 

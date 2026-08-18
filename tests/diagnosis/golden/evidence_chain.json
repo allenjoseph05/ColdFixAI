@@ -1,0 +1,96 @@
+{
+  "complexity": {
+    "rows": "linear"
+  },
+  "confidence": 0.5,
+  "context": [
+    {
+      "path": "shop/models.py",
+      "reason": "declares the Author relation the serializer walks per book"
+    }
+  ],
+  "exclusions": [
+    {
+      "conditions": {
+        "observed": {
+          "concurrency": {
+            "dimension": "concurrency",
+            "values": [
+              1.0
+            ]
+          },
+          "fixture shape": {
+            "dimension": "fixture shape",
+            "values": [
+              "uniform"
+            ]
+          },
+          "platform": {
+            "dimension": "platform",
+            "values": [
+              "x86_64-linux"
+            ]
+          },
+          "scale": {
+            "dimension": "scale",
+            "values": [
+              10.0,
+              100.0,
+              1000.0
+            ]
+          }
+        }
+      },
+      "experiment": {
+        "design": "scaling.volume(scales=[10, 100, 1000], distribution='uniform')",
+        "detail": "",
+        "hypothesis": "the database is the bottleneck",
+        "index": 1,
+        "measurement": {
+          "db.query": 7.0
+        },
+        "outcome": "queries flat at 7, 7, 7 across a 100x sweep",
+        "primitive": "scaling.volume",
+        "rationale": "queries have not been counted against volume yet",
+        "target": "shop.books.list",
+        "verdict": "rejected"
+      }
+    }
+  ],
+  "localization": [
+    {
+      "basis": "8.24s baseline against 0.90s ablated, same fixture and scale",
+      "experiment": {
+        "design": "ablation.stub(attribute='to_representation') on shop.books.list",
+        "detail": "",
+        "hypothesis": "the serializer re-renders the author for every book",
+        "index": 2,
+        "measurement": {
+          "seconds": 8.24,
+          "seconds_ablated": 0.9
+        },
+        "outcome": "stubbing the serializer removed 89% of wall time",
+        "primitive": "ablation.stub",
+        "rationale": "the serializer is the only component not yet stubbed",
+        "target": "BookSerializer.to_representation",
+        "verdict": "confirmed"
+      },
+      "scope": "BookSerializer.to_representation",
+      "share_of_cost": 0.89
+    }
+  ],
+  "mechanism": "the serializer re-renders the author for every book in the list",
+  "site": {
+    "first_line": 41,
+    "last_line": 52,
+    "path": "shop/serializers.py",
+    "source": [
+      "def to_representation(self, obj):"
+    ]
+  },
+  "symptom": {
+    "at_scale": 1000.0,
+    "magnitude": 8.24,
+    "metric": "seconds"
+  }
+}

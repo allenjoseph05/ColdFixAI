@@ -2,7 +2,11 @@
 
 **The definitive set. Supersedes `capability-catalogue.md` entirely.**
 
-Twelve primitives, assembled by validating against the established performance-analysis literature across three passes. Each pass found gaps: five, then three, then one.
+Fourteen primitives, assembled by validating against the established performance-analysis
+literature across **four** passes drawn from performance engineering, debugging theory,
+security fuzzing, and reliability engineering. Gaps found per pass: **5, 3, 1, 2** — not
+monotonic. **No convergence is claimed**; see §18 for the completeness assessment and the
+method for extending the set.
 
 ---
 

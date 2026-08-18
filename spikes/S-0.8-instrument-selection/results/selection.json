@@ -1,0 +1,1013 @@
+{
+  "model": "claude-opus-5",
+  "results": [
+    {
+      "scenario": "real_n_plus_one",
+      "tags": [
+        "control",
+        "n+1"
+      ],
+      "repeats": 10,
+      "instrument_rate": 0.5,
+      "trap_rate": 1.0,
+      "diagnosis_rate": 1.0,
+      "finding_discipline_rate": 1.0,
+      "instruments_chosen": {
+        "substitution": 5,
+        "ablation": 5
+      },
+      "runs": [
+        {
+          "answer": {
+            "conclusion": "Query count grows linearly with rows returned (10\u2192131, 25\u2192305, 100\u21921193; ~11.7 queries per additional ticket), concentrated in helpdesk_followupattachment and helpdesk_customfield \u2014 a per-row N+1 on ticket serialization, not a constant per-request overhead.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "substitution",
+            "why": "The growth curve already establishes the N+1 and the per-table grouping localizes it to the followup/attachment/customfield relations. The remaining open question is causal: replace the queryset with one using select_related/prefetch_related for those relations and re-measure at page_size=100. If queries collapse toward a constant while response bytes stay at ~429,071 and row count stays 100, the defect and its remedy are both proven; if bytes or rows change, the comparison is invalid and the timing delta is not evidence."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count grows linearly with rows returned (10 rows/131 queries, 25/305, 100/1193 \u2014 about 11.9 queries per ticket), dominated by per-followup attachment lookups (586) and per-ticket custom-field lookups (504) while payload size stays proportional. This is an N+1 in ticket serialization, not fixed per-request overhead.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "substitution",
+            "why": "Growth is already established by three input sizes, so more scaling adds nothing; what is unproven is that the query pattern (rather than payload volume or downstream work) causes the 1454 ms. Substitute a serializer/queryset that prefetches followups, attachments, and custom fields, then compare queries and median time while holding the guard counters fixed \u2014 response bytes must stay at 429,071 and rows at 100. If queries collapse to a small constant and time falls with an identical payload, the N+1 is confirmed and the recoverable gain is measured; if time barely moves, the cost lies outside query issuance and the finding must be revised."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count grows linearly with rows returned (10 rows \\u2192 131 queries, 25 \\u2192 305, 100 \\u2192 1193; ~11.8 queries per ticket plus a 3-query constant), concentrated in helpdesk_followupattachment, helpdesk_customfield, and helpdesk_followup. This is a per-row query fan-out, not fixed per-request overhead. What is not yet established is how much of the 1454.73 ms the fan-out actually accounts for.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "substitution",
+            "why": "The per-row slope is already measured, so scaling would add nothing. What remains is causal attribution of latency: replace the fetch path with a prefetch/join-based implementation that returns byte-identical output, then compare queries, response bytes, and median time. Holding response bytes at 429,071 and row count at 100 constant is the guard that proves any latency drop comes from collapsing the ~1190 queries rather than from returning less data \\u2014 and it quantifies the achievable gain against the 1454.73 ms baseline."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count grows linearly with rows returned (~12 queries per ticket: 131 at 10, 305 at 25, 1193 at 100), concentrated in helpdesk_followupattachment and helpdesk_customfield \u2014 this is an N+1 (in fact several nested N+1s) on the ticket list endpoint, not fixed per-request overhead. What is not yet established is how much of the 1454 ms is actually spent in those 1090 queries versus serialization of the 429 KB payload.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "ablation",
+            "why": "The scaling series already fixes the growth curve, so the N+1 is measured, not inferred. The open question is the recoverable time: stub out the followupattachment and customfield access (or bulk-load them) and re-measure with the same guard counters \u2014 queries, bytes, rows. If queries drop from ~1193 to ~10 while bytes and rows stay identical and time falls proportionally, the per-row query fan-out is the cost; if time barely moves at constant bytes, the 1454 ms lives in serialization outside the database and the finding must be restated."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count grows linearly with rows returned (10 rows \\u2192 131 queries, 25 \\u2192 305, 100 \\u2192 1193; ~11.9 queries per ticket plus a 3-query constant), with the growth concentrated in helpdesk_followupattachment (586), helpdesk_customfield (504) and helpdesk_followup (100). This is a per-row query fan-out, not a fixed setup cost. What is not yet established is how much of the 1454 ms those queries actually account for.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "ablation",
+            "why": "The N+1 is already established by the three-point row/query relationship, so the open question is time attribution: 1193 queries and 1454 ms have not been causally linked. Stub the nested followup / attachment / customfield serializer fields and re-measure with the same guard counters (queries, bytes, rows). If queries collapse to ~3 and the median time falls proportionally, the per-row fan-out owns the latency and the fix (prefetch) has a quantified payoff; if time stays near 1454 ms while queries drop to 3, the cost lives in serialization rather than the database and the finding must be restated."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count grows linearly with rows returned (10 rows \\u2192131, 25\\u2192305, 100\\u21921193; ~11.8 queries per ticket plus a small constant), and the per-ticket queries land on related tables (followup, followupattachment, customfield). This is a per-row query amplification defect, not fixed overhead. What is not yet measured is how much of the 1454 ms is actually attributable to those queries.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "substitution",
+            "why": "The scaling evidence for N+1 is already conclusive \\u2014 rerunning scaling adds nothing. The open question is attribution of time: 1193 queries over 1454 ms is ~1.2 ms/query, consistent with query-dominated cost but not proven. Replace the serializer's related-object access with prefetch_related/select_related on followup, followupattachment, and customfield, then re-measure at page_size=100 with the guard counters held: response bytes must stay at ~429,071 and rows returned at 100. If queries collapse to a small constant and median time drops proportionally with identical output, the N+1 is confirmed as the cost and the gain is quantified. If time barely moves despite the query collapse, the cost lives outside the database and the finding must be restated."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count grows linearly with rows returned (10 rows \\u2192 131, 25 \\u2192 305, 100 \\u2192 1193; slope \\u224811.8 queries per ticket, constant term \\u22489), and the growth is concentrated in helpdesk_followupattachment, helpdesk_customfield and helpdesk_followup. This is a per-row query fan-out, not fixed per-request overhead. What is not yet established is how much of the 1454 ms the fan-out actually accounts for.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "ablation",
+            "why": "The scaling relationship is already measured across three page sizes and is unambiguously linear in rows returned, so re-running scaling adds nothing. The open question is cost attribution: 1193 queries at ~1.2 ms each would explain the 1454 ms, but that is arithmetic, not measurement. Stub or eagerly batch the per-ticket attachment/customfield/followup loads and re-measure time with query count, bytes and rows as guard counters \\u2014 if time falls while rows and bytes returned stay at 25 tickets\\u2019 worth and queries drop from 1193 to the constant floor, the fan-out is confirmed as the dominant cost and the ablation also quantifies the recoverable gain."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count grows linearly with rows returned (~12 queries/ticket: 131 at 10 rows, 305 at 25, 1193 at 100), driven by per-row lookups against helpdesk_followupattachment and helpdesk_customfield. This is a genuine N+1 in the ticket list serialization, not a fixed startup cost. What is not yet established is how much of the 1454 ms the 1190 queries actually account for.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "ablation",
+            "why": "Scaling has already done its job: the three row-count points fit a straight line through the query counts, so growth-with-rows is settled and re-running scaling adds nothing. The open question is attribution of latency. Stub the followup-attachment and custom-field fetches (or replace them with a single prefetch) and measure the paired change in queries, bytes, and median time. If removing ~1090 queries collapses the 1454 ms proportionally, the N+1 owns the latency; if time barely moves while query count drops tenfold, the cost lives outside the database and the finding must be restated."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count grows linearly with rows returned (10 rows/131 queries, 25/305, 100/1193 \u2014 roughly 12 queries per ticket), driven by per-followup attachment lookups (586) and per-ticket custom field lookups (504). This is a per-row query amplification pattern, not fixed overhead: only 3 queries are constant.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "ablation",
+            "why": "The row-proportional query growth is already established by the three-point size sweep, so the growth curve needs no further work. What is not yet measured is how much of the 1454 ms the 1190 amplified queries actually cost. Ablating the per-row access paths (stub custom field resolution and attachment fetching in the serializer) should collapse queries toward ~3 and gives a paired time/query/byte delta, which is what turns the query-count observation into a supported statement about latency. Without it, the timing and the counter are correlated but unattributed."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count grows linearly with rows returned (10 rows \u2192 131 queries, 25 \u2192 305, 100 \u2192 1193; ~11.9 queries per ticket plus a ~3-query constant), concentrated in helpdesk_followupattachment, helpdesk_customfield and helpdesk_followup. This is an N+1 across the followup/attachment/customfield relations, not fixed per-request overhead.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "substitution",
+            "why": "The scaling evidence across three page sizes already establishes per-row query growth, so no further growth-curve work is needed. The remaining open question is how much of the 1454.73 ms is attributable to those 1190 per-row queries and whether they are eliminable: swap the list queryset/serializer for one that prefetches followups, attachments and custom fields, then compare queries, response bytes and rows returned against the 1193 / 429,071 bytes / 100-row baseline. Byte and row counts must remain identical for any time reduction to count as evidence."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "decoy_fixed_floor",
+      "tags": [
+        "trap",
+        "decoy"
+      ],
+      "repeats": 10,
+      "instrument_rate": 0.0,
+      "trap_rate": 1.0,
+      "diagnosis_rate": 1.0,
+      "finding_discipline_rate": 0.9,
+      "instruments_chosen": {
+        "ablation": 10
+      },
+      "runs": [
+        {
+          "answer": {
+            "conclusion": "The data rule out an N+1: query count is pinned at 37 across a 20x change in rows returned, while response bytes scale linearly, so the queries are not per-row. Time is dominated by a fixed component (~400ms floor at 10 rows) with only ~90ms of row-proportional growth, consistent with the 35 fixed aggregate lookups being constant per-request overhead \u2014 but their share of the 400ms floor has not yet been measured.",
+            "diagnosis": "constant_per_request_overhead",
+            "finding_warranted": false,
+            "next_instrument": "ablation",
+            "why": "The shape is established (flat query count, ~400ms floor independent of rows) but the cost is not yet localized. Stub the 35 aggregate lookups with cached or fixed values and re-measure the 10-row case: if the 412ms floor collapses, the fixed lookups own the overhead; if it barely moves, the floor lives outside the database and the 37 queries are incidental. Guard counters (queries dropped 37 to 2, response bytes unchanged) must confirm the ablation removed only the intended work."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The endpoint is not an N+1: query count is pinned at 37 across a 20x change in rows returned, while time grows only ~90ms (412\u2192502ms) over that range. The shape is a large fixed per-request cost (~400ms floor plus 35 constant aggregate lookups) with a small linear marginal cost per row, which the response-bytes guard shows is genuine work.",
+            "diagnosis": "constant_per_request_overhead",
+            "finding_warranted": false,
+            "next_instrument": "ablation",
+            "why": "The scaling sweep already settles the growth question, so repeating it adds nothing; what is unmeasured is where the ~400ms floor lives. The 35 distinct aggregate lookups are the obvious candidate but that is a code-reading inference, not a measurement. Stub the 35 aggregate lookups (return cached or fixed values) and re-measure median time at fixed row count, with query count and response bytes as guards. If the floor collapses toward the 2-query row-set cost, the aggregates are the finding and the fix is batching or precomputation; if the floor barely moves, the cost is outside the database and the aggregate count is a red herring."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count is flat at 37 across a 20x change in rows returned, so this is not an N+1; time grows only ~22% (412\u2192502ms) while response bytes grow linearly, meaning the bulk of the latency is a row-independent fixed cost. What the evidence does not yet support is that the 35 aggregate lookups are the source of that fixed ~400ms floor.",
+            "diagnosis": "constant_per_request_overhead",
+            "finding_warranted": false,
+            "next_instrument": "ablation",
+            "why": "The 412ms floor at 10 rows with the same 37 queries isolates a fixed cost, but nothing yet attributes it. Stub the 35 distinct aggregate lookups (return cached/constant values) and re-measure at 10 and 200 rows with the query counter still attached: if median drops toward the 2-query baseline, the fixed overhead is the aggregate fan-out and is consolidatable; if it barely moves, the ~400ms lives outside the database and scaling or profiling the non-query path is the next step."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count is flat at 37 across a 20x change in rows returned, so this is not an N+1; the endpoint has a fixed cost structure \u2014 a ~400ms intercept independent of payload plus a small (~90ms over 10->200 rows) row-proportional component that tracks the linear growth in response bytes. What the 400ms intercept consists of has not been measured, so no defect is yet attributable to the 35 aggregate lookups.",
+            "diagnosis": "constant_per_request_overhead",
+            "finding_warranted": false,
+            "next_instrument": "ablation",
+            "why": "The scaling curve already establishes the shape (constant queries, ~400ms intercept) but attributes none of it. Stub the 35 distinct aggregate lookups (return cached/precomputed constants) and re-measure at fixed row count, with query count and response bytes held as guards. If median drops from ~412ms toward the 2-query floor, the fixed aggregate fan-out owns the intercept and a finding is warranted; if it barely moves, the intercept lives outside the database and the 37 queries are a red herring."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count is flat at 37 across a 20x change in rows returned, so this is not an N+1. The 37 queries are a fixed per-request cost, and time grows only mildly (412ms to 502ms) as rows and response bytes grow linearly, meaning the bulk of latency is a constant overhead independent of result size.",
+            "diagnosis": "constant_per_request_overhead",
+            "finding_warranted": true,
+            "next_instrument": "ablation",
+            "why": "The 35 distinct aggregate lookups are the suspected constant cost, but no measurement yet attributes latency to them. Stubbing the aggregate lookups (returning cached/precomputed values) and re-measuring the ~410ms floor localizes how much of the fixed cost they own, with query count as the guard counter to confirm the ablation actually removed the 35 queries."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": false
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count is flat at 37 across a 20x change in rows returned, so this is not an N+1; the dominant cost is a fixed per-request floor (~400ms present even at 10 rows), with only ~90ms of row-proportional growth across the range. Whether the 35 fixed aggregate lookups actually account for that floor has not yet been measured.",
+            "diagnosis": "constant_per_request_overhead",
+            "finding_warranted": false,
+            "next_instrument": "ablation",
+            "why": "The scaling curve is already in hand and settles the shape question (constant queries, near-flat time), so more scaling adds nothing. What is unproven is attribution: the 412ms floor at 10 rows is assumed to come from the 35 distinct aggregate lookups but could equally sit in serialization, auth, or template work. Stub the 35 aggregate lookups (return cached/constant values) and re-measure median time with the query counter still attached: if the floor collapses toward the 2-query row-set cost, the fixed aggregate fan-out is the defect and batching them is the fix; if it barely moves, the cost is outside the database and the query count is a red herring."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count is fixed at 37 across a 20x change in rows returned, so this is not an N+1; time is dominated by a ~400ms floor that is independent of result size (only ~90ms of the 502ms scales with rows). The suspicion is a fixed block of 35 aggregate lookups, but no measurement yet attributes any specific share of the floor to them.",
+            "diagnosis": "constant_per_request_overhead",
+            "finding_warranted": false,
+            "next_instrument": "ablation",
+            "why": "The scaling curve already rules out N+1 and over-fetch on the query axis (37 queries flat, bytes growing linearly as expected for more rows). What remains unmeasured is how much of the ~412ms constant floor the 35 distinct aggregate lookups actually cost. Stub the 35 aggregate lookups (return cached/zero values) and re-measure median time with the query counter still attached: if time drops to a small residual, the fixed aggregate block is the cost and the finding is warranted with a quantified size; if the floor barely moves, the cost is elsewhere (serialization, auth, template) and the query count is a red herring."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The 37 queries are invariant across a 20x change in rows returned, so this is not an N+1; query count does not grow with the row set. Time is dominated by a roughly 400ms fixed floor, with only ~90ms of the 502ms attributable to row-proportional work. What is not yet supported is that the 35 aggregate lookups are the thing consuming that floor \\u2014 that attribution has not been measured.",
+            "diagnosis": "constant_per_request_overhead",
+            "finding_warranted": false,
+            "next_instrument": "ablation",
+            "why": "The scaling curve already exists and it is flat in query count, so the shape question is settled: cost is per-request, not per-row. What remains is localization of the ~400ms floor. Stub the 35 distinct aggregate lookups (return cached or constant values) and re-measure at fixed row count, with query count and response bytes as guards. If median drops toward the row-proportional component while bytes stay constant, the fixed aggregate fan-out is the cost; if the floor survives with 2 queries, the overhead lives outside the database and the query count was a red herring."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count is flat at 37 across a 20x change in rows returned, so this is not an N+1; response bytes scale with rows but time barely moves (412ms to 502ms), meaning ~400ms of the request is a row-independent fixed floor. Where that floor lives has not been measured, so no defect can be attributed to the 35 aggregate lookups yet.",
+            "diagnosis": "constant_per_request_overhead",
+            "finding_warranted": false,
+            "next_instrument": "ablation",
+            "why": "The scaling sweep establishes the shape (constant 37 queries, ~400ms row-independent floor) but not the location of the cost. Stubbing the 35 distinct aggregate lookups with cached or precomputed values, while holding response bytes and rows constant as guards, measures directly how much of the 412ms baseline they account for. If the floor barely moves, the fixed cost is outside the database and the aggregate lookups are not the defect."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "This is not an N+1: query count is flat at 37 across a 20x change in rows returned, so nothing scales with the row set. What the data does show is a request-invariant cost floor of roughly 400ms \u2014 the row-dependent component accounts for only ~90ms across 10 to 200 rows, consistent with the linear growth in response bytes. Whether the 35 fixed aggregate lookups actually own that floor has not been measured, so no finding can be reported yet.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "ablation",
+            "why": "The scaling curve already establishes the shape (flat query count, ~400ms floor, shallow row-proportional slope) but attributes it to nothing. Stub the 35 distinct aggregate lookups \u2014 return cached or constant values \u2014 and re-measure at 10 and 200 rows with query count and response bytes as guards. If the floor collapses toward the 2-query row-set cost, the fixed aggregate fan-out owns it and is worth batching; if the floor barely moves, the ~400ms lives outside those queries (serialization, auth, template, or a non-DB dependency) and the query count is a red herring."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "over_fetch_invisible_to_query_count",
+      "tags": [
+        "trap",
+        "over-fetch",
+        "guard-counter"
+      ],
+      "repeats": 10,
+      "instrument_rate": 0.3,
+      "trap_rate": 1.0,
+      "diagnosis_rate": 1.0,
+      "finding_discipline_rate": 1.0,
+      "instruments_chosen": {
+        "substitution": 7,
+        "scaling": 1,
+        "ablation": 1,
+        "observation": 1
+      },
+      "runs": [
+        {
+          "answer": {
+            "conclusion": "Endpoint A retrieves 5 columns per row (2,500 cells, 184 KB) where endpoint B retrieves 1 (500 cells, 32 KB) to produce byte-identical output, and A is 3.1x slower. Query count is flat with dataset size for both, so this is not an N+1 \u2014 it is unused-column retrieval on a single query.",
+            "diagnosis": "over_fetch",
+            "finding_warranted": true,
+            "next_instrument": "substitution",
+            "why": "The guard counters move with the timing (cells 5x, payload bytes 5.8x, time 3.1x), which is what over-fetch looks like, but correlation across two different endpoints does not establish that the extra columns cause A's 86.7 ms. Substituting B's narrow projection into endpoint A and asserting output is still byte-identical isolates the projection as the only changed variable and directly measures the recoverable time; if A's median does not drop toward 41.7 ms, the cost lives in A's serialization path rather than the retrieved payload and the diagnosis must move to cost_outside_database."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Endpoint A fetches five columns per row where endpoint B fetches one to produce byte-identical output: same query count (1), same rows (500), but 5x cells (2500 vs 500), 5.8x response bytes, and 3.1x median time. The guard counters move with the time, so this is a genuine over-fetch, not an N+1 (query count is flat across dataset sizes for both).",
+            "diagnosis": "over_fetch",
+            "finding_warranted": true,
+            "next_instrument": "substitution",
+            "why": "The cross-endpoint comparison is suggestive but confounded: A and B may differ in serialization, ORM hydration, or middleware, not just projection. Replace A's own query with B's narrow projection in A's path and re-measure. If cells drop 2500 to 500 and median time drops toward 41.7 ms with byte-identical output, the extra columns are the established cause and the remediation is already demonstrated. If time stays near 128 ms while cells drop, the cost lives elsewhere in A and the byte/cell correlation was coincidental."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Endpoint A returns the same information as endpoint B while fetching 5x the cells (2500 vs 500) and serializing 5.8x the bytes, with 3x the median latency. This is consistent with over-fetch of unused columns, not an N+1 \flacross across dataset sizes for both endpoints, so query count is not the issue.",
+            "diagnosis": "over_fetch",
+            "finding_warranted": true,
+            "next_instrument": "substitution",
+            "why": "The two endpoints differ in more than projection width (separate code paths, possibly different serializers), so the 86.7 ms gap is not yet attributable to the extra 2000 cells. Substituting endpoint A's wide projection with B's narrow one inside A's own path holds everything else constant; if cells drop to 500, bytes drop to ~32 KB, and time falls toward ~42 ms, the over-fetch finding is confirmed with guard counters moving in step with the timing."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Endpoint A returns the same logical output as B but pulls 5 columns per row instead of 1 (2500 vs 500 cells, 5.8x response bytes) and takes ~87 ms longer at identical query count and row count. The extra time is accompanied by real guard-counter movement in cells and bytes, so this is over-fetching of columns/payload rather than an N+1 or per-request fixed overhead \u2014 query count is flat with dataset size for both.",
+            "diagnosis": "over_fetch",
+            "finding_warranted": true,
+            "next_instrument": "substitution",
+            "why": "A-vs-B is a cross-endpoint comparison, so the 128.4 vs 41.7 ms delta is confounded by any other differences in the two handlers' serialization paths. Substituting B's narrow projection into endpoint A's own code path \u2014 holding rows at 500 and queries at 1, and driving cells from 2500 down to 500 \u2014 attributes the delta to the extra 2000 cells specifically and quantifies the recoverable time before the finding is reported."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Endpoint A returns 2500 cells and 184KB to produce output identical to endpoint B's 500 cells and 32KB, so A fetches and serializes roughly 5x the data it needs. Query count is flat with dataset size for both, so this is not an N+1. The over-fetch is established; how much of the 86.7 ms gap it accounts for is not, since A and B differ in more than their projection.",
+            "diagnosis": "over_fetch",
+            "finding_warranted": true,
+            "next_instrument": "substitution",
+            "why": "The cell and byte counters are the guard evidence: identical output, 5x the cells and 5.8x the bytes on A. But the 128.4 vs 41.7 ms comparison is across two different endpoints, so serializer, view layer, or middleware differences are confounded with the projection. Substitute B's narrow projection into A's own code path, leaving everything else intact, and re-measure time along with cells and bytes. If A drops toward 41.7 ms with cells falling to 500 and output unchanged, the over-fetch owns the gap and the fix is quantified; if A stays near 128 ms with cells at 500, the cost lives outside the fetch and the finding shrinks to a wasted-bytes issue."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Endpoint A returns the same output as B while fetching five times as many cells (2500 vs 500) and 5.8x the bytes, and takes 3.1x the time. This is over-fetch of unused columns, not an N+1 \\u2014 query count is 1 and flat across dataset sizes for both endpoints.",
+            "diagnosis": "over_fetch",
+            "finding_warranted": true,
+            "next_instrument": "scaling",
+            "why": "The counters already discriminate the mechanism: identical output with 5x cells and 5.8x bytes rules out N+1 (1 query, flat) and rules out cost outside the data path, and endpoint B is a working substitute proving the extra columns are unnecessary. What is not yet established is whether the 86.7 ms gap is proportional to the extra cells or partly a fixed per-request difference between the two endpoints. Varying row count and fitting the A-minus-B gap settles this: a gap growing linearly in rows (~0.17 ms/row at 500) confirms the cost is the surplus cells and gives the defensible savings estimate; a flat gap would reclassify this as constant per-request overhead despite the cell-count difference."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Endpoint A returns 5x the cells (2500 vs 500) and ~5.8x the response bytes for byte-identical output, with one query each and flat query counts across dataset sizes. This is over-fetch of columns/payload, not an N+1; the 86.7 ms gap co-varies with a real guard-counter difference, but the two endpoints are different code paths so the causal share is not yet isolated.",
+            "diagnosis": "over_fetch",
+            "finding_warranted": true,
+            "next_instrument": "ablation",
+            "why": "The cells and bytes counters already establish over-fetch, but A and B are separate endpoints that may differ in serialization, middleware, or ORM hydration as well as projection. Narrow A's own projection to the 1 column per row actually rendered \u2014 leaving the rest of A's path untouched \u2014 and re-measure time with cells and response bytes as guards. If A's cells drop to 500 and its median falls toward ~42 ms, the over-fetch owns the gap; if bytes drop but time stays near 128 ms, the cost lives outside the fetch and the diagnosis moves to cost_outside_database."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Endpoint A returns the same output as endpoint B while fetching 5x the cells (2500 vs 500) and emitting 5.8x the response bytes, and it is ~87ms slower at the same row count. The extra time is accompanied by movement in both guard counters (cells, bytes), so this is over-fetch of unused columns, not an N+1 \u2014 query count is 1 and flat across dataset sizes for both.",
+            "diagnosis": "over_fetch",
+            "finding_warranted": true,
+            "next_instrument": "substitution",
+            "why": "A and B are separate handlers, so the 87ms gap is not yet attributable to the projection alone \u2014 other code differences could carry it. Swap A's wide projection for B's narrow one inside A's own handler and re-measure with the same guards: if cells drop 2500 to 500, bytes drop to ~32KB, output stays byte-identical, and median time falls toward 41.7ms, the over-fetch is confirmed as the cause and the recoverable gain is quantified. If time stays near 128ms despite the counters dropping, the cost lives elsewhere in A and the finding must be withdrawn."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Endpoint A produces the same output as B while returning 5x the cells (2500 vs 500) and 5.8x the response bytes (184KB vs 32KB), at ~87ms extra median time. Both issue exactly one query and query count is flat with dataset size, so this is not an N+1; it is a projection/payload over-fetch confirmed by moving guard counters.",
+            "diagnosis": "over_fetch",
+            "finding_warranted": true,
+            "next_instrument": "observation",
+            "why": "The defect is already established: the paired A/B comparison holds output and query count constant while cells and bytes move together with time, so the 87ms is attributable to fetched-and-discarded data rather than an unguarded timing wobble. The one open question that changes the remediation is where within the single-query path the 87ms sits \u2014 column materialization/transfer in the driver versus serializing the 152KB of unused fields in the response. Attaching a profiler and allocation counter to A's known single-query path splits that 87ms without needing another synthetic workload; scaling and temporal bisection would add nothing since query count is already flat and the cost is structural, not regressed."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Both endpoints produce identical output with one query and 500 rows, but endpoint A retrieves 5 cells per row versus 1 and ships 5.8x the bytes, taking 3.1x longer. This is over-fetch of columns that do not affect the response, not an N+1 \u2014 query count is flat with dataset size for both.",
+            "diagnosis": "over_fetch",
+            "finding_warranted": true,
+            "next_instrument": "substitution",
+            "why": "The guard counters (cells 2500 vs 500, bytes 184KB vs 32KB) move with the 86.7 ms time gap, so the correlation is supported, but A and B are different code paths and the delta could partly live in serialization or middleware rather than the wide projection. Substituting A's wide projection with B's narrow one inside endpoint A itself \u2014 holding the rest of A's path fixed \u2014 isolates the projection as the cause and quantifies exactly how much of the 86.7 ms is recovered while confirming output stays byte-identical."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "post_ablation_residual",
+      "tags": [
+        "localization",
+        "residual"
+      ],
+      "repeats": 10,
+      "instrument_rate": 1.0,
+      "trap_rate": 1.0,
+      "diagnosis_rate": 0.0,
+      "finding_discipline_rate": 0.0,
+      "instruments_chosen": {
+        "scaling": 10
+      },
+      "runs": [
+        {
+          "answer": {
+            "conclusion": "Ablating followup_set removed 686 of 1193 queries and ~1020ms of a 1455ms median (far above the ~20ms floor, zero sample overlap), so the cost is real and localized to that field. What is not yet supported is the mechanism: we do not know whether those 686 queries scale with rows returned, and the 504 residual helpdesk_customfield queries are equally unclassified \u2014 a constant 504 per request is a different defect from 504 that grows with rows.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "Both open questions are growth-curve questions and one experiment answers both. Vary the number of tickets returned (e.g. 1, 5, 25, 100) and record queries and rows alongside time. If the 686 followup_set queries rise with row count it is an N+1; if they stay flat it is constant per-request overhead hiding behind a large number. The same series tells us whether helpdesk_customfield's 504 is a fixed schema-introspection cost per request or a per-row fan-out. Ablation has already told us where the time is; it cannot tell us how it grows, and the N+1 claim is unsupportable without that curve."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": false,
+            "finding_discipline": false
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Ablating followup_set removed 686 of 1193 queries and ~1020ms of 1455ms median latency, with no sample overlap \u2014 the cost is real, well above the ~20ms floor, and localized to that serializer field. What is not yet supported is the mechanism: we do not know whether those 686 queries scale with the number of followups returned (N+1) or are a fixed batch, and the residual 504 helpdesk_customfield queries are equally unattributed.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "The ablation localized cost but the query counts are single-point measurements. Varying the number of tickets/followups in the response and fitting queries-vs-rows separates the two candidate defects: if the followup_set delta (686) grows linearly with followups it is an N+1, and if the 504 helpdesk_customfield queries stay flat across input sizes they are constant per-request overhead rather than a second N+1. Reporting an N+1 now would assert growth that has not been measured."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": false,
+            "finding_discipline": false
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Ablating followup_set removed 686 of 1193 queries and ~1020ms of 1455ms median, with no sample overlap (delta -1.000) and an effect two orders of magnitude above the ~20ms floor, so the cost is genuinely localized to that field and is query-bound rather than pure compute. However, nothing yet establishes whether the query counts scale with rows returned, and the residual 507 queries are dominated by 504 near-identical helpdesk_customfield reads whose mechanism is also uncharacterized.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "Both the ablated 686 queries and the residual 504 helpdesk_customfield queries are consistent with either an N+1 (count grows with followups/tickets returned) or a high but fixed per-request count (e.g. one query per custom field definition, independent of result size). Only varying result-set size and fitting query count against rows returned separates these, and the distinction determines the fix. Vary page size / number of tickets and followups across at least three sizes, recording queries, rows, and time at each point; a slope near zero for helpdesk_customfield would reclassify it as constant per-request overhead rather than an N+1."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": false,
+            "finding_discipline": false
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The followup_set serializer field accounts for 686 of 1193 queries and ~1020ms of the 1455ms median (far above the ~20ms floor, zero sample overlap), so the cost is genuinely localized there and is query-bound, not incidental. But no measurement yet ties either the 686 removed queries or the 504 residual helpdesk_customfield queries to the number of rows returned, so neither can be called an N+1 rather than a large fixed per-request query count.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "The ablation localized cost but the guard counter alone cannot distinguish per-row growth from a high constant. Varying the number of tickets/followups returned and fitting query count against rows separates the two hypotheses for both suspects at once: if followup_set queries track followup count it is an N+1, and if the 504 helpdesk_customfield queries stay at 504 regardless of rows they are constant per-request overhead rather than a row-driven defect."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": false,
+            "finding_discipline": false
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Ablating followup_set removes 686 of 1193 queries and ~1020ms of a 1455ms median with no sample overlap, so the cost is firmly localized to that serializer field and is far above the ~20ms detection floor. What is not yet supported is the mechanism: we have not varied the number of followups, so we cannot say whether the query count grows with rows returned (N+1) or is a high fixed cost, and the residual 504 helpdesk_customfield queries are likewise unclassified.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "Localization is settled; the open question is growth. Vary the number of followups (and of tickets/custom fields) per request and fit query count against rows returned. If the 686 followup-attributable queries scale linearly with followup rows, that is an N+1; if they stay flat while time stays flat, it is constant per-request overhead and must be reported as such. The same run also separates whether the residual 504 helpdesk_customfield queries are a fixed constant or a second row-proportional path, which the ablation could not distinguish."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": false,
+            "finding_discipline": false
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Ablating followup_set removed 686 of 1193 queries and ~1020ms of a 1455ms median with no sample overlap, so the followup_set field accounts for the large majority of endpoint cost \u2014 far above the ~20ms detection floor. However, the mechanism is not yet established: it is unknown whether those 686 queries grow with the number of followups returned (N+1) or are a fixed batch, and the 504 residual helpdesk_customfield queries are an unexplained second concentration that may be per-row or per-request constant.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "Both query concentrations (686 in followup_set, 504 in helpdesk_customfield) are high absolute counts, and a high but constant count is not an N+1. Varying the number of tickets/followups returned and fitting query count against rows returned is the one measurement that separates per-row growth from fixed per-request overhead, and it does so for both concentrations in a single sweep before any finding is written."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": false,
+            "finding_discipline": false
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Ablating followup_set removed 686 of 1193 queries and ~1020ms of a 1455ms median, with no sample overlap, so the serializer field is where the cost lives. But the shape of that cost is unresolved: nothing yet shows query count scaling with rows returned, and the residual path still issues 504 helpdesk_customfield queries, which looks like a second per-row pattern of the same kind. Cost is localized; the defect class is not yet established.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "The ablation gives magnitude and location but not growth. 1193 and 507 are single-point counts; a high constant query count is not an N+1. Varying the number of followups and custom fields per ticket and fitting query count against rows returned distinguishes per-row amplification (counts track rows) from fixed per-request overhead (counts flat near 686 and 504). It also settles both candidates at once, since the 504 helpdesk_customfield residual will either scale with field count or stay pinned. The ~1020ms delta is far above the ~20ms detection floor, so the effect will survive at smaller input sizes and the curve will be measurable."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": false,
+            "finding_discipline": false
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Ablating followup_set removed 686 of 1193 queries and ~1020ms of ~1455ms median, with no sample overlap \u2014 the cost is real, far above the ~20ms detection floor, and localized to that serializer field. However, nothing yet shows query count varies with rows returned, so the defect class (per-row N+1 vs. large fixed per-request query batch) is not established; the residual 504 helpdesk_customfield queries are likewise unexplained.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "The ablation localized cost but measured only one input size, so 686 followup queries and 504 customfield queries could be either per-row or constant. Varying the number of tickets returned (e.g. 1, 10, 50, 200) and fitting query count against rows returned separates the two: a slope near 1 per row per relation confirms N+1, a flat count confirms constant per-request overhead and would make the follow-up field a fixed batch rather than a row-scaling defect. This also tells us whether the 504 customfield queries are a second N+1 or a fixed configuration fetch, which determines whether one finding or two should be reported."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": false,
+            "finding_discipline": false
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Ablating followup_set removed 686 queries and ~1020ms of a 1455ms median, with no sample overlap, so the bulk of this endpoint's latency is localized to that serializer field. What the evidence does not establish is the mechanism: with a single input size, the 686 removed queries and the 504 residual helpdesk_customfield queries are equally consistent with per-row N+1 growth or with a large but fixed per-request query count.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "Cost is localized well above the ~20ms floor and the query guard counter moved with it, but query count was measured at exactly one input size. Vary the number of tickets/followups returned and fit the curve for both the followup_set queries (686) and the residual helpdesk_customfield queries (504): if counts rise with rows returned, this is an N+1 in each path; if 504 stays flat as rows grow, it is constant per-request overhead and must not be reported as an N+1. This single experiment settles the classification for both the ablated and residual paths."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": false,
+            "finding_discipline": false
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The followup_set serializer field accounts for 686 of 1193 queries and ~1020ms of the 1455ms median \u2014 a real, localized cost well above the ~20ms detection floor. But with a single input size we cannot say whether that query count grows with rows returned (N+1) or is a fixed per-request cost, and the 504 residual helpdesk_customfield queries are unclassified for the same reason.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "Both suspicious query populations (686 attributable to followup_set, 504 on helpdesk_customfield) were measured at one input size only. Varying the number of tickets/followups returned and fitting the curve is the one experiment that separates an N+1 (queries rise with rows) from high-but-constant per-request overhead, and it classifies both populations at once. Without it, the 686-query delta is a localized cost, not a diagnosed defect."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": false,
+            "finding_discipline": false
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "flat_queries_time_grows",
+      "tags": [
+        "instrument-switch",
+        "thesis"
+      ],
+      "repeats": 10,
+      "instrument_rate": 1.0,
+      "trap_rate": 1.0,
+      "diagnosis_rate": 1.0,
+      "finding_discipline_rate": 0.7,
+      "instruments_chosen": {
+        "observation": 10
+      },
+      "runs": [
+        {
+          "answer": {
+            "conclusion": "Query count is flat at 4 across an 8x increase in rows, so there is no N+1. Database time is constant at 11ms while total time scales linearly with rows returned (roughly 1.2ms per row) and response bytes scale exactly linearly \u2014 the cost is per-row work outside the database, in the application's response-construction path, not in query execution.",
+            "diagnosis": "cost_outside_database",
+            "finding_warranted": true,
+            "next_instrument": "observation",
+            "why": "The guard counters already rule out the database and rule out N+1: 4 queries and 11ms of DB time at every size, against 971ms total at 800 rows. That leaves ~960ms of unattributed per-row work on a path we know by elimination (request handling after the query) but have not yet decomposed. A profiler plus allocation counter on that path at the 800-row size attributes the linear per-row cost to a specific component (serialization, field-by-field object construction, or per-row formatting) before any ablation is worth running. Ablating a component now would be guessing which one to stub; observation names it first, and the linear byte growth means an allocation count per row is the discriminating measurement."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count is flat at 4 across an 8x increase in rows, and database time is constant at 11ms, so this is not an N+1 and the database is not the cost. Time grows almost exactly linearly with rows and bytes (about 1.1ms per row, ~419 bytes per row constant), so essentially all of the 122-971ms is per-row work outside the database; what that work is has not yet been measured, so no defect is established.",
+            "diagnosis": "cost_outside_database",
+            "finding_warranted": false,
+            "next_instrument": "observation",
+            "why": "The DB is excluded (11ms constant) and bytes-per-row is constant, so the open question is which post-query stage consumes the ~1.1ms/row. Attach a profiler and allocation counter to the response path between row fetch and byte emission at the 800-row size, where the effect is largest (971ms total, 11ms DB), to see whether the per-row cost is serialization, per-row object/allocation churn, or template rendering. Per-row linear growth alone is intrinsic to returning more data; a finding requires showing the per-row work is avoidable, which needs this localization first."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": false
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count is flat at 4 across a 8x increase in rows, so there is no N+1; database time is constant at 11ms while total time grows linearly with rows (~1.2ms per row). Essentially all the growth is per-row work outside the database, on the response-construction path.",
+            "diagnosis": "cost_outside_database",
+            "finding_warranted": true,
+            "next_instrument": "observation",
+            "why": "The guard counters already rule out the database as the scaling term: queries constant, DB time pinned at 11ms, while time and response bytes both grow linearly with rows. What remains unknown is which post-query stage owns the ~1.2ms/row. Attaching a profiler and allocation counter to the row-to-response path (mapping, object hydration, serialization) at 100 vs 800 rows localizes the per-row cost to a specific stage and confirms it grows with rows, which is what a fix would have to target. Ablation is premature until a candidate stage is named, and scaling has already given the growth curve."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count is flat at 4 across an 8x increase in rows, and database time is constant at 11ms, so this is not an N+1 and the database is not the cost. Time scales linearly and almost exactly with rows and response bytes (122ms\\u2192971ms for 100\\u2192800 rows), meaning ~99% of the latency is per-row work outside the database \\u2014 roughly 1.2ms per 416-byte row.",
+            "diagnosis": "cost_outside_database",
+            "finding_warranted": true,
+            "next_instrument": "observation",
+            "why": "The guard counters already exclude the two cheap explanations: queries are constant (no N+1) and bytes-per-row is constant at ~416 (no over-fetch of wider rows), while DB time is pinned at 11ms. What remains is an unidentified per-row cost in application code, and scaling further would only re-confirm the linear slope already established. Attaching a profiler and allocation counter to the serialization/render path for a single 800-row request localizes where the ~960ms of non-DB per-row time is spent, which is the prerequisite for any claim that the cost is defective rather than intrinsic to the payload."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count is flat at 4 across an 8x increase in rows, so there is no N+1; database time is a constant 11ms (~9% of the 122ms baseline and ~1% at 800 rows). Essentially all growth is application-side: time and response bytes both scale linearly with rows at roughly 1.2ms and 416 bytes per row, so the cost lives in per-row work after the data is fetched, not in the database. This localizes the cost but does not yet establish a defect, since linear growth in rendered rows is expected.",
+            "diagnosis": "cost_outside_database",
+            "finding_warranted": false,
+            "next_instrument": "observation",
+            "why": "The scaling curve already answers 'where is it not' (DB is constant at 11ms, queries constant at 4) and 'how does it grow' (linear in rows/bytes), so repeating scaling adds nothing. What is missing is which per-row code path consumes the ~1.2ms/row: attach a profiler plus an allocation counter to the post-fetch serialization/rendering path at a fixed size (e.g. 800 rows) so the guard counters (bytes, rows) stay pinned while the in-process time is attributed. Only then can we say whether 1.2ms/row reflects a defect (e.g. redundant per-row serialization or allocation churn) or the irreducible cost of emitting 416 bytes per row."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": false
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count is flat at 4 across an 8x increase in rows, so this is not an N+1, and database time is constant at 11ms \u2014 under 10% of the 122ms baseline and ~1% of the 971ms worst case. Response time and bytes both grow strictly linearly with rows (~1.2ms and ~419 bytes per row), so essentially all cost is per-row work outside the database; which component performs that work is not yet localized.",
+            "diagnosis": "cost_outside_database",
+            "finding_warranted": false,
+            "next_instrument": "observation",
+            "why": "The scaling curve already rules out N+1 (queries flat) and rules out the database (11ms constant while total goes 122ms to 971ms), but it does not say which per-row path consumes the ~1.2ms/row. Attaching a profiler and allocation counter to the response-construction path at the 800-row size, where the effect is largest and non-DB time is ~960ms, identifies whether the cost is serialization, per-row object mapping, or template rendering \u2014 and the allocation counter serves as the guard counter so any later timing change is backed by a change in work done. Ablation is premature until the candidate component is named."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": false
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "This is not an N+1 and not a database problem: query count is flat at 4 across an 8x increase in rows, and database time is constant at 11ms (~9% of the 122ms baseline, ~1% at 800 rows). Time grows linearly with rows returned, tracking response bytes almost exactly (~419 bytes and ~1.2ms per row), so the dominant cost is per-row work in the application layer downstream of the query.",
+            "diagnosis": "cost_outside_database",
+            "finding_warranted": true,
+            "next_instrument": "observation",
+            "why": "The cost is localized to the non-DB portion of the request (960ms of 971ms at 800 rows) and is strictly proportional to rows, but we do not yet know which per-row stage owns it \\u2014 ORM object hydration, per-row field transformation, or serialization. Attaching a profiler plus an allocation counter to the response path at 100 and 800 rows will attribute the ~1.2ms/row to a specific stage, and the allocation counts serve as the guard: a stage whose time doubles with rows should show allocations doubling too. This precedes ablation because stubbing a component chosen without a profile risks removing the wrong one and also changes bytes returned, which would destroy the comparison."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count is flat at 4 across an 8x increase in rows, so there is no N+1, and database time is a constant 11ms \u2014 under 10% of the 122ms baseline and under 2% of the 971ms worst case. Bytes per row are constant (~416), so there is no over-fetch either; total time grows linearly with rows at roughly 1.2ms per row, and essentially all of that growth is outside the database.",
+            "diagnosis": "cost_outside_database",
+            "finding_warranted": true,
+            "next_instrument": "observation",
+            "why": "The scaling curve already answers the growth question (linear in rows, constant queries, constant bytes/row) and exonerates the database, so re-running scaling or ablating the DB would add nothing. What is unknown is which post-query stage consumes the ~1.2ms per row \u2014 serialization, template/response rendering, or per-row object construction. Attaching a profiler and allocation counter to the post-query response path at the 800-row size, where 960ms of the 971ms is non-DB, will localize it while the guard counters (queries=4, bytes=332,800) stay fixed so any attributed time is not an artifact of changed work."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count is flat at 4 across an 8x increase in rows, and bytes per row are constant (~416B), so there is no N+1 and no over-fetch. Database time is fixed at 11ms while total time grows linearly to 971ms, so roughly 91% of the response time is per-row work happening outside the database (~1.2ms per row).",
+            "diagnosis": "cost_outside_database",
+            "finding_warranted": true,
+            "next_instrument": "observation",
+            "why": "The scaling curve has already established the shape: linear in rows, constant queries, constant bytes-per-row, constant DB time \u2014 so re-running scaling or ablating the DB adds nothing. What is unnamed is which application-side component consumes the ~1.2ms per row. Attach a profiler and allocation counter to the post-query path (serialization, per-row object construction, template/formatting) on the 800-row case, where non-DB time is 960ms and any per-row hot path will be unmistakable against the 11ms of DB time. Only after the cost is attributed to a named component is ablation or proportional_perturbation meaningful for estimating the gain from fixing it."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Query count is flat at 4 across an 8x increase in rows, so there is no N+1; database time is constant at 11ms while total time grows linearly with rows (~1.2ms per row), so essentially all of the growth \u2014 about 960ms of the 971ms at 800 rows \u2014 is spent outside the database on per-row work in the application (serialization/rendering), with response bytes tracking rows at a constant ~416 bytes/row.",
+            "diagnosis": "cost_outside_database",
+            "finding_warranted": true,
+            "next_instrument": "observation",
+            "why": "The scaling curve already localizes the cost to a per-row application path, but not to a specific component within it: DB time is pinned at 11ms while the remaining time is linear in rows. Attaching a profiler and allocation counter to the post-query response path at the 800-row size will identify which per-row stage (object mapping, serialization, template rendering) owns the ~1.2ms/row, with allocations-per-row as the guard counter so any later fix is validated by a drop in work, not just in time."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "noise_no_finding",
+      "tags": [
+        "trap",
+        "null-result",
+        "invariant"
+      ],
+      "repeats": 10,
+      "instrument_rate": 0.0,
+      "trap_rate": 1.0,
+      "diagnosis_rate": 1.0,
+      "finding_discipline_rate": 1.0,
+      "instruments_chosen": {
+        "scaling": 10
+      },
+      "runs": [
+        {
+          "answer": {
+            "conclusion": "The A/B shift of -7.4 ms is smaller than the 12.76 ms largest spurious shift seen across 12 null trials on this endpoint, and all guard counters (507 queries, 71,758 bytes, 100 rows) are byte-identical between conditions. The comparison supports no finding. Separately, 507 queries to return 100 rows is an unexplained ratio that has not been tested for growth.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "The p-value and Cliff's delta are meaningless here because the effect (7.4 ms) sits below the endpoint's own noise floor (12.76 ms) with no guard-counter movement, so nothing further should be spent on the A/B contrast. The one measurement worth pursuing is the 507:100 query-to-row ratio, which could be an N+1 (~5 queries per row) or a fixed setup cost. Vary the row count (e.g. 10, 100, 500) and fit query count against rows returned: a linear fit through ~5 per row establishes an N+1, while a flat 507 establishes a constant per-request overhead and no N+1."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The A/B difference is not real: the -7.4 ms median shift is smaller than the 12.76 ms largest spurious shift seen across 12 null trials on this endpoint, and all guard counters (507 queries, 71,758 bytes, 100 rows) are byte-identical between conditions. Whatever condition B changed, it did not change the work done. The one substantive fact the guards surface is unrelated to the comparison: 507 queries to return 100 rows.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "The comparison itself is exhausted \u2014 p = 0.008 is meaningless when the effect sits below the measured noise floor and no guard counter moved, so no finding can be reported from it. The remaining open question is the standing 507 queries against 100 rows. That ratio is consistent either with an N+1 (roughly 5 queries per row) or with a large fixed set of per-request queries that happens to be constant. Only varying the row count distinguishes them: if query count tracks rows returned it is an N+1; if it stays near 507 as rows go to 10 and 1000 it is constant per-request overhead and not a defect of this kind. Scaling is the only instrument that separates those two, and the guard counters are already wired to record query count at each size."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The A/B difference is not real: the -7.4 ms median shift is smaller than the 12.76 ms largest spurious shift seen across 12 null trials on this same endpoint, and all guard counters (507 queries, 71,758 bytes, 100 rows) are byte-identical between conditions. The p-value reflects paired-interleaving sensitivity, not a performance defect. Separately, the unexplained ratio of 507 queries to 100 rows returned is an open question this experiment did not address.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "The comparison as run is a null result and should not be reported as a finding. The one measurement worth pursuing is the guard counter itself: 507 queries against 100 rows returned. Whether that is an N+1 or a high constant overhead is undetermined, and only varying row count distinguishes them \u2014 vary the result set (e.g. 10 / 100 / 400 rows) and fit query count against rows. A slope near 5 per row indicates N+1; a flat 507 regardless of rows indicates constant per-request overhead and closes the question."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The -7.4 ms median shift is smaller than the 12.76 ms largest spurious shift seen across 12 null trials on this same endpoint, so it is within the measurement noise floor despite p = 0.008; with queries, bytes, and rows byte-identical between conditions, there is no evidence of a performance difference between A and B. Separately, the guard counters themselves are notable: 507 queries to return 100 rows, which is unexplained and untested.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "The A/B comparison is dead \u2014 the effect is below the endpoint's own noise floor and no guard counter moved, so no amount of re-running it will produce a finding. The live question is the 507 queries against 100 rows returned, roughly 5 queries per row, which is consistent with an N+1 but equally consistent with a high fixed cost. Only varying rows returned (e.g. 10, 50, 100, 200) and fitting query count against it distinguishes those: a slope near 5 per row confirms query count grows with rows, while a flat 507 proves it is constant per-request overhead and not an N+1."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The A/B comparison is a null result: the -7.4 ms median shift is smaller than the 12.76 ms largest spurious shift seen in 12 self-versus-self null trials, and all guard counters (507 queries, 71,758 bytes, 100 rows) are byte-identical between conditions. The p-value and Cliff's delta reflect a stable sub-noise offset, not a performance defect. Separately, 507 queries to return 100 rows is an unexplained quantity that this experiment did not address.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "The manipulation under test is dead \tThe only live lead is the guard counter itself: 507 queries for 100 rows returned, measured at a single input size. A constant high query count is not an N+1, so vary rows returned (e.g. 10, 50, 100, 200, 400) and fit query count against it. If queries track rows the endpoint is N+1; if queries stay near 507 it is constant per-request overhead and the count is not a defect. Either outcome is decisive, whereas re-running timing comparisons cannot resolve anything below a 12.76 ms floor."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The -7.4 ms median shift between conditions is smaller than the 12.76 ms largest spurious shift seen across 12 null trials on this same endpoint, and all guard counters (507 queries, 71,758 bytes, 100 rows) are byte-identical between conditions. The manipulation therefore produced no measurable effect; the significant p-value and moderate Cliff's delta reflect a consistent sub-noise-floor offset, not a real cost difference. Separately, the guard counters themselves record 507 queries to return 100 rows, which is unexplained and not yet characterized.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "The A/B comparison is a null result and should not be pursued further \u2014 the effect is below this endpoint's demonstrated 12.76 ms noise floor and no guard counter moved, so there is nothing to localize. The one substantive unexplained observation is in the guard counters: 507 queries for 100 rows returned. That count is constant across the two conditions, which does not make it an N+1; constancy across conditions says nothing about growth with input size. Scaling \u2014 varying rows returned (e.g. 25/50/100/200) and fitting query count against it \u2014 is the only instrument that separates the two live hypotheses: a per-row query pattern (queries rise roughly 5x per row) versus a large fixed per-request query batch (queries stay near 507 regardless of rows). Until that curve is fit, reporting either an N+1 or a constant-overhead finding would be unsupported."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The A/B shift of -7.4 ms is smaller than the 12.76 ms largest spurious shift measured across 12 null trials on this endpoint, so despite p = 0.008 it is within this endpoint's demonstrated noise floor and is not evidence of a real difference. Guard counters are byte-for-byte identical (507 queries, 71,758 bytes, 100 rows), so nothing about the work performed changed between conditions. The one substantive lead is unrelated to the comparison: 507 queries to return 100 rows.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "The measured contrast is dead \u2014 the effect is below the empirically established null-trial ceiling and the guard counters did not move, so no amount of further timing on A vs B will produce a finding. The open question is the absolute counter: 507 queries against 100 rows returned is roughly 5 queries per row, which is the signature of an N+1, but a single operating point cannot distinguish a per-row fan-out from a large fixed constant (e.g. ~507 queries regardless of result set). Scaling the row count (10, 100, 1000) and reading the query counter at each point separates these directly: if queries track rows the defect is n_plus_one, if queries stay near 507 it is constant_per_request_overhead and the count, however ugly, is not growth-related.  Query count is the guard counter here, so this is a counter measurement rather than a timing one and is insensitive to the variance that killed the A/B contrast."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The -7.4 ms shift between A and B is smaller than the 12.76 ms largest spurious shift seen in 12 self-comparison null trials, and all guard counters (507 queries, 71,758 bytes, 100 rows) are identical across conditions \u2014 so this comparison supports no finding. Separately, 507 queries to return 100 rows is unexplained and has not yet been characterized as growing or constant.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "The A/B contrast is exhausted: the effect sits inside the endpoint's own noise band despite p = 0.008, and with byte-for-byte identical guard counters there is no work difference to attribute it to. The one open question the data raises is the 507:100 query-to-row ratio. Vary the row count (e.g. 10, 100, 500) and fit query count against rows returned: a slope near 5 per row means query count grows with rows returned (N+1), while a flat 507 across row counts means constant per-request overhead. Without that curve, a high query count alone is not evidence of an N+1."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The -7.4 ms shift between conditions A and B is smaller than the 12.76 ms largest spurious shift seen across 12 null trials on this same endpoint, and all guard counters are byte-for-byte identical (507 queries, 71,758 bytes, 100 rows). The p-value and Cliff's delta reflect a stable ranking of noise, not a real effect; condition B is not faster. Separately, the guard counters themselves show 507 queries to return 100 rows \u2014 roughly 5 per row \u2014 which is unexplained and not yet characterized.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "The comparison that was run is dead: the effect is under the measured noise floor with zero movement in queries, bytes, or rows, so no finding can be reported from it. The live question is the 507:100 query-to-row ratio, which cannot be called an N+1 from a single row count \u2014 a high but constant query count is not an N+1. Scaling the endpoint over several row counts (e.g. 10, 100, 400) and fitting query count against rows returned distinguishes a per-row query fan-out from fixed per-request overhead, and it does so with a guard counter rather than a timing delta, so it is immune to the noise that invalidated this experiment."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The A/B comparison is null: the 7.4 ms median shift is well inside the 12.76 ms spurious-shift envelope established by 12 null trials, and every guard counter (507 queries, 71,758 bytes, 100 rows) is byte-identical across conditions. No performance difference between the conditions is supported. Separately, 507 queries to return 100 rows is an unexplained ratio that has not yet been tested for growth.",
+            "diagnosis": "insufficient_evidence",
+            "finding_warranted": false,
+            "next_instrument": "scaling",
+            "why": "The manipulated variable is exonerated \\u2014 statistical significance without any guard-counter movement, at a magnitude below the endpoint's own noise floor, is not evidence of a defect. The one live lead is the 507:100 query-to-row ratio, and a single measurement cannot distinguish a per-row N+1 (~5 queries/row) from a large fixed setup cost. Varying rows returned (e.g. 10 / 100 / 500) and fitting query count against row count settles it: a slope near zero means constant overhead and no N+1, a slope near 5 means query count grows with rows returned."
+          },
+          "score": {
+            "instrument": false,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          }
+        }
+      ]
+    }
+  ]
+}
