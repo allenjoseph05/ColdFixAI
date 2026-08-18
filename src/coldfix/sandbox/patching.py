@@ -241,6 +241,54 @@ def touched_paths(diff: str) -> frozenset[str]:
     return frozenset(paths)
 
 
+def hunk_lines(diff: str) -> tuple[tuple[str, str], ...]:
+    """Every line *inside* a hunk, as `(marker, content)` with the marker stripped.
+
+    The sibling of `touched_paths`, and it exists for that function's reason
+    read the other way round. There, a removed line whose content begins `-- a/x`
+    renders as `--- a/x` and would be mistaken for a file header. Here the
+    mistake runs the same way: `+++ b/shop/views.py` is a header and
+    `+ cache.set(key, value)` is content, and anything that classifies a diff by
+    scanning for a leading `+` reads the first as the second.
+
+    So the hunk counts declared by each `@@` header are tracked exactly as they
+    are there. Both functions must agree about where a hunk begins and ends, and
+    a test asserts they do on the adversarial case.
+
+    Returned rather than yielded because callers compare the added side against
+    the removed side, which needs both in hand.
+    """
+    lines: list[tuple[str, str]] = []
+    remaining_old = 0
+    remaining_new = 0
+
+    for line in diff.splitlines():
+        if remaining_old > 0 or remaining_new > 0:
+            if line.startswith("\\"):
+                continue
+            marker = line[:1]
+            if marker in {"", " "}:
+                remaining_old -= 1
+                remaining_new -= 1
+                lines.append((" ", line[1:]))
+            elif marker == "-":
+                remaining_old -= 1
+                lines.append(("-", line[1:]))
+            elif marker == "+":
+                remaining_new -= 1
+                lines.append(("+", line[1:]))
+            else:
+                remaining_old = remaining_new = 0
+            continue
+
+        hunk = _HUNK_HEADER.match(line)
+        if hunk:
+            remaining_old = int(hunk.group(2) or 1)
+            remaining_new = int(hunk.group(4) or 1)
+
+    return tuple(lines)
+
+
 def audit(diff: str, *, policy: PatchPolicy, worktree: Path) -> frozenset[str]:
     """Every path the patch may write, having proved none of them is protected.
 
