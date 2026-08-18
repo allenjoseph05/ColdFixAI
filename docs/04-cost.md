@@ -74,10 +74,15 @@ Try cheap. Check mechanically. Escalate on failure.
 | Evidence chain | schema requires a measurement | **yes** |
 | Attack execution | outputs differ or don't | **yes** |
 | Experiment design | spec validates against the primitive's schema | **yes** |
+| Result interpretation | the verdict cites measurements the harness recorded | **yes** |
 | **Hypothesis generation** | **none exists** | **no — pay full price** |
 | **Attack design** | **none exists** | **no — pay full price** |
 
-**The design row was added at S-8.2** (ADR 085). The table was written with eight rows and the investigate loop has nine steps — `02-architecture.md` §2.2 puts *design experiment* between forming a hypothesis and executing one — and a step with no row here has no derivable class, so it cannot be routed or cascaded at all.
+**The last two rows were added by Epic 8, and this table was incomplete rather than merely outgrown.** A step with no row here has no derivable class, so it cannot be routed or cascaded at all.
+
+*Experiment design* (S-8.2, ADR 085) — `02-architecture.md` §2.2 puts it between forming a hypothesis and executing one, and the table skipped it.
+
+*Result interpretation* (S-8.3, ADR 086) — **§2 above already lists it as mechanical, at ~40 calls per run**, which makes it the most frequent step the Diagnostician takes and the largest single mechanical workload in the system. §3 gave it no row, so until now it was the one step §2's whole argument was about that §3 could not express.
 
 **A cascaded step needs a retry that can differ from what it retries.** *Two cheap attempts, then strong* assumes the second attempt is a second answer, and at temperature 0 it is the same call: same model, same prompt, same sampling. So the rejection is fed back into the question rather than the temperature being raised — a retry told what was wrong is a correction, and a retry at a higher temperature is a dice roll.
 
