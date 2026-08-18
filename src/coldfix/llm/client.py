@@ -131,6 +131,7 @@ def request_digest(
     system: str,
     messages: Sequence[MessageParam],
     max_tokens: int,
+    temperature: float,
 ) -> str:
     """What identifies a request, for finding its recording.
 
@@ -139,12 +140,25 @@ def request_digest(
     other — S-5.5 routes the same step to different tiers, which is exactly when
     that would happen.
 
+    **So is the temperature, added at S-8.1 for the same reason.** `03-agents.md`
+    §2.4 sends the Diagnostician's two calls at 0.8 and 0.0 — *hypothesis
+    generation benefits from diversity; result interpretation must not vary* —
+    and those are frequently the **same question about the same log**. Without
+    the temperature in the digest, a recording made for the call that must not
+    vary would answer the call that is supposed to, and nothing would fail.
+
     Hashed over a canonical rendering rather than a joined string, for S-5.1's
     reason: any separator that can occur inside a field makes two different
     requests hash alike.
     """
     payload = json.dumps(
-        {"model": model, "system": system, "messages": list(messages), "max_tokens": max_tokens},
+        {
+            "model": model,
+            "system": system,
+            "messages": list(messages),
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        },
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
@@ -155,13 +169,17 @@ def request_digest(
 class ModelClient(Protocol):
     """What the agents call. Two implementations, which is why it is a protocol."""
 
-    def complete(
+    def complete(  # noqa: PLR0913 - a request's identity is what it
+        # is: the model, the prompt, the message list, the output cap and the
+        # temperature. Bundling them into an object would hide that every one of
+        # them changes which recording answers.
         self,
         *,
         model: str,
         system: str,
         messages: Sequence[MessageParam],
         max_tokens: int,
+        temperature: float,
         cache_ttl: str = "5m",
     ) -> ModelResponse: ...
 
@@ -176,13 +194,17 @@ class AnthropicClient:
 
     client: Anthropic
 
-    def complete(
+    def complete(  # noqa: PLR0913 - a request's identity is what it
+        # is: the model, the prompt, the message list, the output cap and the
+        # temperature. Bundling them into an object would hide that every one of
+        # them changes which recording answers.
         self,
         *,
         model: str,
         system: str,
         messages: Sequence[MessageParam],
         max_tokens: int,
+        temperature: float,
         cache_ttl: str = "5m",
     ) -> ModelResponse:
         message = self.client.messages.create(
@@ -190,6 +212,7 @@ class AnthropicClient:
             max_tokens=max_tokens,
             system=system,
             messages=list(messages),
+            temperature=temperature,
         )
         return translate(message, cache_ttl=cache_ttl)
 
@@ -206,13 +229,15 @@ class Recording:
     message: Message
 
     @classmethod
-    def of(
+    def of(  # noqa: PLR0913 - the five fields of a request's identity, plus the
+        # response it produced. Same reason as `complete`.
         cls,
         *,
         model: str,
         system: str,
         messages: Sequence[MessageParam],
         max_tokens: int,
+        temperature: float,
         response: Mapping[str, object],
     ) -> Recording:
         """Build one from a raw API payload, refusing anything the SDK rejects.
@@ -234,7 +259,11 @@ class Recording:
 
         return cls(
             digest=request_digest(
-                model=model, system=system, messages=messages, max_tokens=max_tokens
+                model=model,
+                system=system,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
             ),
             message=parsed,
         )
@@ -267,13 +296,17 @@ class ReplayingClient:
         """Which recordings were used, so a test can assert what was asked."""
         return tuple(self._served)
 
-    def complete(
+    def complete(  # noqa: PLR0913 - a request's identity is what it
+        # is: the model, the prompt, the message list, the output cap and the
+        # temperature. Bundling them into an object would hide that every one of
+        # them changes which recording answers.
         self,
         *,
         model: str,
         system: str,
         messages: Sequence[MessageParam],
         max_tokens: int,
+        temperature: float,
         cache_ttl: str = "5m",
     ) -> ModelResponse:
         """Replay this request's recording.
@@ -282,7 +315,11 @@ class ReplayingClient:
             NoRecordingError: no recording matches. Never a default.
         """
         digest = request_digest(
-            model=model, system=system, messages=messages, max_tokens=max_tokens
+            model=model,
+            system=system,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
         )
         recorded = self._recordings.get(digest)
         if recorded is None:
@@ -291,8 +328,8 @@ class ReplayingClient:
                 f"no recording for this request to {model} (digest {digest}). Recorded: {known}. "
                 "Nothing here invents a response: a double that answered anyway would make every "
                 "agent test pass while testing the default. Four things look identical from here "
-                "— a different model, a changed prompt, a recording never made, and one made "
-                "under a different max_tokens"
+                "— a different model, a changed prompt, a recording never made, one made "
+                "under a different max_tokens, and one made at a different temperature"
             )
             raise NoRecordingError(message)
 
