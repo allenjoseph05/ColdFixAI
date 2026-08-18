@@ -73,8 +73,13 @@ Try cheap. Check mechanically. Escalate on failure.
 | Falsification test | fails on unpatched code | **yes** |
 | Evidence chain | schema requires a measurement | **yes** |
 | Attack execution | outputs differ or don't | **yes** |
+| Experiment design | spec validates against the primitive's schema | **yes** |
 | **Hypothesis generation** | **none exists** | **no — pay full price** |
 | **Attack design** | **none exists** | **no — pay full price** |
+
+**The design row was added at S-8.2** (ADR 085). The table was written with eight rows and the investigate loop has nine steps — `02-architecture.md` §2.2 puts *design experiment* between forming a hypothesis and executing one — and a step with no row here has no derivable class, so it cannot be routed or cascaded at all.
+
+**A cascaded step needs a retry that can differ from what it retries.** *Two cheap attempts, then strong* assumes the second attempt is a second answer, and at temperature 0 it is the same call: same model, same prompt, same sampling. So the rejection is fed back into the question rather than the temperature being raised — a retry told what was wrong is a correction, and a retry at a higher temperature is a dice roll.
 
 Where a machine can catch a wrong cheap answer, the cheap model costs only an occasional retry. Where nothing can catch it, don't gamble — a bad hypothesis wastes an entire investigation branch, which costs far more than the model upgrade.
 
