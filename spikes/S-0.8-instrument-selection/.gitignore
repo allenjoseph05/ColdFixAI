@@ -1,0 +1,8 @@
+results/*.json
+
+# Except the executed run. Model outputs are not deterministic, so this file
+# cannot be regenerated — a re-run produces different reasoning at different
+# cost. FINDINGS.md quotes fragments of it; the per-run traces are what any
+# later disagreement with those readings has to be settled against.
+!results/selection.json
+!results/post-ablation-rerun.json

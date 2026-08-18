@@ -1,0 +1,222 @@
+{
+  "model": "claude-opus-5",
+  "repeats": 10,
+  "scenarios_run": [
+    "post_ablation_residual"
+  ],
+  "usage": {
+    "input_tokens": 13270,
+    "output_tokens": 8829
+  },
+  "cost_usd": 0.2871,
+  "results": [
+    {
+      "scenario": "post_ablation_residual",
+      "tags": [
+        "localization",
+        "residual"
+      ],
+      "repeats": 10,
+      "instrument_rate": 1.0,
+      "trap_rate": 1.0,
+      "diagnosis_rate": 1.0,
+      "finding_discipline_rate": 1.0,
+      "instruments_chosen": {
+        "ablation": 3,
+        "scaling": 7
+      },
+      "runs": [
+        {
+          "answer": {
+            "conclusion": "The followup_set field accounted for 686 of 1193 queries and ~1020ms of the 1455ms median at fixed 100 rows returned, so the time drop is backed by a query-count drop with rows held constant. The residual 507 queries are dominated by 504 helpdesk_customfield queries that scale linearly with rows (126/252/504 at 25/50/100 rows, ~5.04 per row) against a flat 3-query fixed cost, which is a second, independent N+1.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "ablation",
+            "why": "The customfield N+1 is established structurally by the scaling run (query count strictly proportional to rows, fixed overhead constant at 3), but no timing attribution exists for it yet: the remaining 434.64ms is far above the ~20ms detection floor, and we do not know how much of it those 504 queries own. Ablating the custom-field serializer path while holding rows returned at 100 gives the paired query-count and time delta needed to size the second finding, the same guard-counter pattern that validated the followup_set result."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          },
+          "usage": {
+            "input_tokens": 1327,
+            "output_tokens": 842
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The followup_set serializer field accounts for 686 of 1193 queries and ~1020 ms of the 1455 ms median, with no sample overlap \u2014 a confirmed N+1 (row count held at 100, so the time drop is guarded by a query-count drop). The residual is a second, independent N+1: helpdesk_customfield queries scale linearly with rows returned (126/252/504 at 25/50/100 rows, ~5.04 per row) while the fixed session+auth+ticket cost stays at exactly 3.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "ablation",
+            "why": "The query-count side of the second defect is already settled by the scaling run (5.04 helpdesk_customfield queries per row, flat 3-query fixed cost), but no timing has been attributed to it \u2014 the 434.64 ms residual is not yet decomposed. Ablating the custom-field access path in the already-ablated endpoint gives the paired time-and-query-count measurement needed to state what that N+1 costs, and confirms the gain exceeds the ~20 ms detection floor rather than being a query-count artifact with negligible latency."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          },
+          "usage": {
+            "input_tokens": 1327,
+            "output_tokens": 786
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Two distinct query-multiplying defects are measured, not one. Ablating followup_set removed 686 queries and ~1020 ms of median time with rows returned held constant at 100 (Cliff's delta -1.000, far above the ~20 ms floor), so that field is a confirmed defect. The 507-query residual is not a constant floor: helpdesk_customfield queries scale strictly linearly with rows returned (126/252/504 at 25/50/100 rows, ~5.04 queries per row), which is a second N+1 on the custom-field path.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "ablation",
+            "why": "The custom-field N+1 is established in query count by the scaling run, but its time cost is not yet attributed \time is only known for the whole ablated endpoint (434.64 ms with 507 queries). Ablating or stubbing the custom-field resolution while holding rows returned at 100 gives the time-and-query delta needed to state what fixing it is worth, and separates it from the 3 constant session/auth/ticket queries. Scaling has already done its job here, so repeating it would add nothing; only the timing attribution is missing."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          },
+          "usage": {
+            "input_tokens": 1327,
+            "output_tokens": 803
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The residual path contains a confirmed N+1: helpdesk_customfield queries grow strictly linearly with rows returned (126/252/504 at 25/50/100 rows, ~5.04 queries per row) while the fixed overhead stays at 3 queries. Separately, the followup_set field accounts for 686 queries and ~1020ms of the 1454ms baseline, but because the baseline was only measured at one page size, the followup_set cost is not yet established as row-proportional rather than a large constant.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "scaling",
+            "why": "The customfield N+1 is already established by the three-page-size sweep, so it needs no further work. The unresolved question is the larger cost: followup_set contributed 686 queries and ~1020ms (well above the ~20ms detection floor, Cliff's delta -1.000), but at a single page size 686 queries is equally consistent with a per-row fan-out or a fixed batch. Varying page size on the unablated endpoint and fitting queries and time against rows returned distinguishes these, and the guard counters (queries and rows) are exactly the ones that must move together to call it an N+1."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          },
+          "usage": {
+            "input_tokens": 1327,
+            "output_tokens": 1104
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Two independent per-row query sources are measured. Ablating followup_set removed 686 queries and 1020 ms of a 1455 ms median (Cliff's delta -1.000, far above the ~20 ms floor), and the residual 507 queries are dominated by helpdesk_customfield, which scales linearly with rows returned (126/252/504 at 25/50/100 rows, ~5 per row) while the fixed session+auth+ticket cost stays at 3. The helpdesk_customfield access is a confirmed N+1; the followup_set cost is localized and large but its growth law is not yet measured.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "scaling",
+            "why": "The customfield N+1 is already established by the row-size sweep, but the larger component (686 queries, 1020 ms) has only been measured at one page size, so we cannot yet say whether followup_set is also per-row or a high constant fan-out. Sweeping the un-ablated endpoint at 25/50/100 rows with the same per-table query counters tests whether the 686 queries grow proportionally with rows returned; without that, the ablation delta alone does not distinguish an N+1 from a fixed-cost block."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          },
+          "usage": {
+            "input_tokens": 1327,
+            "output_tokens": 783
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The residual path contains a confirmed N+1: with followup_set ablated, helpdesk_customfield queries scale linearly with rows returned (126/252/504 at 25/50/100 rows, ~5.04 per row) while the fixed session/auth/ticket cost stays at 3. The ablation also shows followup_set accounts for 686 queries and ~1020ms of the 1455ms median (delta far above the ~20ms detection floor, Cliff's delta -1.0, rows held constant at 100), but its query count has not yet been shown to grow with rows, so it is not yet established as a second N+1 rather than a high constant fan-out.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "scaling",
+            "why": "The customfield N+1 is already established by the three-point scaling of the ablated endpoint with rows as the guard counter. What remains unquantified is the larger cost: the 686 queries and ~1020ms attributable to followup_set. Running the same page-size sweep (25/50/100) on the unablated baseline and recording per-table query counts will show whether followup_set queries grow with rows returned (second N+1) or sit at a constant fan-out per request, which determines whether the fix is prefetching or bounding a fixed fan-out. Guard counters are rows returned and per-table query counts, both already instrumented."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          },
+          "usage": {
+            "input_tokens": 1327,
+            "output_tokens": 917
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The residual 507 queries after ablation are dominated by helpdesk_customfield lookups that scale linearly with rows returned (126/252/504 at 25/50/100 rows, ~5.04 per row), which is a confirmed N+1 independent of followup_set. The followup_set field additionally accounts for ~686 queries and ~1020ms (Cliff's delta -1.000, far above the ~20ms detection floor), but whether that 686 grows with rows or is a fixed block has not yet been measured.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "scaling",
+            "why": "The customfield N+1 is already established by the per-page-size counts on the ablated endpoint. The unmeasured piece is the 686 queries attributable to followup_set: the ablation shows they cost ~1020ms but not that their count grows with rows returned, and a high-but-constant query block is not an N+1. Running the same 25/50/100 row sweep on the unablated baseline and subtracting the known customfield curve separates a second row-proportional term from fixed per-request overhead, and determines whether one fix or two is warranted."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          },
+          "usage": {
+            "input_tokens": 1327,
+            "output_tokens": 678
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "A confirmed N+1 exists on helpdesk_customfield: with followup_set ablated, query count scales linearly with rows returned (126/252/504 at 25/50/100 rows, ~5.04 queries per row) while the fixed overhead stays at 3 queries. The followup_set field additionally accounts for 686 queries and ~1020ms of the 1454ms baseline, but its per-row growth has not yet been measured, so it cannot yet be called an N+1.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "scaling",
+            "why": "The customfield N+1 is already established by the three-page-size sweep with matching row counts, well above the ~20ms floor. What remains unmeasured is the larger cost: the 686 queries and ~1020ms attributable to followup_set were only observed at a single page size (100 rows), and a high constant query count is not an N+1. Varying page size on the unablated endpoint, with queries-by-table and rows returned as guard counters, distinguishes a second per-row N+1 from fixed per-request overhead and tells us whether the dominant 70% of runtime is fixable by batching."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          },
+          "usage": {
+            "input_tokens": 1327,
+            "output_tokens": 1263
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "The residual 507 queries are an N+1: helpdesk_customfield queries grow strictly linearly with rows returned (126/252/504 at 25/50/100 rows, ~5.04 per row) while the fixed cost stays at 3 queries. The followup_set field also accounts for 686 queries and ~1020ms of the 1454ms median at constant 100 rows returned, but its query count has only been measured at a single page size, so it is not yet established that it grows with rows rather than being a large constant.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "scaling",
+            "why": "The customfield N+1 is already established by the three-point scaling fit on the ablated endpoint, and the 434ms residual is far above the ~20ms detection floor. The open question is the 686-query, ~1020ms followup_set component: the ablation held rows returned constant at 100, so it shows the cost is attributable to that field but not that it scales. Running the baseline (un-ablated) endpoint at 25/50/100 rows with the per-table query counter attached distinguishes a second N+1 from a constant per-request block of queries, which changes both the finding and the fix."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          },
+          "usage": {
+            "input_tokens": 1327,
+            "output_tokens": 901
+          }
+        },
+        {
+          "answer": {
+            "conclusion": "Two distinct query-count-per-row behaviours are present. Ablating followup_set removed 686 of 1193 queries and cut median time from 1454.73ms to 434.64ms (Cliff's delta -1.000), and the residual 507 queries are dominated by helpdesk_customfield, which scales linearly with rows returned (126/252/504 at 25/50/100 rows, ~5.04 per row, on a constant base of 3). The helpdesk_customfield N+1 is established; the followup_set contribution is large but its growth with row count has not yet been measured.",
+            "diagnosis": "n_plus_one",
+            "finding_warranted": true,
+            "next_instrument": "scaling",
+            "why": "The residual scaling sweep already proves helpdesk_customfield grows per row (5.04 queries/row over a constant 3-query base), so that N+1 is supported by measurement. What remains unmeasured is the 686 queries attributable to followup_set: at a single page size that could be either per-row or a large constant. Running the same page-size sweep (25/50/100) on the unablated endpoint with per-table query counts will show whether the followup_set queries track rows returned \u2014 separating a second N+1 from constant per-request overhead \u2014 and both effects are far above the ~20ms detection floor, so timing will be interpretable alongside the guard counters."
+          },
+          "score": {
+            "instrument": true,
+            "trap": true,
+            "diagnosis": true,
+            "finding_discipline": true
+          },
+          "usage": {
+            "input_tokens": 1327,
+            "output_tokens": 752
+          }
+        }
+      ]
+    }
+  ]
+}

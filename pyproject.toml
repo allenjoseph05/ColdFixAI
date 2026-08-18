@@ -7,6 +7,14 @@ requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
+    "anthropic>=0.121.0",
+    # S-3.17's search engine, not a test tool. `hypothesis.target()` is targeted
+    # property-based testing (Löscher & Sagonas, ISSTA 2017) — an existing search
+    # engine whose fitness function the caller supplies, which is what lets input
+    # search be guided by measured cost instead of by coverage. ADR 046 records
+    # why no AFL-lineage engine is wrapped instead.
+    "hypothesis>=6.100",
+    "psycopg[binary]>=3.2",
     "pydantic>=2.9",
 ]
 
@@ -19,6 +27,27 @@ packages = ["src/coldfix"]
 
 [dependency-groups]
 dev = [
+    # S-7.3 resolves a route table by asking the framework, because a URLconf
+    # built in a loop or by a DRF router has no routes to read out of a file.
+    # A *dev* dependency for the same reason `langgraph` is one: nothing under
+    # `src/` imports Django — the introspection program is source text run in
+    # the subject's own interpreter — and the alternative to installing it is
+    # testing route resolution against a fake, which would assert only what the
+    # fake was written to believe.
+    "django>=5.0",
+    # S-7.4 mints a DRF token in the subject's interpreter, which is the one
+    # credential in AC 2 that no amount of Django alone can create. Here for the
+    # same reason and on the same terms as `django` above: without it that branch
+    # ships unverified, and a fake token model would assert only that this file
+    # knows what `Token.objects.get_or_create` is called.
+    "djangorestframework>=3.18.0",
+    # S-7.5 locates a project's existing factories and then *runs* one, because a
+    # `FixtureRecipe` records how many rows of what a run produced and a parse
+    # establishes none of that. On the same terms again: nothing under `src/`
+    # imports it, the exercising program is source text, and the alternative is a
+    # fake factory that seeds exactly what this project expects a factory to seed.
+    "factory-boy>=3.3.3",
+    "langgraph>=1.2.10",
     "mypy>=1.13",
     "pytest>=8.3",
     "ruff>=0.8",
@@ -39,6 +68,12 @@ src = ["src", "tests"]
 extend-exclude = ["docs"]
 
 [tool.ruff.lint]
+# The Universal Scalability Law's coefficients are named α, β and γ everywhere
+# it is written about (S-3.12). Spelling them out in prose would make the module
+# harder to check against the literature, which is the only thing that can
+# confirm the fit is the one it claims to be.
+allowed-confusables = ["α", "β", "γ", "×", "≤", "≥"]
+
 select = [
     "A",    # shadowed builtins
     "ANN",  # missing type annotations
@@ -126,6 +161,26 @@ warn_required_dynamic_aliases = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers --strict-config"
+# With no `__init__.py` in the tree, pytest puts each test module's own
+# directory on `sys.path` — `tests/primitives`, not `tests` — so the shared
+# fixture package resolves only for the test files sitting at the top level.
+# Naming it here rather than in a `tests/conftest.py`, because a second file
+# named `conftest` collides with `tests/sandbox/conftest.py` under mypy.
+pythonpath = ["tests"]
 markers = [
     "slow: takes long enough to exclude from the fast subset (`-m 'not slow'`)",
+    # Kept distinct from `slow` because the reason for skipping is different: a
+    # slow test is one you choose not to wait for, a docker test is one this
+    # machine cannot run at all. Conflating them would let an absent daemon read
+    # as a passing fast subset.
+    "docker: needs a running Docker daemon; skipped when none is listening",
+    # Separate from `docker` even though it starts one, because what it needs is
+    # a database server that answers — a daemon that is up but cannot pull or
+    # run Postgres fails these for a different reason and should say so.
+    "postgres: needs a real Postgres server; skipped when one cannot be started",
+    # Separate again, because what it needs is neither slow nor local: S-7.12's
+    # AC 5 asks that a dependency set resolve differently at an anchor than at
+    # HEAD, and nothing but a real package index can show that. A fake resolver
+    # would return whichever answer the test wrote into it.
+    "index: needs a reachable package index; skipped when PyPI cannot be read",
 ]

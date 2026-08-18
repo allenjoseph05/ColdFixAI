@@ -123,6 +123,7 @@ This file is context, not configuration. For rules that must hold regardless of 
 
 | Rule | Enforced by |
 |---|---|
+| Cannot compare against a stored baseline | `compare()` accepts callables only (S-1.6) |
 | Cannot modify tests or harness | `apply_patch` rejection (S-2.4) |
 | Cannot run against production | startup URL check (S-2.5) |
 | Diagnostic diffs cannot ship | worktree separation (S-2.3) |
