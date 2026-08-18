@@ -41,6 +41,7 @@ import re
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 
@@ -290,15 +291,34 @@ def hunk_lines(diff: str) -> tuple[tuple[str, str], ...]:
     return tuple(lines)
 
 
-def hunk_ranges(diff: str) -> Mapping[str, frozenset[int]]:
-    """Which **original-side** line numbers each file's hunks cover.
+class Side(StrEnum):
+    """Which of a hunk header's two line numberings to read.
 
-    The third sibling of `touched_paths` and `hunk_lines`, and it exists because
+    A header carries both — `@@ -41,7 +41,9 @@` is *seven lines from 41 in the
+    original, nine from 41 in the new file* — and which one a caller wants is a
+    question about what it is comparing against, not a detail of parsing.
+    """
+
+    ORIGINAL = "original"
+    NEW = "new"
+
+
+def hunk_ranges(diff: str, *, side: Side = Side.ORIGINAL) -> Mapping[str, frozenset[int]]:
+    """Which line numbers each file's hunks cover, on the side asked for.
+
+    The third sibling of `touched_paths` and `hunk_lines`. It exists because
     S-10.5 has to answer *did this attempt change the same lines as the last
-    one*. Original-side rather than new-side: two attempts that both rewrite
-    lines 41-52 are working on the same code even though one added three lines
-    and the other removed two, so the numbering they have in common is the one
-    they started from.
+    one*, and **original-side is the default for that question**: two attempts
+    that both rewrite lines 41-52 are working on the same code even though one
+    added three lines and the other removed two, so the numbering they have in
+    common is the one they started from.
+
+    **`Side.NEW` was added by S-11.5, which asks the opposite question.** To name
+    the symbols a patch modified it has to look them up in the *patched* source,
+    where the original numbering points at whatever the edit shifted. The
+    parameter is here rather than in a second parser for the reason this project
+    keeps repeating: two implementations of *where does a hunk start* would be two
+    answers to a question with one right one.
 
     Files with a hunk header but no path — a malformed diff — are dropped rather
     than filed under a guess. Over-collecting here would make two unrelated
@@ -307,6 +327,7 @@ def hunk_ranges(diff: str) -> Mapping[str, frozenset[int]]:
     """
     ranges: dict[str, set[int]] = {}
     current: str | None = None
+    start_group, count_group = (1, 2) if side is Side.ORIGINAL else (3, 4)
 
     for line in diff.splitlines():
         if line.startswith("+++ "):
@@ -317,8 +338,8 @@ def hunk_ranges(diff: str) -> Mapping[str, frozenset[int]]:
         if hunk is None or current is None:
             continue
 
-        start = int(hunk.group(1))
-        count = int(hunk.group(2) or 1)
+        start = int(hunk.group(start_group))
+        count = int(hunk.group(count_group) or 1)
         ranges.setdefault(current, set()).update(range(start, start + max(count, 1)))
 
     return {path: frozenset(lines) for path, lines in ranges.items()}
