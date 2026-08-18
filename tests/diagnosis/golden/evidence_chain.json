@@ -51,6 +51,7 @@
         },
         "outcome": "queries flat at 7, 7, 7 across a 100x sweep",
         "primitive": "scaling.volume",
+        "rationale": "queries have not been counted against volume yet",
         "target": "shop.books.list",
         "verdict": "rejected"
       }
@@ -70,6 +71,7 @@
         },
         "outcome": "stubbing the serializer removed 89% of wall time",
         "primitive": "ablation.stub",
+        "rationale": "the serializer is the only component not yet stubbed",
         "target": "BookSerializer.to_representation",
         "verdict": "confirmed"
       },

@@ -1,0 +1,348 @@
+"""Hypothesize, design, run, interpret — and switch instrument when one comes back flat.
+
+Epic 8, S-8.7. `00-BRIEF.md` §5 calls this *the demo that justifies the whole
+architecture*, and the claim it demonstrates is §1's: the fourteen methods are
+mechanizable, and **choosing which one applies is the part the literature names
+as requiring expertise.** Every story before this one built an instrument or a
+control. This is the first one where the choosing happens.
+
+**What is proved here, and what is not.** The loop runs real primitives against a
+real subject: the measurements are the harness's, taken by `scaling.volume` and
+`ablation.stub` executing against a planted defect. The *model calls* are
+replayed, because `CLAUDE.md` forbids a test hitting the API. So the test
+demonstrates that a rejection propagates into a different instrument, that the
+harness enforces it, and that the log records it — and it cannot demonstrate that
+a model would choose to switch unprompted. `run_investigation` takes the client
+as a parameter for exactly that reason: the video `10-BACKLOG.md` asks for is
+this same function against `AnthropicClient`, not a second implementation of it.
+
+**AC 1 is enforced, not hoped for.** *On a rejected hypothesis, the next
+hypothesis must select a different primitive where the evidence supports it* is a
+property of the system, and `CLAUDE.md`'s hard-enforcement table is explicit that
+a rule which must hold regardless of what an agent decides lives in code. So a
+hypothesis re-proposing an instrument that has already been rejected under
+unchanged conditions is **refused and re-asked**, with the refusal added to the
+exclusions the next call sees.
+
+**Re-asking is not cascading, and the distinction is the non-negotiable.** S-8.1
+must never cascade — no deterministic validator exists for a hypothesis, so a
+cheap model's wrong answer is caught by nothing. Re-asking calls `generate` again
+at the same temperature on the same tier with a *longer exclusion list*; no
+validator is supplied to `session.run`, no model changes, and the routing is
+S-5.5's throughout. What makes it legitimate is that the thing being corrected is
+not the hypothesis's quality — which nothing can judge — but a fact the agent can
+be told: this instrument has already answered.
+
+**"Where the evidence supports it" is S-8.5's, not a new rule.** An instrument is
+re-proposable the moment a condition it was rejected under has moved — a reseed
+to a skewed fixture, a higher concurrency, a wider scale. The loop asks the
+exclusion register rather than keeping its own list, so there is one answer to
+*has this been settled* and S-8.8's reseed reopens it for free.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+
+from coldfix.cost.session import Session
+from coldfix.diagnosis.design import ExperimentSpec, design
+from coldfix.diagnosis.exclusions import Conditions, ExclusionRegister
+from coldfix.diagnosis.hypothesis import Hypothesis, generate
+from coldfix.diagnosis.interpretation import Interpretation, interpret
+from coldfix.diagnosis.log import Experiment, ExperimentLog, Verdict
+from coldfix.llm.client import ModelClient
+from coldfix.primitives.registry import Selection
+
+RETRIES_PER_HYPOTHESIS = 3
+"""How often the loop will re-ask before calling a repeated proposal a stall.
+
+Three because the refusal is fed back and a model that has been told the same
+thing three times is not going to be told it a fourth: at that point the useful
+signal is *this investigation has run out of instruments*, which is a result
+(`00-BRIEF.md` §9 ships null results) rather than an error to retry past."""
+
+
+class LoopError(Exception):
+    """The investigation could not continue."""
+
+
+class NoNewInstrumentError(LoopError):
+    """Every instrument the agent proposed has already answered under these conditions.
+
+    A result rather than a failure, and it says so: the honest reading is that
+    this subject's applicable experiments are exhausted, not that the agent
+    malfunctioned. Carries what was proposed so a reader can see whether the
+    exhaustion is real or whether S-3.1 withheld something it should not have.
+    """
+
+    def __init__(self, proposed: Sequence[str], settled: Sequence[str]) -> None:
+        self.proposed = tuple(proposed)
+        self.settled = tuple(settled)
+        super().__init__(
+            f"after {len(proposed)} attempts the agent proposed only instruments already settled "
+            f"under these conditions (proposed {list(proposed)}; settled {list(settled)}). That is "
+            "an investigation out of applicable experiments, which is a result — not a fault"
+        )
+
+
+# What the harness does with a specification: run the primitive and hand back what
+# it measured. **The loop never measures anything itself** — `CLAUDE.md` puts the
+# measuring in the harness and the reasoning in the agent, and a loop that could
+# produce a number would be the one place that rule is unenforceable.
+type Executor = Callable[[ExperimentSpec], Mapping[str, float]]
+
+
+@dataclass(frozen=True)
+class Step:
+    """One turn of the loop, with everything it produced."""
+
+    hypothesis: Hypothesis
+    spec: ExperimentSpec
+    interpretation: Interpretation
+    experiment: Experiment
+    rejected_proposals: tuple[str, ...] = ()
+    """Instruments the agent proposed on this turn that were already settled.
+
+    Kept because an agent that had to be refused twice before switching is a
+    different observation from one that switched immediately, and the thesis
+    claim is about the choosing.
+    """
+
+    @property
+    def verdict(self) -> Verdict:
+        return self.interpretation.verdict
+
+
+@dataclass
+class Investigation:
+    """One subject, one register of what has been ruled out, one log.
+
+    Holds no budget and no step cap: those are S-8.9's, and inventing them here
+    would guess at a shape that story owns — the fifth time this project has
+    declined that guess.
+    """
+
+    session: Session
+    client: ModelClient
+    instruments: Selection
+    source: str
+    conditions: Conditions
+    execute: Executor
+    log: ExperimentLog = field(default_factory=ExperimentLog)
+    exclusions: ExclusionRegister = field(default_factory=ExclusionRegister)
+    steps: list[Step] = field(default_factory=list)
+
+    # -------------------------------------------------------------- AC 1
+
+    def settled_instruments(self) -> tuple[str, ...]:
+        """Instruments already answered under the conditions now in force.
+
+        Asked of S-8.5's register rather than kept here, so *has this been
+        settled* has one answer and a reseed reopens it without this module
+        knowing that reseeding exists.
+        """
+        return tuple(
+            sorted(
+                {
+                    exclusion.experiment.primitive
+                    for exclusion in self.exclusions.live(self.conditions)
+                }
+            )
+        )
+
+    def propose(
+        self, *, measured_prefix_tokens: int, measured_prompt_tokens: int
+    ) -> tuple[Hypothesis, tuple[str, ...]]:
+        """Ask for the next hypothesis, refusing one that re-runs a settled instrument.
+
+        The refusal is fed back as an exclusion sentence rather than as an error,
+        because that is the vocabulary S-8.1's prompt already speaks: *do not
+        propose one an exclusion has already settled unless a condition it
+        depended on has changed.*
+
+        Returns the accepted hypothesis **and what was refused on the way to it**.
+        An agent that had to be told twice before switching is a different
+        observation from one that switched immediately, and the thesis claim is
+        about the choosing — so the refusals are carried rather than discarded.
+
+        Raises:
+            NoNewInstrumentError: every proposal named a settled instrument.
+        """
+        settled = self.settled_instruments()
+        proposals: list[str] = []
+        notes: list[str] = []
+
+        for _ in range(RETRIES_PER_HYPOTHESIS):
+            outcome = generate(
+                self.session,
+                self.client,
+                log=self.log,
+                exclusions=(*self.exclusions.render(self.conditions), *notes),
+                source=self.source,
+                instruments=self.instruments,
+                measured_prefix_tokens=measured_prefix_tokens,
+                measured_prompt_tokens=measured_prompt_tokens,
+            )
+            hypothesis = outcome.value
+            if hypothesis.primitive not in settled:
+                return hypothesis, tuple(proposals)
+
+            proposals.append(hypothesis.primitive)
+            notes.append(
+                f"{hypothesis.primitive} has already answered under the conditions in force and "
+                "was proposed again. Choose a different instrument, or say which condition would "
+                "have to change for this one to be worth repeating."
+            )
+
+        raise NoNewInstrumentError(proposals, settled)
+
+    # -------------------------------------------------------------- the turn
+
+    def step(self, *, measured_prefix_tokens: int, measured_prompt_tokens: int) -> Step:
+        """One full turn: propose, design, run, interpret, record.
+
+        The order is the loop `02-architecture.md` §2.2 describes, and the
+        recording happens last for S-8.4's reason — an append-only log cannot
+        retract, so nothing is written until there is something complete to
+        write.
+        """
+        hypothesis, refused = self.propose(
+            measured_prefix_tokens=measured_prefix_tokens,
+            measured_prompt_tokens=measured_prompt_tokens,
+        )
+
+        spec = design(
+            self.session,
+            self.client,
+            hypothesis=hypothesis,
+            instruments=self.instruments,
+            source=self.source,
+            log=self.log,
+            measured_prefix_tokens=measured_prefix_tokens,
+            measured_prompt_tokens=measured_prompt_tokens,
+        ).value
+
+        measurement = self.execute(spec)
+
+        reading = interpret(
+            self.session,
+            self.client,
+            hypothesis=hypothesis,
+            spec=spec,
+            measurement=measurement,
+            log=self.log,
+            measured_prefix_tokens=measured_prefix_tokens,
+            measured_prompt_tokens=measured_prompt_tokens,
+        ).value
+
+        experiment = self.log.append(
+            hypothesis=hypothesis.statement,
+            primitive=hypothesis.primitive,
+            rationale=hypothesis.rationale,
+            target=spec.target,
+            design=spec.render(),
+            measurement=reading.measurement,
+            verdict=reading.verdict,
+            outcome=reading.outcome,
+        )
+
+        if reading.verdict is Verdict.REJECTED:
+            self.exclusions.record(experiment, self.conditions)
+
+        step = Step(
+            hypothesis=hypothesis,
+            spec=spec,
+            interpretation=reading,
+            experiment=experiment,
+            rejected_proposals=refused,
+        )
+        self.steps.append(step)
+        return step
+
+    def switched(self) -> bool:
+        """Whether an instrument changed hands at any point. AC 3's subject."""
+        return bool(self.log.switches())
+
+    def report(self) -> str:
+        """What happened, for a reader — and for the video."""
+        return "\n\n".join(
+            [
+                self.log.describe(),
+                self.log.describe_switches(),
+                self.exclusions.report(self.conditions),
+            ]
+        )
+
+
+def run_investigation(  # noqa: PLR0913 - the subject, its instruments, its
+    # conditions and the way to run one experiment are four different facts, plus
+    # the session and the client. None is derivable from the others.
+    session: Session,
+    client: ModelClient,
+    *,
+    instruments: Selection,
+    source: str,
+    conditions: Conditions,
+    execute: Executor,
+    measured_prefix_tokens: int,
+    measured_prompt_tokens: int,
+    max_steps: int = 8,
+) -> Investigation:
+    """Run until something is confirmed, or until the instruments are exhausted.
+
+    **The same function the demo runs.** A test hands it a replaying client and a
+    subject built from a planted defect; the video hands it `AnthropicClient` and
+    a real repository. A second implementation for the demo would be a demo of
+    the second implementation.
+
+    `max_steps` is a loop bound rather than a budget — S-8.9 owns the caps, and a
+    budget invented here would guess at a shape that story designs. Without some
+    bound this is a `while True` around a paid API, which is not a thing to ship
+    even briefly.
+
+    Raises:
+        NoNewInstrumentError: the applicable experiments are exhausted.
+        LoopError: the bound was reached with nothing confirmed.
+    """
+    investigation = Investigation(
+        session=session,
+        client=client,
+        instruments=instruments,
+        source=source,
+        conditions=conditions,
+        execute=execute,
+    )
+
+    for _ in range(max_steps):
+        step = investigation.step(
+            measured_prefix_tokens=measured_prefix_tokens,
+            measured_prompt_tokens=measured_prompt_tokens,
+        )
+        if step.verdict is Verdict.CONFIRMED:
+            return investigation
+
+    message = (
+        f"{max_steps} experiments ran and none confirmed a cause. The log holds "
+        f"{len(investigation.log.experiments)} experiment(s) and "
+        f"{len(investigation.exclusions.exclusions)} exclusion(s), which is a partial result "
+        "rather than nothing — the exclusions are what was learned"
+    )
+    raise LoopError(message)
+
+
+def confirming_links(investigation: Investigation) -> tuple[Experiment, ...]:
+    """The experiments a chain would be localized on. S-8.6 assembles the rest.
+
+    **The loop does not build the chain**, and that is a refusal rather than an
+    omission: S-8.6 requires a symptom, a mechanism, a site and the implicated
+    files, and none of those is something this module measured — they come from
+    screening, from S-3.9's localization, and from the agent. A loop that
+    manufactured them to satisfy a constructor would be inventing precisely the
+    parts of a finding that are hardest to check.
+
+    What it can hand over is the half it does own: which experiments confirmed.
+    """
+    return tuple(
+        step.experiment for step in investigation.steps if step.verdict is Verdict.CONFIRMED
+    )

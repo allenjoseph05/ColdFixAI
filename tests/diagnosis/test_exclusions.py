@@ -49,6 +49,7 @@ def rejected(log: ExperimentLog | None = None, **overrides: object) -> Experimen
     fields: dict[str, object] = {
         "hypothesis": "the database is the bottleneck",
         "primitive": "scaling.volume",
+        "rationale": "queries have not been counted against volume yet",
         "target": "shop.books.list",
         "design": "scaling.volume(scales=[10, 100, 1000]) on shop.books.list",
         "measurement": {"db.query": 7.0},
