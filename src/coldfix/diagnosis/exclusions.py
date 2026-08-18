@@ -164,19 +164,28 @@ class Observed:
 
 
 def _canonical(values: Sequence[Value], *, numeric: bool) -> tuple[Value, ...]:
-    """Deduplicated and ordered, because these render into a cached prompt.
+    """Deduplicated, ordered, and stored as the type the dimension declares.
 
-    S-8.3's finding one module across: two equal conditions assembled in two
-    orders would render as two different prompts, and a prompt that moves is a
-    prefix that stops matching.
+    Ordered because these render into a cached prompt — S-8.3's finding one
+    module across: two equal conditions assembled in two orders would render as
+    two different prompts, and a prompt that moves is a prefix that stops
+    matching.
+
+    **Numeric values are converted to `float` rather than kept as written**, which
+    S-8.6 found by serializing one: `scales=[10, 100]` stores Python `int`s under
+    a field annotated `str | float`, and the chain that carries an exclusion into
+    a pull request then serializes them through a union that does not describe
+    them. A stored type that disagrees with its annotation is a golden file
+    waiting to move.
     """
     unique = set(values)
     if numeric:
-        return tuple(sorted(unique, key=float))
+        return tuple(sorted((float(value) for value in unique), key=float))
     return tuple(sorted(unique, key=str))
 
 
 def _render(value: Value) -> str:
+    """Whole numbers without their decimal point, so a scale reads as a scale."""
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return str(value)
