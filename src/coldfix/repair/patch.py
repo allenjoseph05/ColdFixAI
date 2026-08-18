@@ -55,6 +55,7 @@ from coldfix.diagnosis.chain import EvidenceChain
 from coldfix.diagnosis.replies import read_object
 from coldfix.llm.client import ModelClient
 from coldfix.repair.mustfail import Falsified
+from coldfix.repair.sessions import refuse_foreign_session
 from coldfix.sandbox.modes import CandidateSession
 from coldfix.sandbox.patching import touched_paths
 
@@ -305,6 +306,7 @@ def generate(  # noqa: PLR0913 - the chain, the proof, the prior attempts and th
         PatchError: no usable patch came back, or it reached outside the chain.
         BudgetExhaustedError: this finding's repair attempts are spent.
     """
+    refuse_foreign_session(session, _SYSTEM, PatchError)
     step = Step(
         step_type=StepType.PATCH,
         phase=Phase.REPAIR,
