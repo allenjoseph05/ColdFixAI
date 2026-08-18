@@ -44,12 +44,12 @@ of why the existing experiments missed it is not an objection anybody can act on
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from coldfix.audit.invocation import AuditError, invoke
 from coldfix.cost.session import Session, StepOutcome
-from coldfix.diagnosis.log import ExperimentLog
+from coldfix.diagnosis.log import Experiment, ExperimentLog
 from coldfix.diagnosis.replies import read_object
 from coldfix.llm.client import ModelClient
 
@@ -122,16 +122,21 @@ class AlternativeAudit:
         return self.alternative.describe()
 
 
-def measured_pairs(log: ExperimentLog) -> Mapping[str, set[float]]:
+def measured_pairs(experiments: Sequence[Experiment]) -> Mapping[str, set[float]]:
     """Every value each metric took, across every experiment.
 
     A set per metric rather than one value, because the same metric legitimately
     differs between experiments — `db.query` is 7 in the sweep that ruled the
     database out and 1004 in the ablation that found the cause. Collapsing them
     would make one of the two real numbers look fabricated.
+
+    Takes the experiments rather than the log so that S-10.1 can ask the same
+    question of an `EvidenceChain`, whose experiments live inside its
+    localization links and its exclusions. One loop, two artifacts — the
+    alternative was a second copy differing only in how it reached the records.
     """
     values: dict[str, set[float]] = {}
-    for experiment in log.experiments:
+    for experiment in experiments:
         for name, value in experiment.measurement.items():
             values.setdefault(name, set()).add(float(value))
     return values
@@ -149,7 +154,7 @@ def check_against_log(cites: Mapping[str, object], log: ExperimentLog) -> str | 
             "with what was observed rather than merely with what was expected"
         )
 
-    recorded = measured_pairs(log)
+    recorded = measured_pairs(log.experiments)
     problems: list[str] = []
     for name in sorted(cites):
         quoted = cites[name]
