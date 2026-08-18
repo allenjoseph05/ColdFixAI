@@ -46,10 +46,10 @@ from coldfix.repair.patch import (
     MAX_OUTPUT_TOKENS,
     SURGEON_TEMPERATURE,
     Applied,
+    Attempt,
     Patch,
     PatchError,
     apply,
-    attempts_differ,
     check_scope,
     generate,
     parse,
@@ -521,12 +521,18 @@ def test_prior_attempts_are_shown_so_a_retry_can_differ() -> None:
     """S-10.5 owns the retry discipline; this makes the context available."""
     session = a_session()
     chain = a_chain()
-    prior = [a_patch(approach="add an lru_cache on the author lookup")]
+    prior = [
+        Attempt(
+            patch=a_patch(approach="add an lru_cache on the author lookup"),
+            failure="the cache made the second run fast and the first still slow",
+        )
+    ]
     brief = render_brief(chain, a_falsified())
     attempts = patch_module._render_prior(prior)
     question = f"{brief}\n\n{attempts}{patch_module.QUESTION}"
 
     assert "add an lru_cache" in question
+    assert "the second run fast and the first still slow" in question
     assert "must differ in approach, not only in wording" in question
 
     client = ReplayingClient([recorded(session, question, a_reply())])
@@ -552,26 +558,26 @@ def test_the_first_attempt_runs_at_the_documented_temperature() -> None:
 # ======================= what S-10.5 will build on
 
 
-def test_two_identical_diffs_do_not_count_as_differing_attempts() -> None:
-    """F12: *the agent writes its own `approach` label and can rename the same
-    idea.* Comparing diffs is the structural version — and this is deliberately
-    the crudest one, because S-10.5 owns the real check and a similarity
-    threshold invented here would be a number with no evidence behind it."""
-    first = a_patch(approach="prefetch the authors")
-    renamed = a_patch(approach="batch-load the author relation")
+def test_prior_attempts_carry_their_failure_reasons() -> None:
+    """**S-10.5 corrected this story.** The first draft showed retries only the
+    previous `approach` strings — precisely the self-judged label F12 says the
+    agent can rename — so the context meant to make the next attempt different
+    consisted entirely of the thing that cannot be trusted to differ.
 
-    assert not attempts_differ(renamed, [first])
-    assert attempts_differ(a_patch(diff=a_diff(IMPLICATED)), [first])
+    `03-agents.md` §5.1 asks for *prior attempts **with failure reasons***.
+    """
+    attempt = Attempt(patch=a_patch(), failure="the guard on rows regressed to 4000")
+    rendered = patch_module._render_prior([attempt])
+
+    assert "the guard on rows regressed to 4000" in rendered
+    assert "prefetch the authors" in rendered
 
 
-def test_the_approach_string_is_context_rather_than_evidence() -> None:
-    """The two patches above differ in every word of `approach` and not at all in
-    what they do. A check reading the label would call them different."""
-    first = a_patch(approach="prefetch the authors")
-    renamed = a_patch(approach="batch-load the author relation")
-
-    assert first.approach != renamed.approach
-    assert first.diff == renamed.diff
+def test_an_attempt_with_no_failure_reason_is_refused() -> None:
+    """An empty reason leaves only the approach label, which is the field that
+    can be renamed without changing anything."""
+    with pytest.raises(PatchError, match="no failure reason"):
+        Attempt(patch=a_patch(), failure="   ")
 
 
 def test_attempts_are_summarized_by_file() -> None:

@@ -126,6 +126,34 @@ class Patch(BaseModel):
         return f"PATCH — {self.approach}\n  touches: {listed}\n  because: {self.rationale}"
 
 
+@dataclass(frozen=True)
+class Attempt:
+    """A patch that was tried, and why it did not work.
+
+    **The failure is the half worth carrying.** S-10.4 first showed retries only
+    the previous `approach` strings, which is precisely the self-judged label F12
+    says the agent can rename — so the context that was supposed to make the next
+    attempt different consisted entirely of the thing that cannot be trusted to
+    be different. `03-agents.md` §5.1 asks for *prior attempts **with failure
+    reasons***, and this is that field.
+    """
+
+    patch: Patch
+    failure: str
+
+    def __post_init__(self) -> None:
+        if not self.failure.strip():
+            message = (
+                "an attempt recorded with no failure reason gives the next one nothing to "
+                "avoid. §5.1 asks for prior attempts *with failure reasons*, and an empty one "
+                "leaves only the approach label, which F12 says can be renamed"
+            )
+            raise PatchError(message)
+
+    def describe(self) -> str:
+        return f"{self.patch.approach} — failed because {self.failure}"
+
+
 def scope_of(chain: EvidenceChain) -> frozenset[str]:
     """The files this finding's evidence implicates. AC 1.
 
@@ -253,7 +281,7 @@ def generate(  # noqa: PLR0913 - the chain, the proof, the prior attempts and th
     falsified: Falsified,
     measured_prefix_tokens: int,
     measured_prompt_tokens: int,
-    prior: Sequence[Patch] = (),
+    prior: Sequence[Attempt] = (),
     temperature: float = SURGEON_TEMPERATURE,
     finding_id: str | None = None,
 ) -> StepOutcome[Patch]:
@@ -264,11 +292,11 @@ def generate(  # noqa: PLR0913 - the chain, the proof, the prior attempts and th
     caller who skipped the gate has nothing to pass, which is `03-agents.md`
     §5.3's mandatory ordering expressed as a signature rather than as a list.
 
-    `prior` carries earlier attempts so the model can differ from them. S-10.5
-    owns the retry discipline and the structural check that they *did* differ;
-    this only makes the context available, and `temperature` is a parameter for
-    the same reason — §5.1 raises it to 0.6 on retries and that story decides
-    when.
+    `prior` carries earlier attempts **with their failure reasons** so the model
+    can differ from them. S-10.5 owns the retry discipline and the structural
+    check that they *did* differ; this only makes the context available, and
+    `temperature` is a parameter for the same reason — §5.1 raises it to 0.6 on
+    retries and that story decides when.
 
     **Multi-file diffs are ordinary** (AC 2): the scope is a set, and a patch
     touching the site plus two implicated files is in scope by construction.
@@ -319,11 +347,19 @@ def generate(  # noqa: PLR0913 - the chain, the proof, the prior attempts and th
     )
 
 
-def _render_prior(prior: Sequence[Patch]) -> str:
+def _render_prior(prior: Sequence[Attempt]) -> str:
+    """Earlier attempts and **why each failed**.
+
+    The failure is what makes this context worth its tokens. A list of approach
+    labels alone tells the model what it called things, not what went wrong — and
+    F12's finding is that the label is the one part it can change freely while
+    changing nothing else. `03-agents.md` §5.1 asks for *prior attempts **with
+    failure reasons***; the first draft of this function carried only the labels.
+    """
     if not prior:
         return ""
     lines = ["ATTEMPTS ALREADY MADE — yours must differ in approach, not only in wording:"]
-    lines.extend(f"  {index + 1}. {item.approach}" for index, item in enumerate(prior))
+    lines.extend(f"  {index + 1}. {item.describe()}" for index, item in enumerate(prior))
     return "\n".join(lines) + "\n\n"
 
 
@@ -363,20 +399,6 @@ def apply(patch: Patch, chain: EvidenceChain, session: CandidateSession) -> Appl
     if objection is not None:
         raise PatchError(objection)
     return Applied(patch=patch, written=session.apply_patch(patch.diff))
-
-
-def attempts_differ(latest: Patch, prior: Sequence[Patch]) -> bool:
-    """Whether this attempt is more than a rewording of an earlier one.
-
-    Present because S-10.5 needs it and because F12's finding is that the
-    agent's own `approach` string cannot answer it: *the agent writes its own
-    approach label and can rename the same idea.* Comparing the diffs is the
-    structural version, and it is deliberately the crudest possible one here —
-    byte equality — because **S-10.5 owns the real check** (same lines, similar
-    edit shape) and inventing a similarity threshold this story has no evidence
-    for would be the guess S-9.4 refuses to make.
-    """
-    return all(item.diff.strip() != latest.diff.strip() for item in prior)
 
 
 def summarize(patches: Sequence[Patch]) -> Mapping[str, int]:
