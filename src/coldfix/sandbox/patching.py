@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import re
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
@@ -287,6 +288,40 @@ def hunk_lines(diff: str) -> tuple[tuple[str, str], ...]:
             remaining_new = int(hunk.group(4) or 1)
 
     return tuple(lines)
+
+
+def hunk_ranges(diff: str) -> Mapping[str, frozenset[int]]:
+    """Which **original-side** line numbers each file's hunks cover.
+
+    The third sibling of `touched_paths` and `hunk_lines`, and it exists because
+    S-10.5 has to answer *did this attempt change the same lines as the last
+    one*. Original-side rather than new-side: two attempts that both rewrite
+    lines 41-52 are working on the same code even though one added three lines
+    and the other removed two, so the numbering they have in common is the one
+    they started from.
+
+    Files with a hunk header but no path — a malformed diff — are dropped rather
+    than filed under a guess. Over-collecting here would make two unrelated
+    attempts look like they touched the same place, which is the direction that
+    rejects honest work.
+    """
+    ranges: dict[str, set[int]] = {}
+    current: str | None = None
+
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            current = _clean(line[4:], strips_ab=True)
+            continue
+
+        hunk = _HUNK_HEADER.match(line)
+        if hunk is None or current is None:
+            continue
+
+        start = int(hunk.group(1))
+        count = int(hunk.group(2) or 1)
+        ranges.setdefault(current, set()).update(range(start, start + max(count, 1)))
+
+    return {path: frozenset(lines) for path, lines in ranges.items()}
 
 
 def audit(diff: str, *, policy: PatchPolicy, worktree: Path) -> frozenset[str]:
