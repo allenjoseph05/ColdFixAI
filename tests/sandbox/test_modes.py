@@ -129,6 +129,25 @@ def test_a_diagnostic_session_has_no_operation_that_returns_a_diff() -> None:
 
     assert surface == {"mode", "worktree", "closed", "run", "close"}
     assert "diff" not in surface
+    # **And no reader either.** Epic 11's composition check found that nothing
+    # implements §6.2's `read_file`, and the obvious place to put it was
+    # `Session` — where a diagnostic session would inherit it. A diagnostic run
+    # may execute any command, so it may *write* any file: give it a way to read
+    # one back and it can emit a diff to disk and hand it out, defeating ADR 004
+    # through a reader rather than a writer.
+    assert "sources" not in surface
+    assert "original_of" not in surface
+
+
+def test_asking_a_diagnostic_session_for_source_fails(workbench: Workbench) -> None:
+    """The reader is absent from this type, not guarded on it — S-2.3's rule
+    applied to the capability Epic 11 found missing."""
+    with workbench.open("HEAD", mode=ExecutionMode.DIAGNOSTIC) as session:
+        assert not hasattr(session, "sources")
+        assert not hasattr(session, "original_of")
+
+        with pytest.raises(AttributeError):
+            session.sources()  # type: ignore[attr-defined]
 
 
 def test_asking_a_diagnostic_session_for_a_diff_fails(workbench: Workbench) -> None:
@@ -144,7 +163,17 @@ def test_a_candidate_session_is_the_only_thing_that_produces_a_diff(
 ) -> None:
     surface = {name for name in dir(CandidateSession) if not name.startswith("_")}
 
-    assert surface == {"mode", "worktree", "closed", "run", "close", "diff", "apply_patch"}
+    assert surface == {
+        "mode",
+        "worktree",
+        "closed",
+        "run",
+        "close",
+        "diff",
+        "apply_patch",
+        "sources",
+        "original_of",
+    }
 
     with workbench.open("HEAD", mode=ExecutionMode.CANDIDATE) as session:
         # The narrowing a type checker needs is the same fact the test asserts:
@@ -356,3 +385,87 @@ def test_the_two_modes_run_in_distinct_containers_over_distinct_mounts(
 
     assert names[0] != names[1]
     assert mounts[0] != mounts[1]
+
+
+# ============ reading source, which nothing could do until Epic 11 composed
+
+
+def test_a_candidate_session_returns_the_source_it_holds(workbench: Workbench) -> None:
+    """`03-agents.md` §6.2's `read_file(path)`, which nothing implemented until the
+    composition check went looking for it. S-11.1's `Candidate` and S-11.5's
+    `ScopeAudit` both need source and had to be handed theirs by a caller with no
+    way to get it."""
+    with workbench.open("HEAD", mode=ExecutionMode.CANDIDATE) as session:
+        assert isinstance(session, CandidateSession)
+        found = session.sources()
+
+        assert found, "the fixture repository has Python in it"
+        assert all(name.endswith(".py") for name in found)
+        assert all("\\" not in name for name in found), "worktree-relative, / separated"
+        for name, text in found.items():
+            assert (session.worktree.path / name).read_text(encoding="utf-8") == text
+
+
+def test_the_source_returned_is_the_patched_revision(workbench: Workbench) -> None:
+    """The working tree, not the commit — the patch lives in the first and not the
+    second, and an audit handed the committed text would attack the wrong code."""
+    with workbench.open("HEAD", mode=ExecutionMode.CANDIDATE) as session:
+        assert isinstance(session, CandidateSession)
+        (session.worktree.path / "added.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+        assert session.sources()["added.py"] == "VALUE = 1\n"
+
+
+def test_the_original_comes_from_the_commit_the_worktree_was_made_at(
+    workbench: Workbench,
+) -> None:
+    """`sources` returns the patch and `original_of` returns what it replaced, so a
+    `Candidate` can carry both revisions of every file it touches."""
+    with workbench.open("HEAD", mode=ExecutionMode.CANDIDATE) as session:
+        assert isinstance(session, CandidateSession)
+        first = next(iter(session.sources()))
+        committed = session.original_of([first])[first]
+
+        (session.worktree.path / first).write_text("CHANGED = True\n", encoding="utf-8")
+
+        assert session.sources()[first] == "CHANGED = True\n"
+        assert session.original_of([first])[first] == committed
+        assert committed != "CHANGED = True\n"
+
+
+def test_a_file_the_patch_added_has_no_original(workbench: Workbench) -> None:
+    """Absent rather than raising. A patch that adds a file has no original for it,
+    and that is a fact about the patch rather than a failure to read."""
+    with workbench.open("HEAD", mode=ExecutionMode.CANDIDATE) as session:
+        assert isinstance(session, CandidateSession)
+        (session.worktree.path / "brand_new.py").write_text("X = 1\n", encoding="utf-8")
+
+        assert "brand_new.py" in session.sources()
+        assert session.original_of(["brand_new.py"]) == {}
+
+
+def test_an_unreadable_file_is_skipped_rather_than_raising(workbench: Workbench) -> None:
+    """S-3.9's best-effort reading. A file this cannot decode weakens an audit and an
+    exception loses the whole of it; a caller that needs to know what it did not get
+    compares against the diff's own paths."""
+    with workbench.open("HEAD", mode=ExecutionMode.CANDIDATE) as session:
+        assert isinstance(session, CandidateSession)
+        (session.worktree.path / "binary.py").write_bytes(b"\xff\xfe\x00not utf-8")
+        (session.worktree.path / "huge.py").write_text("#" * 4096, encoding="utf-8")
+
+        found = session.sources(max_bytes=1024)
+
+        assert "binary.py" not in found, "not valid UTF-8"
+        assert "huge.py" not in found, "past the byte bound"
+        assert found, "and the rest still came back"
+
+
+def test_a_closed_session_reads_nothing(workbench: Workbench) -> None:
+    session = workbench.open("HEAD", mode=ExecutionMode.CANDIDATE)
+    assert isinstance(session, CandidateSession)
+    session.close()
+
+    with pytest.raises(SessionClosedError):
+        session.sources()
+    with pytest.raises(SessionClosedError):
+        session.original_of(["anything.py"])

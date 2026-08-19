@@ -42,7 +42,7 @@ from coldfix.audit.invocation import AUDIT_TEMPERATURE
 from coldfix.audit.patchaudit import SYSTEM as PATCH_SYSTEM
 from coldfix.audit.patchaudit import Candidate, candidate_from, patch_audit_session
 from coldfix.audit.patchcompose import (
-    MISSING_READ_FILE,
+    SOURCE_IS_THE_CANDIDATES,
     Audited,
     CompositionError,
     Measurements,
@@ -640,18 +640,28 @@ def test_the_composed_round_keeps_a_regression_test(tmp_path: Path) -> None:
 # ============ defect 4: nothing can read a file out of a worktree
 
 
-def test_the_missing_read_file_tool_is_named_rather_than_worked_around(
-    tmp_path: Path,
-) -> None:
-    """§6.2 lists `read_file(path)` among the Adversary's tools and nothing
-    implements it. `Candidate` and `ScopeAudit` both need source, so this
-    composition takes it as a parameter and says why."""
-    assert "read_file" in MISSING_READ_FILE
-    assert MISSING_READ_FILE in run(tmp_path).describe()
+def test_the_reader_is_the_candidates_and_never_the_diagnostics(tmp_path: Path) -> None:
+    """**§6.2's `read_file` had no implementation and this composition found it.**
+    It now exists on `CandidateSession` and must never exist on the other: a
+    diagnostic session may run any command, so it may write any file, and a reader
+    would let a diagnostic run emit a diff to disk and hand it out — ADR 004
+    defeated through a reader rather than a writer."""
+    assert hasattr(CandidateSession, "sources")
+    assert hasattr(CandidateSession, "original_of")
+    assert not hasattr(DiagnosticSession, "sources")
+    assert not hasattr(DiagnosticSession, "original_of")
 
-    for session in (DiagnosticSession, CandidateSession):
-        assert not hasattr(session, "read_file")
-        assert not hasattr(session, "source")
+    assert SOURCE_IS_THE_CANDIDATES in run(tmp_path).describe()
+
+
+def test_a_subject_reads_both_revisions_off_the_candidate_worktree(tmp_path: Path) -> None:
+    """`Subject.of` is the gap closed: until `CandidateSession.sources` existed,
+    `audit_patch` could only be called by something that already held these two
+    mappings, and nothing did."""
+    parameters = inspect.signature(Subject.of).parameters
+    assert set(parameters) >= {"diff", "diagnostic", "candidate", "suite_command", "probe"}
+    assert "sources" not in parameters, "read, not supplied"
+    assert "original_sources" not in parameters
 
 
 def test_the_sources_are_the_whole_repository_not_only_the_touched_files(

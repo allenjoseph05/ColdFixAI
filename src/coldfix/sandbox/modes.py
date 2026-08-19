@@ -43,7 +43,7 @@ runtime comparison instead of a difference between two types.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -57,6 +57,14 @@ from coldfix.sandbox.runner import DEFAULT_LIMITS, InternalNetwork, ResourceLimi
 from coldfix.sandbox.worktrees import Repository, Worktree
 
 _GIT_TIMEOUT_SECONDS = 300.0
+
+MAXIMUM_SOURCE_BYTES = 1024 * 1024
+"""How large a file may be and still be handed to an audit.
+
+A megabyte of Python is generated, vendored or a data file wearing a `.py`
+suffix, and none of the three is a place a patch's callers live. The bound is
+on the reader rather than on the caller because the caller is an agent's
+context window, and one file can fill it."""
 
 
 class ExecutionMode(StrEnum):
@@ -225,6 +233,83 @@ class CandidateSession(Session):
         if self._closed:
             raise SessionClosedError(self.mode)
         return _apply_patch(diff, worktree=self._worktree.path, policy=self._policy)
+
+    def sources(
+        self, *, suffix: str = ".py", max_bytes: int = MAXIMUM_SOURCE_BYTES
+    ) -> dict[str, str]:
+        """Every readable source file in this worktree, as it now stands.
+
+        `03-agents.md` §6.2 lists `read_file(path)` among the Adversary's tools
+        and nothing implemented it, so S-11.1's `Candidate` and S-11.5's
+        `ScopeAudit` — both of which need source — had to be handed theirs by a
+        caller with no way to obtain it. Epic 11's composition check named that
+        gap; this closes it.
+
+        **It is on this class and not on `Session`, and that is the whole design.**
+        A `DiagnosticSession` may run any command, which means it may *write* any
+        file. Give it a way to read one back and a diagnostic run can emit a diff
+        to disk and hand it out — ADR 004's *an ablation run cannot produce a
+        patch* defeated through a reader rather than through a writer. S-2.3's
+        rule is that the operation is **absent**, not guarded, so the absence is
+        kept and only the session that is already allowed to return a diff gains
+        the ability to return source.
+
+        Read on the *host*, like `diff`, because the bind mount carries the
+        working files and not the `.git` metadata — and because a file read
+        through the container would be a file the container could have arranged.
+
+        Paths are worktree-relative and `/`-separated, matching what
+        `touched_paths` produces from a diff, so a caller can look one up by the
+        name the patch used. Files above `max_bytes`, files that are not valid
+        UTF-8, and anything under `.git` are skipped rather than raising: S-3.9's
+        best-effort reading, and a caller that needs to know what it did not get
+        compares against the diff's own paths.
+        """
+        if self._closed:
+            raise SessionClosedError(self.mode)
+
+        root = self._worktree.path
+        found: dict[str, str] = {}
+        for path in sorted(root.rglob(f"*{suffix}")):
+            if not path.is_file() or ".git" in path.relative_to(root).parts:
+                continue
+            try:
+                if path.stat().st_size > max_bytes:
+                    continue
+                found[path.relative_to(root).as_posix()] = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+        return found
+
+    def original_of(self, paths: Iterable[str]) -> dict[str, str]:
+        """What those paths held at the commit this worktree was created from.
+
+        The *other* half of what a `Candidate` needs: `sources` returns the
+        patched revision because the patch is in the working tree, and this
+        returns the original because `git show HEAD:path` reads the commit, which
+        no applied patch has touched.
+
+        Reading the original from **this** worktree rather than from a second
+        session is deliberate. The alternative is a diagnostic session at the same
+        revision, which would need `sources` — and giving a diagnostic session a
+        reader is exactly what the note on `sources` refuses.
+
+        A path that does not exist at `HEAD` is absent from the result rather than
+        raising. A patch that adds a file has no original for it, and that is a
+        fact about the patch rather than a failure to read.
+        """
+        if self._closed:
+            raise SessionClosedError(self.mode)
+
+        found: dict[str, str] = {}
+        for path in sorted(set(paths)):
+            result = execute(
+                ["git", "-C", str(self._worktree.path), "show", f"HEAD:{path}"],
+                timeout=_GIT_TIMEOUT_SECONDS,
+            )
+            if result.exit_code == 0:
+                found[path] = result.stdout
+        return found
 
 
 @dataclass(frozen=True)
