@@ -33,11 +33,18 @@ the artifact AC 3 exists for was unreachable. The strengthened test is re-gated
 against the diagnostic worktree and re-verified against the candidate before it is
 kept.
 
-**Nothing in this project can read a file out of a worktree.** `03-agents.md` §6.2
-lists `read_file(path)` among the Adversary's tools; no session has it, and
-`Candidate` and `ScopeAudit` both need source. That is a gap this module cannot
-close from inside — it takes the sources as parameters and names the absence
-rather than pretending a composition can assemble them.
+**Nothing in this project could read a file out of a worktree**, and this
+composition is what found that. `03-agents.md` §6.2 lists `read_file(path)` among
+the Adversary's tools; no session had it, and `Candidate` and `ScopeAudit` both
+need source. `CandidateSession.sources` and `original_of` now close it, and
+`Subject.of` assembles a subject without a caller having to supply either.
+
+**The reader is on the candidate session and must never be on the diagnostic one.**
+A diagnostic session may run any command, so it may write any file; give it a way
+to read one back and a diagnostic run can emit a diff to disk and hand it out —
+ADR 004's *an ablation run cannot produce a patch* defeated through a reader
+rather than through a writer. S-2.3's rule is that the operation is absent, not
+guarded, and it stays absent.
 """
 
 from __future__ import annotations
@@ -71,13 +78,14 @@ from coldfix.repair.mustfail import Falsified, NotFalsified, run_gate
 from coldfix.repair.patch import Patch
 from coldfix.repair.testaudit import TestAudit
 from coldfix.sandbox.modes import CandidateSession, DiagnosticSession
+from coldfix.sandbox.patching import touched_paths
 
-MISSING_READ_FILE = (
-    "`03-agents.md` §6.2 lists `read_file(path)` among the Adversary's tools and nothing "
-    "in this project implements it: no session can return the contents of a file. Both "
-    "`Candidate` and `ScopeAudit` need source, so a caller must supply it. Until a worktree "
-    "can be read, an orchestrator is the only thing that can assemble these arguments — "
-    "which is a real dependency of Epic 12 on a capability nobody has built."
+SOURCE_IS_THE_CANDIDATES = (
+    "Source comes from the candidate worktree and from nowhere else. A `DiagnosticSession` "
+    "has no reader and must not get one: it may run any command, so it may write any file, "
+    "and a reader would let a diagnostic run emit a diff to disk and hand it out — ADR 004 "
+    "defeated through a reader rather than a writer. The original revision is read from the "
+    "same worktree's `HEAD`, which no applied patch has touched."
 )
 
 
@@ -93,11 +101,42 @@ class Subject:
     facts, and threading eleven arguments through `audit_patch` would put the
     order of them in every caller.
 
-    **`sources` and `original_sources` are parameters because nothing can read a
-    worktree** — see `MISSING_READ_FILE`. They are the patched and original
-    revisions of the whole repository, not only the touched files: S-11.5 looks
-    for callers, and callers are by definition somewhere else.
+    `sources` is the **patched** revision of the whole repository, not only the
+    touched files: S-11.5 looks for callers, and callers are by definition
+    somewhere else. `original_sources` is what the touched files held before.
+    `Subject.of` reads both off the candidate worktree; the fields stay
+    constructible by hand so a test can supply source without a git checkout.
     """
+
+    @classmethod
+    def of(
+        cls,
+        diff: str,
+        *,
+        diagnostic: DiagnosticSession,
+        candidate: CandidateSession,
+        suite_command: Sequence[str],
+        probe: Probe,
+    ) -> Subject:
+        """Read both revisions off the candidate worktree. **The gap, closed.**
+
+        Until `CandidateSession.sources` existed nothing could produce these two
+        mappings, so `audit_patch` could only be called by something that already
+        had them — and nothing did.
+
+        The original is read from the same worktree's `HEAD` rather than from a
+        second session at the base revision, because that session would be a
+        diagnostic one and giving it a reader is the thing the module docstring
+        refuses.
+        """
+        return cls(
+            diagnostic=diagnostic,
+            candidate=candidate,
+            sources=candidate.sources(),
+            original_sources=candidate.original_of(touched_paths(diff)),
+            suite_command=suite_command,
+            probe=probe,
+        )
 
     diagnostic: DiagnosticSession
     candidate: CandidateSession
@@ -162,7 +201,7 @@ class Audited:
             lines.extend(self.regression.describe().splitlines())
         else:
             lines.append("  No permanent regression test was kept from this round.")
-        lines.append(f"  {MISSING_READ_FILE}")
+        lines.append(f"  {SOURCE_IS_THE_CANDIDATES}")
         return "\n".join(lines)
 
 
@@ -367,7 +406,7 @@ def unattempted(reason: str) -> tuple[AttackResult, ...]:
 
 
 __all__ = [
-    "MISSING_READ_FILE",
+    "SOURCE_IS_THE_CANDIDATES",
     "Audited",
     "BudgetExhaustedError",
     "CompositionError",
