@@ -177,6 +177,17 @@ class CheckpointedState(BaseModel):
     verdict: str | None = None
     """E9's finding-audit outcome. Left a string because E9 names the values."""
 
+    route: str | None = None
+    """Where the last node decided the run should go next. Added at S-12.1.
+
+    **The decision is made in the node and read at the edge**, and this channel is
+    what carries it between them. S-9.8's `route` and S-11.7's `route` both take a
+    `Budget` — the caps live there and cannot be reconstructed from `budget`, which
+    is a projection — and a LangGraph conditional edge sees only state. An edge
+    that re-derived the decision would be a second answer to a question those two
+    stories already answer, and the two would disagree the first time a cap moved.
+    """
+
     budget: Mapping[str, JsonValue] = Field(default_factory=dict)
     """Steps and euros remaining per phase — a projection of S-5.4's `Budget`,
     which owns the caps themselves and cannot be reconstructed from here."""
