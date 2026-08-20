@@ -14,6 +14,16 @@ dependencies = [
     # search be guided by measured cost instead of by coverage. ADR 046 records
     # why no AFL-lineage engine is wrapped instead.
     "hypothesis>=6.100",
+    # **Runtime, not dev, since S-12.1.** `orchestrator/graph.py` imports
+    # `langgraph.graph`, so a wheel that did not carry it would fail at import.
+    # It sat in the dev group until S-12.2 went looking, alongside a comment
+    # citing it as an example of something `src/` does not import.
+    "langgraph>=1.2.10",
+    # The checkpointers ship separately: `langgraph` alone provides only the
+    # in-memory saver, which persists nothing across a process. S-12.2's first
+    # criterion names both backends.
+    "langgraph-checkpoint-postgres>=2.0",
+    "langgraph-checkpoint-sqlite>=2.0",
     "psycopg[binary]>=3.2",
     "pydantic>=2.9",
 ]
@@ -29,9 +39,9 @@ packages = ["src/coldfix"]
 dev = [
     # S-7.3 resolves a route table by asking the framework, because a URLconf
     # built in a loop or by a DRF router has no routes to read out of a file.
-    # A *dev* dependency for the same reason `langgraph` is one: nothing under
-    # `src/` imports Django — the introspection program is source text run in
-    # the subject's own interpreter — and the alternative to installing it is
+    # A *dev* dependency because nothing under `src/` imports Django — the
+    # introspection program is source text run in the subject's own
+    # interpreter — and the alternative to installing it is
     # testing route resolution against a fake, which would assert only what the
     # fake was written to believe.
     "django>=5.0",
@@ -47,7 +57,6 @@ dev = [
     # imports it, the exercising program is source text, and the alternative is a
     # fake factory that seeds exactly what this project expects a factory to seed.
     "factory-boy>=3.3.3",
-    "langgraph>=1.2.10",
     "mypy>=1.13",
     "pytest>=8.3",
     "ruff>=0.8",
