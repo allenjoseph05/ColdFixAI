@@ -13,6 +13,20 @@ answer. `resume` and `start` are two names for that one difference, because the
 mistake is invisible: both return a final state, and the wrong one is only
 detectable by the bill.
 
+**Checkpoints are written asynchronously unless you say otherwise, and a hard
+kill loses them.** LangGraph submits each write to a background executor and does
+not wait; `os._exit` takes the process before those threads run, so the default
+leaves *one* checkpoint holding nothing but `__start__` however far the run got.
+`durability="sync"` is what makes AC 1's *resumes from the last checkpoint with
+full state* true rather than vacuous — measured, killing at five successive nodes
+goes from one surviving checkpoint to two, three, four, five and six.
+
+The failure this hid is the nastiest kind: with nothing durable, a resume restarts
+from the beginning and **reaches the same final answer**, so every test of AC 1 and
+AC 3 passes while the crash saved nothing. `DURABILITY` is a module constant rather
+than an argument at each call site, because a run started durable and resumed
+asynchronously would be half-protected in a way nothing reports.
+
 **A checkpoint is written after a node, so a crash inside one re-runs it.** That
 is at-least-once execution and it is not a defect to be fixed here — it is the
 property every node has to be written against. The bite is on the append-only
@@ -40,6 +54,14 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from coldfix.orchestrator.checkpointing import thread
 from coldfix.state.checkpoint import CheckpointedState
+
+DURABILITY = "sync"
+"""Write each checkpoint before the next node starts.
+
+LangGraph's default submits the write to a background executor and carries on,
+which is faster and loses everything to a hard kill. A campaign that runs for
+hours and is expected to survive a reboot cannot take that trade, and the cost
+is one synchronous write per node against a budget of 40 experiments."""
 
 
 class ResumeError(Exception):
@@ -97,7 +119,13 @@ def start(
     differ by one argument and confusing them produces a run that looks right and
     costs twice.
     """
-    return dict(graph.invoke(state if state is not None else CheckpointedState(), thread(run_id)))
+    return dict(
+        graph.invoke(
+            state if state is not None else CheckpointedState(),
+            thread(run_id),
+            durability=DURABILITY,
+        )
+    )
 
 
 def resume(
@@ -124,7 +152,7 @@ def resume(
             "that it already existed — use `start` if that is what you meant"
         )
         raise ResumeError(message)
-    return dict(graph.invoke(None, thread(run_id)))
+    return dict(graph.invoke(None, thread(run_id), durability=DURABILITY))
 
 
 def resumed_config(run_id: str) -> RunnableConfig:
