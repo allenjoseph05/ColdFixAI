@@ -23,9 +23,8 @@ graceful shutdown wearing the word crash, and a test that proved nothing about
 what a reboot leaves behind.
 
 `os._exit` skips all of it, so what the checkpoint file holds afterwards is what a
-real kill would have left. That also answers a question nobody had asked: the
-SQLite checkpointer **commits per write**, because the state survives a process
-that never closed the connection.
+real kill would have left — and what it held, at first, was nothing. See the
+correction below.
 
 The three nodes are chosen as three different *kinds* of point — after the first
 write, mid-investigation, and inside the repair cycle — and a test asserts the
@@ -72,6 +71,45 @@ the test is what would say so.
 *the resumed run produced a different answer* is only actionable with the channel
 named. `ignoring` is empty by default, so each excused channel has to be named —
 a default that excused anything would make the function agree with itself.
+
+## Correction — checkpoints were not durable, and the tests passed anyway
+
+**The first version of this story did not meet AC 1, and its tests could not have
+said so.**
+
+LangGraph submits each checkpoint write to a **background executor** and does not
+wait. `os._exit` takes the process before those threads run, so a kill at any of
+the first four nodes left exactly one checkpoint holding nothing but `__start__` —
+however far the run had got.
+
+`SqliteSaver` was not at fault: its cursor commits in a `finally`. The claim above
+that it *commits per write* was read off S-12.2's test, which closes the connection
+cleanly, and a clean close is not a kill.
+
+**Why every test still passed.** With nothing durable, a resume restarts from the
+beginning and reaches the same final answer. So *resumes with full state* (AC 1)
+and *the same final result as an uninterrupted run* (AC 3) both held — vacuously.
+The only test that could see the difference was the one asserting the three kills
+land at progressively different depths, and it was flaky rather than failing:
+sometimes the last node's write raced through, giving `[1, 1, 2]`, and sometimes it
+did not, giving `[1, 1, 1]`.
+
+**The fix is `durability="sync"`**, applied in `start` and `resume` as a module
+constant rather than per call site — a run started durable and resumed
+asynchronously would be half-protected in a way nothing reports. Measured, kills at
+five successive nodes now leave 2, 3, 4, 5 and 6 checkpoints against 9 for a
+completed run.
+
+**The tests were strengthened to be able to fail.** `checkpoints >= 1` is satisfied
+by the empty `__start__` checkpoint, so the assertion is now that a channel the run
+actually wrote survived; and the three depths must be *distinct*, because equal
+counts are exactly what an asynchronous write produces.
+
+A second claim went with it: *a channel absent from a checkpoint has not been
+written* was also an artifact of the async default. With durable writes the initial
+state is checkpointed in full, defaults and all. S-12.2's observation still holds
+for the first checkpoint — the one holding `__start__` — but not for the one a
+resume reads.
 
 ## Consequences
 

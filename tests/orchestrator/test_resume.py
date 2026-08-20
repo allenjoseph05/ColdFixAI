@@ -93,7 +93,15 @@ def test_a_killed_process_leaves_a_resumable_checkpoint(tmp_path: Path, node: st
         progress = progress_of(saver, f"killed-at-{node}")
 
     assert progress.started, f"nothing survived the kill at {node}"
-    assert progress.checkpoints >= 1
+
+    # **Real channels, not just `__start__`.** With LangGraph's default durability
+    # the writes go to a background executor that `os._exit` never lets run, and
+    # exactly one checkpoint survives holding nothing the run produced. That state
+    # still resumes and still reaches the same answer — so a test asserting only
+    # `checkpoints >= 1` passes while the crash saved nothing.
+    written = {name for name in progress.state if not name.startswith(("__", "branch:"))}
+    assert written, f"the kill at {node} left no channel the run had written"
+    assert "workloads" in written
 
 
 def test_the_kill_lands_further_along_the_later_the_node(tmp_path: Path) -> None:
@@ -109,6 +117,10 @@ def test_the_kill_lands_further_along_the_later_the_node(tmp_path: Path) -> None
 
     assert counts == sorted(counts), f"later nodes should get further: {counts}"
     assert counts[0] < counts[-1], "and the first is not the last"
+    assert len(set(counts)) == len(counts), (
+        "three distinct depths. Equal counts would mean the kills are landing in the "
+        "same place, which is what an asynchronous checkpoint write produces"
+    )
 
 
 # ============ AC 1 — resumes with full state
@@ -136,19 +148,33 @@ def test_resuming_a_run_nobody_started_is_refused(tmp_path: Path) -> None:
             resume(graph, saver, "never-ran")
 
 
-def test_a_channel_absent_from_a_checkpoint_is_not_filled_in(tmp_path: Path) -> None:
-    """S-12.2's finding, carried into resume: a channel missing from the last
-    checkpoint has not been written yet, which is not the same as written empty.
-    Supplying a default would hand a resumed run a value it never had."""
+def test_a_node_that_died_contributes_nothing_to_the_checkpoint(tmp_path: Path) -> None:
+    """The ground node writes `project`, and dying inside it means that write never
+    lands — so a resume sees the schema default rather than a half-written value.
+
+    **This test asserted the wrong thing first.** It claimed `project` would be
+    *absent*, which was true only under LangGraph's asynchronous default: with
+    durable writes the initial state is checkpointed in full, defaults and all.
+    S-12.2's observation still holds for the very first checkpoint — the one
+    holding `__start__` — but not for the one a resume reads."""
     store = tmp_path / "run.sqlite"
     run_until(store, "early", "ground")
 
     with for_development(store) as saver:
         progress = progress_of(saver, "early")
 
-    assert "project" not in progress.state, "the ground node died before writing it"
-    assert progress.state.get("project") is None
-    assert "not yet written" not in progress.describe(), "describe reports, it does not explain"
+    assert progress.state["project"] == {}, "the schema default, not the node's write"
+    assert progress.state["project"] != {"adapter": "django"}
+
+
+def test_progress_reports_the_checkpoint_and_adds_nothing(tmp_path: Path) -> None:
+    """`progress_of` reads and does not fill. A default invented here would hand a
+    resumed run a value it never had, and the run would proceed on it."""
+    partial = Progress(run_id="part", checkpoints=1, state={"project": {"adapter": "django"}})
+
+    assert set(partial.state) == {"project"}
+    assert "screening" not in partial.state, "not filled from the schema"
+    assert partial.state.get("experiments") is None
 
 
 def test_progress_reports_what_is_on_disk() -> None:

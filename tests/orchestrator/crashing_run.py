@@ -21,8 +21,9 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from coldfix.orchestrator.checkpointing import for_development, thread
+from coldfix.orchestrator.checkpointing import for_development
 from coldfix.orchestrator.graph import Node, Wiring, assemble
+from coldfix.orchestrator.resume import start
 from coldfix.state.checkpoint import CheckpointedState
 
 FLAGGED: dict[str, Any] = {"shop.books.list": {"growth": "superlinear"}}
@@ -55,7 +56,10 @@ def main() -> int:
     store, run_id, die_at = sys.argv[1], sys.argv[2], sys.argv[3]
     with for_development(store) as saver:
         graph = assemble(build(None if die_at == "-" else die_at), saver)
-        final = graph.invoke(CheckpointedState(), thread(run_id))
+        # Through `start` rather than `invoke`, so this run is as durable as a
+        # real one. Calling `invoke` here would test a configuration nothing
+        # ships with — and the default loses every checkpoint to the kill.
+        final = start(graph, run_id)
     print(json.dumps(dict(final), default=str))
     return 0
 
