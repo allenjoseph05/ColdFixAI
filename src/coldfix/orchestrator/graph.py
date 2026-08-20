@@ -208,7 +208,7 @@ and never straight to repair** — `08-audit.md` F2 is that nobody audits the
 diagnosis, only the patch, and the fix is this node between those two."""
 
 
-def assemble(wiring: Wiring) -> Any:  # noqa: ANN401 - LangGraph's CompiledStateGraph
+def assemble(wiring: Wiring, checkpointer: Any = None) -> Any:  # noqa: ANN401 - LangGraph's
     # is generic over the state schema and its parameters have moved between
     # releases; naming it here would pin this module to one version's spelling of
     # a type nothing in this project introspects.
@@ -218,6 +218,13 @@ def assemble(wiring: Wiring) -> Any:  # noqa: ANN401 - LangGraph's CompiledState
     a write to a channel the state does not have is dropped silently by LangGraph,
     so the check has to be on the way out of every node rather than at any one
     caller.
+
+    **`checkpointer` is a compile-time argument and there is no runtime
+    equivalent.** S-12.2 reached for `with_config(checkpointer=...)` first, which
+    is accepted, changes nothing, and writes no checkpoints — a run that looks
+    persisted and is not. Passing `None` compiles a graph that keeps no history,
+    which is right for a unit test of the shape and wrong for anything that has to
+    resume.
 
     Raises:
         GraphError: a node has no step, or a router names a node that is not in
@@ -243,7 +250,7 @@ def assemble(wiring: Wiring) -> Any:  # noqa: ANN401 - LangGraph's CompiledState
     for source, router in ROUTERS.items():
         graph.add_conditional_edges(source.value, router, _destinations(router))
 
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 def _destinations(router: Callable[[CheckpointedState], str]) -> list[str]:
