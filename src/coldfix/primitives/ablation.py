@@ -228,6 +228,16 @@ class Stub:
         return self.size == _closest_to_median(self.recorded_sizes)
 
 
+def share_metric(metric: str) -> str:
+    """What a share of `metric` is called once it is just a number in a mapping.
+
+    One function so the primitive that computes the share and the assembler that
+    looks for it cannot disagree about its name — the failure that spelling would
+    produce is a finding with no localization and nothing saying why.
+    """
+    return f"{metric}.share_removed"
+
+
 @dataclass(frozen=True)
 class AblationResult:
     """What the workload cost with the component, and what it cost without it."""
@@ -256,6 +266,22 @@ class AblationResult:
         if total == 0:
             return 0.0
         return self.delta(metric) / total
+
+    def reported(self, metric: str) -> tuple[str, float]:
+        """This share, named the way it must be to survive the loop boundary.
+
+        **Added at S-8.11, and the name is the whole point.** `Executor` returns
+        `Mapping[str, float]`, so the only way a share reaches the experiment log
+        is as one more number in that mapping — and a number whose key each
+        caller spells for itself is one the chain assembler cannot find. Epic 8's
+        own fixture already emitted this exact quantity under this exact key
+        before anything in `src/` named it, which is the drift this closes.
+
+        The metric is part of the name because a share is always *of* something:
+        the fraction of wall time a component owned and the fraction of queries
+        it owned are two different findings.
+        """
+        return (share_metric(metric), self.share(metric))
 
     @property
     def cardinality_gap(self) -> float:

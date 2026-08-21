@@ -44,7 +44,7 @@ from dataclasses import dataclass
 
 from coldfix.audit import invocation, patchaudit, testquality
 from coldfix.cost.accounting import Agent, Phase
-from coldfix.diagnosis import design, hypothesis, interpretation
+from coldfix.diagnosis import design, explain, hypothesis, interpretation
 from coldfix.repair import falsification, patch, testaudit
 
 
@@ -61,7 +61,7 @@ class Role:
 
     prompts: tuple[str, ...]
     """Every system prompt this role owns. More than one because an agent has a
-    prompt **per step**, not per role — the Diagnostician has three and the
+    prompt **per step**, not per role — the Diagnostician has four and the
     Adversary has three — and `refuse_shared_session` keys on the prompt, so the
     session boundary is per step rather than per agent."""
 
@@ -123,14 +123,21 @@ ROLES: Mapping[Agent, Role] = {
     ),
     Agent.DIAGNOSTICIAN: Role(
         agent=Agent.DIAGNOSTICIAN,
-        purpose="choose the next experiment from what the last one revealed",
-        prompts=(hypothesis._SYSTEM, design._SYSTEM, interpretation._SYSTEM),
+        purpose=(
+            "choose the next experiment from what the last one revealed, "
+            "and state what they add up to"
+        ),
+        prompts=(hypothesis._SYSTEM, design._SYSTEM, interpretation._SYSTEM, explain._SYSTEM),
         phases=frozenset({Phase.INVESTIGATE}),
         receives=("the workload", "the append-only experiment log", "the primitive registry"),
         notes=(
             "Three prompts because the loop is three steps — propose, design, interpret — and "
             "each is a separate session so a hypothesis cannot be justified by the framing that "
-            "produced it."
+            "produced it. **A fourth was added at S-8.11 and it is not a loop step**: the loop "
+            "runs until something is confirmed, and `explain` is asked once afterwards for the "
+            "mechanism, the site and the implicated files — the half of an evidence chain no "
+            "measurement contains. This index is what caught it, which is what it is for: the "
+            "prompt existed for the length of one test run before anything claimed it."
         ),
     ),
     Agent.SURGEON: Role(
