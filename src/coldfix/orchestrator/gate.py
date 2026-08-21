@@ -1,9 +1,16 @@
-"""What a person is shown before a patch ships, and what stops them being shown less.
+"""What a person is shown at each gate, and what stops them being shown less.
 
-Epic 12, S-12.4. `03-agents.md` §1.5: *`interrupt_before` — human approves on
-Thursday; state resumes intact.* The parking is LangGraph's and S-12.2 made it
-durable; what this module owns is the other two criteria — **what the human sees**
-and the refusal that fires when the state cannot show it.
+Epic 12, S-12.4 and S-12.5. `03-agents.md` §1.5: *`interrupt_before` — human
+approves on Thursday; state resumes intact.* The parking is LangGraph's and
+S-12.2 made it durable; what this module owns is the rest — **what the human
+sees** and the refusal that fires when the state cannot show it.
+
+**Two gates, two questions, two reports.** `pending` answers *is this patch right*
+after everything is paid for; `found` answers *is this worth trying to fix*
+before the Surgeon spends anything, which is `08-audit.md` F16's whole point.
+Neither report carries the other's evidence: a `Finding` has nowhere to put a
+patch because there is not one yet, and a report with an empty patch section
+invites the reader to answer the later question with the earlier one's material.
 
 **There is no trust-level parameter here, and that is the point.** S-12.4 puts the
 gate at trust level 0 and S-13.4's third criterion is that *new projects start at
@@ -131,6 +138,83 @@ class Approval:
         return rows or ["  nothing was measured on either side"]
 
 
+@dataclass(frozen=True)
+class Finding:
+    """What a person is shown **before** any repair budget is spent. S-12.5.
+
+    `08-audit.md` F16: *`interrupt_before=["ship"]` means the human reviews after
+    grounding, screening, investigation, repair and audit are all paid for — if
+    they would have rejected the direction, the whole budget is gone.* This is the
+    same reader, three phases earlier, and the question they are answering is
+    narrower: **not is this patch right, but is this worth trying to fix.**
+
+    So it carries no patch and has nowhere to put one. There is not one yet, and a
+    report with an empty patch section invites the reader to answer the later
+    question with the earlier question's evidence.
+    """
+
+    finding: str
+    chain: EvidenceChain
+    audit: str
+    """S-9.8's `Routing.describe()` — the verdict, where it sends the run, and why
+    that rather than the obvious. `because` is not decoration: two of the five
+    routes are reached from more than one verdict, and a reader who cannot tell
+    those apart cannot act on either."""
+
+    subject: str
+    spends_repair: bool
+    """Whether the route from here reaches the Surgeon. **The premise of the whole
+    gate** — a finding going back for more experiments, or stopping, spends no
+    repair budget, so there is nothing for a person to approve or decline."""
+
+    def render(self) -> str:
+        return "\n".join(
+            [
+                f"FOUND — {self.finding}",
+                f"  audited against: {self.subject}",
+                "",
+                self.audit,
+                "",
+                "EVIDENCE",
+                self.chain.render(),
+                "",
+                (
+                    "Next is repair, which spends the Surgeon's attempts."
+                    if self.spends_repair
+                    else "This finding does not reach repair, so nothing is waiting on you."
+                ),
+            ]
+        )
+
+
+def found(state: CheckpointedState) -> Finding:
+    """What the human at the early checkpoint is shown. **S-12.5 AC 2.**
+
+    Raises:
+        NotAtTheGateError: no finding audit has been recorded, so the run has not
+            reached this checkpoint.
+        MissingInputError: an audit was recorded and the chain it audited is not
+            in the state, which is a defect rather than a state a run reaches.
+    """
+    audit = _latest(state, "finding_audit")
+    if audit is None:
+        message = (
+            "no finding audit has been recorded, so this run has not reached the early "
+            "checkpoint. Every route to `repair` runs through `audit_finding`"
+        )
+        raise NotAtTheGateError(message)
+
+    return Finding(
+        finding=str(state.target) if state.target is not None else "an unnamed finding",
+        chain=EvidenceChain.model_validate(
+            _needed(state.chain, "chain", "there is no evidence behind it")
+        ),
+        audit=str(audit["finding_audit"]),
+        subject=str(audit.get("subject", "an unrecorded subject")),
+        spends_repair=bool(audit.get("spends_repair", False)),
+    )
+
+
 def waiting_at(graph: Any, run_id: str) -> tuple[str, ...]:  # noqa: ANN401 - see `assemble`
     """Which nodes this run would take next. Empty when it has finished. **AC 1.**
 
@@ -183,27 +267,42 @@ def pending(state: CheckpointedState) -> Approval:
     )
 
 
-def _latest_audit(state: CheckpointedState) -> Mapping[str, object]:
-    """The most recent patch audit in the append-only flag channel.
+def _latest(state: CheckpointedState, kind: str) -> Mapping[str, object] | None:
+    """The most recent flag of `kind`, or `None` if there is none.
 
-    **The last one, not the first.** S-11.7 sends a broken patch back to the
-    Surgeon and the second round appends another flag; showing the earliest would
-    present a human with the verdict on a patch that was already replaced.
+    **The last one, not the first**, and both gates need that for the same
+    reason. S-11.7 sends a broken patch back to the Surgeon and S-9.8 sends an
+    unsound finding back for more experiments; either way a second round appends
+    another flag, and showing the earliest would present a human with the verdict
+    on something already superseded.
+
+    Returns rather than raises, because *no flag of this kind* means one thing at
+    the ship gate — a patch parked with nothing that audited it, which is a defect
+    — and another at the early one, where it simply means the run has not got
+    there. The callers say which.
     """
     for entry in reversed(state.flags):
-        if isinstance(entry, Mapping) and "patch_audit" in entry:
+        if isinstance(entry, Mapping) and kind in entry:
             return entry
-    message = (
-        "a patch is parked at the gate and no patch audit was recorded for it. Every route to "
-        "`ship` runs through `audit_patch`, so this state should be unreachable — and shipping "
-        "on it would mean shipping a patch the Adversary never saw"
-    )
-    raise MissingInputError(message)
+    return None
+
+
+def _latest_audit(state: CheckpointedState) -> Mapping[str, object]:
+    """The patch audit for the patch that is parked."""
+    found_entry = _latest(state, "patch_audit")
+    if found_entry is None:
+        message = (
+            "a patch is parked at the gate and no patch audit was recorded for it. Every route "
+            "to `ship` runs through `audit_patch`, so this state should be unreachable — and "
+            "shipping on it would mean shipping a patch the Adversary never saw"
+        )
+        raise MissingInputError(message)
+    return found_entry
 
 
 def _needed(value: object, channel: str, because: str) -> object:
     if value is None:
-        message = f"a patch is parked at the gate and {because} ({channel!r} is empty)"
+        message = f"a run is parked at a gate and {because} ({channel!r} is empty)"
         raise MissingInputError(message)
     return value
 
