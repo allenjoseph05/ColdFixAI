@@ -36,11 +36,12 @@ import pytest
 
 from coldfix.bench.stats import Growth
 from coldfix.diagnosis.chain import ChainError, EvidenceChain, Implicated, Site
+from coldfix.diagnosis.compose import assemble_with
 from coldfix.diagnosis.design import ExperimentSpec
 from coldfix.diagnosis.emit import chain_from, conditions_for, symptom_for
 from coldfix.diagnosis.exclusions import Dimension
-from coldfix.diagnosis.log import Verdict
-from coldfix.diagnosis.loop import run_investigation
+from coldfix.diagnosis.explain import parse, shares_from
+from coldfix.diagnosis.loop import confirming_links, run_investigation
 from coldfix.diagnosis.progress import ProgressError, Stopped
 from coldfix.llm.client import ReplayingClient
 from coldfix.primitives.scaling import Distribution
@@ -197,6 +198,15 @@ def test_a_symptom_quoting_a_metric_nobody_measured_is_refused() -> None:
         symptom_for(a_workload().observations[0], "cpu_seconds")
 
 
+EXPLAINED = """{"mechanism": "the renderer walks every row and re-renders its synopsis",
+ "site": {"path": "shop/rendering.py", "first_line": 54, "last_line": 61},
+ "context": [{"path": "shop/views.py",
+              "reason": "constructs the renderer the list view calls per row"}]}"""
+"""One reply, as the Diagnostician would answer it. Hard-coded because the only
+alternative is a network call; everything it becomes goes through the same
+`parse` a live reply would."""
+
+
 # ============================ defect 3: a confirmed investigation reaches S-8.6
 
 
@@ -205,30 +215,27 @@ def test_a_confirmed_investigation_can_now_produce_an_evidence_chain(
 ) -> None:
     """**The epic's own sentence, end to end.** Until this join existed,
     `EvidenceChain` could be constructed by hand in a test and by nothing in the
-    system — the criterion read as met and was unreachable."""
+    system — the criterion read as met and was unreachable.
+
+    **Both halves now have producers, and this test supplies neither.** At S-8.11
+    the interpreted half stopped being three literal strings written here: it is
+    an `Explanation` parsed from a reply, which is what a cascade would return.
+    The shares stopped being a hand-built tuple: `shares_from` reads each one off
+    the measurement the primitive recorded. What remains hard-coded is the reply
+    itself, because the alternative is a network call.
+    """
     workload = a_workload()
     result = run_the_epic(Subject())
-    confirmed = next(item for item in result.log.experiments if item.verdict is Verdict.CONFIRMED)  # type: ignore[attr-defined]
 
-    chain = chain_from(
+    explanation = parse(EXPLAINED)
+    assert explanation.value is not None, explanation.rejection
+
+    chain = assemble_with(
         result,  # type: ignore[arg-type]
         symptom=symptom_for(workload.observations[-1], "seconds"),
-        mechanism="the renderer walks every row and re-renders its synopsis",
         complexity={"rows": Growth.LINEAR},
-        site=Site(path="shop/rendering.py", first_line=54, last_line=61),
-        context=[
-            Implicated(
-                path="shop/views.py",
-                reason="constructs the renderer the list view calls per row",
-            )
-        ],
-        shares={
-            confirmed.index: (
-                "ExpensiveRenderer.render",
-                1.0,
-                "wall time with the renderer against wall time with it stubbed",
-            )
-        },
+        shares=shares_from(confirming_links(result)),  # type: ignore[arg-type]
+        explanation=explanation.value,
     )
 
     assert isinstance(chain, EvidenceChain)
