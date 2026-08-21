@@ -67,7 +67,11 @@ def resume_in_this_process(store: Path, run_id: str) -> Mapping[str, Any]:
     from crashing_run import build  # noqa: PLC0415 - the subprocess script is the fixture
 
     with for_development(store) as saver:
-        return resume(assemble(build(None), saver), saver, run_id)
+        # **Ungated on purpose.** S-12.4 puts a human gate before `ship`; these
+        # tests are about a crash and what survives it, and a run parked at the
+        # gate never reaches the node whose writes they check. The crashed
+        # process compiles the same way — `crashing_run.py` says so too.
+        return resume(assemble(build(None), saver, gated=False), saver, run_id)
 
 
 @pytest.fixture(autouse=True)
@@ -143,7 +147,7 @@ def test_resuming_a_run_nobody_started_is_refused(tmp_path: Path) -> None:
     that it already existed."""
     store = tmp_path / "run.sqlite"
     with for_development(store) as saver:
-        graph = assemble(_plain_wiring(), saver)
+        graph = assemble(_plain_wiring(), saver, gated=False)
         with pytest.raises(ResumeError, match="nothing to resume"):
             resume(graph, saver, "never-ran")
 
@@ -267,7 +271,7 @@ def test_starting_and_resuming_are_two_names_for_one_argument(tmp_path: Path) ->
 
     wiring = Wiring(**{item.value: counting(item.value) for item in Node})
     with for_development(store) as saver:
-        graph = assemble(wiring, saver)
+        graph = assemble(wiring, saver, gated=False)
         start(graph, "twice")
         after_first = list(visits)
 

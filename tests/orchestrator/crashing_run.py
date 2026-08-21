@@ -55,7 +55,7 @@ def build(die_at: str | None) -> Wiring:
 def main() -> int:
     store, run_id, die_at = sys.argv[1], sys.argv[2], sys.argv[3]
     with for_development(store) as saver:
-        graph = assemble(build(None if die_at == "-" else die_at), saver)
+        graph = assemble(build(None if die_at == "-" else die_at), saver, gated=False)
         # Through `start` rather than `invoke`, so this run is as durable as a
         # real one. Calling `invoke` here would test a configuration nothing
         # ships with — and the default loses every checkpoint to the kill.

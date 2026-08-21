@@ -425,6 +425,13 @@ def audit_patch(resources: Resources, state: CheckpointedState) -> Mapping[str, 
         resources.workbench.open(resources.revision, mode=ExecutionMode.DIAGNOSTIC) as diagnostic,
         resources.workbench.open(resources.revision, mode=ExecutionMode.CANDIDATE) as candidate,
     ):
+        # **Measured once and used twice.** The audit reasons over these numbers
+        # and S-12.4's gate shows them to a person, and measuring again for the
+        # second reader would put two different sets of figures under one patch —
+        # the run is not deterministic enough for them to agree, and a human
+        # comparing the report against the verdict would be right to distrust
+        # both. It would also pay for the sweep twice.
+        measured = resources.measure(patch, candidate=_candidate(candidate))
         audited = compose_audit_patch(
             resources.sessions(_PATCH_AUDIT_PROMPT),
             resources.sessions(_TEST_QUALITY_PROMPT),
@@ -440,7 +447,7 @@ def audit_patch(resources: Resources, state: CheckpointedState) -> Mapping[str, 
                 suite_command=resources.suite_command,
                 probe=resources.probe,
             ),
-            measurements=resources.measure(patch, candidate=_candidate(candidate)),
+            measurements=measured,
             budget=resources.budget,
             measured_prefix_tokens=resources.tokens.prefix,
             measured_prompt_tokens=resources.tokens.prompt,
@@ -448,7 +455,14 @@ def audit_patch(resources: Resources, state: CheckpointedState) -> Mapping[str, 
         )
 
     return {
-        "flags": [{"patch_audit": audited.routing.describe()}],
+        "flags": [
+            {
+                "patch_audit": audited.routing.describe(),
+                "verdict": audited.verdict.describe(),
+                "before": dict(measured.domain_before),
+                "after": dict(measured.domain_after),
+            }
+        ],
         **decided(audited.routing.route),
     }
 
@@ -646,6 +660,7 @@ def _repaired(outcome: Repaired, falsified: Falsified) -> JsonValue:
     """
     return {
         "patch": outcome.patch.model_dump(mode="json"),
+        "slack_reducing": outcome.needs_human_review,
         "falsified": {
             "test": falsified.test.model_dump(mode="json"),
             "evidence": falsified.evidence,
