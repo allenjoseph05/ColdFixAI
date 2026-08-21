@@ -208,10 +208,15 @@ and never straight to repair** — `08-audit.md` F2 is that nobody audits the
 diagnosis, only the patch, and the fix is this node between those two."""
 
 
-def assemble(wiring: Wiring, checkpointer: Any = None) -> Any:  # noqa: ANN401 - LangGraph's
-    # is generic over the state schema and its parameters have moved between
-    # releases; naming it here would pin this module to one version's spelling of
-    # a type nothing in this project introspects.
+def assemble(
+    wiring: Wiring,
+    # LangGraph's saver and its compiled graph are generic over the state schema,
+    # and their parameters have moved between releases; naming either here would
+    # pin this module to one version's spelling of a type nothing introspects.
+    checkpointer: Any = None,  # noqa: ANN401
+    *,
+    gated: bool = True,
+) -> Any:  # noqa: ANN401
     """Wire the seven nodes and compile. AC 1 and AC 3.
 
     Every node goes through S-6.3's `node`, which that story asked for by name:
@@ -226,9 +231,24 @@ def assemble(wiring: Wiring, checkpointer: Any = None) -> Any:  # noqa: ANN401 -
     which is right for a unit test of the shape and wrong for anything that has to
     resume.
 
+    **`gated` defaults to on and is not a trust level.** S-12.4 puts
+    `interrupt_before=["ship"]` at trust level 0, and S-13.4's third criterion is
+    that *new projects start at level 0 regardless of cross-project history* — so
+    until that ledger exists, level 0 is the only value any project can be at and
+    the gate is unconditional. A `trust: int` parameter here would have exactly
+    one reachable value, and the danger is not that nobody could flip it: it is
+    that a caller **could**, turning the gate off with no ledger to justify it.
+    What this parameter is for is the unit test that needs a graph which runs to
+    completion, and its name says so.
+
+    An ungated graph with no checkpointer is the shape S-12.1 tested. An
+    interrupted one without a checkpointer cannot resume at all, so the two
+    arguments are related: `interrupt_before` parks the run in the checkpoint, and
+    there is nowhere to park without one.
+
     Raises:
-        GraphError: a node has no step, or a router names a node that is not in
-            the graph.
+        GraphError: a node has no step, a router names a node that is not in the
+            graph, or the run is gated with nothing to checkpoint into.
     """
     steps = wiring.steps()
     missing = sorted(item.value for item in Node if steps.get(item) is None)
@@ -244,13 +264,25 @@ def assemble(wiring: Wiring, checkpointer: Any = None) -> Any:  # noqa: ANN401 -
     for name, step in steps.items():
         graph.add_node(name.value, node(step))
 
+    if gated and checkpointer is None:
+        message = (
+            "a gated graph needs a checkpointer. `interrupt_before` parks the run in the "
+            "checkpoint and waits for a person, so with nowhere to park the run stops at `ship` "
+            "and cannot be resumed — the approval a human gives on Thursday has nothing to "
+            "return to. Pass a checkpointer, or say `gated=False` if this is a test of the shape"
+        )
+        raise GraphError(message)
+
     graph.add_edge(START, Node.GROUND.value)
     for source, destination in LINEAR.items():
         graph.add_edge(source.value, destination.value)
     for source, router in ROUTERS.items():
         graph.add_conditional_edges(source.value, router, _destinations(router))
 
-    return graph.compile(checkpointer=checkpointer)
+    return graph.compile(
+        checkpointer=checkpointer,
+        interrupt_before=[Node.SHIP.value] if gated else None,
+    )
 
 
 def _destinations(router: Callable[[CheckpointedState], str]) -> list[str]:
