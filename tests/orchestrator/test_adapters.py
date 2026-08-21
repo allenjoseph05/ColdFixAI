@@ -299,7 +299,7 @@ def test_the_bound_steps_are_what_the_graph_will_accept() -> None:
         )
     )
 
-    compiled = assemble(wiring)
+    compiled = assemble(wiring, gated=False)
 
     registered = set(compiled.get_graph().nodes) - {"__start__", "__end__"}
     assert registered == {item.value for item in Node}
@@ -309,4 +309,4 @@ def test_a_wiring_missing_a_step_is_refused_rather_than_compiled() -> None:
     """A node with nothing behind it returns an empty update, so the run passes
     straight through the phase and the state simply never gains what it produces."""
     with pytest.raises(GraphError, match="no step supplied for"):
-        assemble(Wiring(**{**{item.value: unused() for item in Node}, "ship": None}))
+        assemble(Wiring(**{**{item.value: unused() for item in Node}, "ship": None}), gated=False)

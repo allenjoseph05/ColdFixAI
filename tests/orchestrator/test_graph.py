@@ -73,7 +73,7 @@ def wiring(**updates: Mapping[str, object]) -> tuple[Wiring, dict[Node, Recorder
 
 def test_the_seven_nodes_of_the_flow_are_registered() -> None:
     graph, _ = wiring()
-    compiled = assemble(graph)
+    compiled = assemble(graph, gated=False)
 
     registered = set(compiled.get_graph().nodes) - {"__start__", "__end__"}
     assert registered == {item.value for item in Node}
@@ -102,14 +102,14 @@ def test_a_node_with_nothing_behind_it_is_refused() -> None:
     graph, _ = wiring()
     partial = Wiring(**{**{item.value: getattr(graph, item.value) for item in Node}, "ship": None})
     with pytest.raises(GraphError, match="no step supplied for"):
-        assemble(partial)
+        assemble(partial, gated=False)
 
 
 def test_every_node_is_registered_through_the_state_check() -> None:
     """S-6.3 asked for this by name: LangGraph drops a write to a channel that does
     not exist without a word, so the check has to be on the way out of every node."""
     graph, _ = wiring(ground={"nonesuch": 1})
-    compiled = assemble(graph)
+    compiled = assemble(graph, gated=False)
 
     with pytest.raises(UnknownChannelError, match="keys the state does not have"):
         compiled.invoke(state())
@@ -182,7 +182,7 @@ def test_screening_is_read_per_workload_which_is_what_makes_f14_expressible() ->
 
 def test_a_null_screen_runs_ground_then_screen_and_stops() -> None:
     graph, seen = wiring()
-    assemble(graph).invoke(state())
+    assemble(graph, gated=False).invoke(state())
 
     assert seen[Node.GROUND].seen == 1
     assert seen[Node.SCREEN].seen == 1
@@ -198,7 +198,7 @@ def test_a_finding_runs_the_whole_path_to_ship() -> None:
         audit_patch=decided(PatchRoute.SHIP),
         ship={"screening": CLEARED, "route": None},
     )
-    assemble(graph).invoke(state())
+    assemble(graph, gated=False).invoke(state())
 
     assert [item for item in Node if seen[item].seen] == list(Node)
     assert all(seen[item].seen == 1 for item in Node)
@@ -221,7 +221,7 @@ def test_a_broken_patch_goes_back_to_the_surgeon_and_is_audited_again() -> None:
     cycling = Cycling(Node.AUDIT_PATCH)
     graph = Wiring(**{**{item.value: seen[item] for item in Node}, "audit_patch": cycling})
 
-    assemble(graph).invoke(state())
+    assemble(graph, gated=False).invoke(state())
 
     assert seen[Node.REPAIR].seen == 2, "back to the Surgeon once"
     assert cycling.seen == 2
@@ -240,7 +240,7 @@ def test_an_unsound_finding_goes_back_for_more_experiments() -> None:
     cycling = Cycling(Node.AUDIT_FINDING)
     graph = Wiring(**{**{item.value: seen[item] for item in Node}, "audit_finding": cycling})
 
-    assemble(graph).invoke(state())
+    assemble(graph, gated=False).invoke(state())
 
     assert seen[Node.INVESTIGATE].seen == 2
     assert seen[Node.REPAIR].seen == 0, "no patch is written on an unsound finding"
@@ -255,7 +255,7 @@ def test_the_state_a_node_receives_carries_what_earlier_nodes_wrote() -> None:
         audit_patch=decided(PatchRoute.SHIP),
         ship={"screening": CLEARED, "route": None},
     )
-    final = assemble(graph).invoke(state())
+    final = assemble(graph, gated=False).invoke(state())
 
     assert seen[Node.SCREEN].visits[0].project == {"adapter": "django"}
     assert seen[Node.REPAIR].visits[0].screening == FLAGGED
@@ -270,7 +270,7 @@ def test_an_append_only_channel_accumulates_across_nodes() -> None:
         ground={"experiments": [{"index": 1}]},
         screen={"experiments": [{"index": 2}], "screening": {}},
     )
-    final = assemble(graph).invoke(state())
+    final = assemble(graph, gated=False).invoke(state())
 
     assert [item["index"] for item in final["experiments"]] == [1, 2]
 
@@ -295,7 +295,7 @@ def test_every_destination_a_router_can_choose_is_declared() -> None:
     conditional edge whose destinations LangGraph has to infer draws no edges at
     all, and a node nothing can reach then looks identical to a correctly wired
     one — which is exactly the mistake a graph diagram is read to catch."""
-    drawn = assemble(wiring()[0]).get_graph()
+    drawn = assemble(wiring()[0], gated=False).get_graph()
 
     reachable: dict[str, set[str]] = {}
     for edge in drawn.edges:
