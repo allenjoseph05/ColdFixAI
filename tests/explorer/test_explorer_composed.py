@@ -25,7 +25,8 @@ import pytest
 
 from coldfix.explorer.anchor import anchor_for, interpreter_for, resolve
 from coldfix.explorer.auth import Reply, resolve_auth
-from coldfix.explorer.emission import emit, read_document
+from coldfix.explorer.compose import Plan, ground_workload
+from coldfix.explorer.emission import read_document
 from coldfix.explorer.entrypoints import Discovery, Kind, enumerate_entry_points
 from coldfix.explorer.fingerprint import Fingerprint, fingerprint
 from coldfix.explorer.fixtures import Mechanism, discover, factory_seeder, prefer
@@ -254,59 +255,74 @@ FLUSH = [sys.executable, "manage.py", "flush", "--no-input"]
 # ============================================================ the epic's own sentence
 
 
-def test_an_unknown_repository_becomes_an_emitted_workload(subject: Path) -> None:
-    """Fingerprint to emission, in the order a caller would, with nothing skipped.
-
-    Every step here is one story's public entry point, and the value each
-    produces is fed to the next exactly as it comes out. Where that does not
-    work, the join is the defect.
-    """
-    identification = fingerprint(subject)
-    assert isinstance(identification, Fingerprint)
-
-    anchor = anchor_for(subject)
-    assert anchor.on == date(2024, 5, 6)
-
-    interpreter = interpreter_for(subject)
-    assert interpreter is not None
-
-    enumeration = enumerate_entry_points(subject, python=[sys.executable])
-    routes = enumeration.of_kind(Kind.HTTP_ROUTE)
-    assert routes
-
-    best = enumeration.drivable[0]
-    path = best.request_path
-    assert path is not None
-
-    resolution = resolve_auth(
-        subject, python=[sys.executable], path=path, request=requester(subject)
-    )
-    assert resolution.resolved, resolution.describe()
-
-    discovery = discover(subject)
-    chosen = prefer(discovery, entity="shop.Book")
-    assert isinstance(chosen, Mechanism), chosen
-
-    resolved = resolve(["django>=5.0"], anchor=anchor, python_version=interpreter.version)
-
-    verification = verify_work(
-        subject,
-        python=[sys.executable],
-        path=path,
-        seed=factory_seeder(chosen, module="shop.factories"),
-        environment=resolved.recorded(),
-        target="shop.Book",
+def plan() -> Plan:
+    """What the Explorer decides, which `ground_workload` refuses to guess."""
+    return Plan(
         workload_id="shop.books",
         description="the book list endpoint",
+        entity="shop.Book",
+        factory_module="shop.factories",
+        target="shop.Book",
+        requirements=["django>=5.0"],
         reset=ResetStrategy.SNAPSHOT_RESTORE,
         reset_between=FLUSH,
         repeats=3,
     )
-    assert verification.verified
 
-    emitted = emit(verification, reset=proof())
-    reloaded = read_document(json.dumps(emitted.document()))
+
+def test_an_unknown_repository_becomes_an_emitted_workload(subject: Path) -> None:
+    """Fingerprint to emission, in the order a caller would, with nothing skipped.
+
+    **The sequence is `ground_workload`'s now, not this test's.** It was written
+    here first, which is what let the composition check find six join defects; it
+    moved to `src/` at S-7.13 because a sequence that lives in a test cannot be
+    the orchestrator's `ground` node, and a second copy of it here would be the
+    thing that disagrees with the first.
+    """
+    grounded = ground_workload(
+        subject,
+        python=[sys.executable],
+        request=requester(subject),
+        plan=plan(),
+        reset=proof(),
+    )
+
+    assert isinstance(grounded.identification, Fingerprint)
+    assert grounded.anchor.on == date(2024, 5, 6)
+    assert grounded.interpreter is not None
+    assert grounded.enumeration.of_kind(Kind.HTTP_ROUTE)
+    assert grounded.auth.resolved, grounded.auth.describe()
+
+    reloaded = read_document(json.dumps(grounded.emitted.document()))
     assert reloaded.work_verified
+
+
+def test_what_the_ground_node_will_actually_read(subject: Path) -> None:
+    """AC 1's other half: *the project facts and the workloads*.
+
+    `CheckpointedState.project` is JSON because ADR 003 puts a checkpoint in
+    SQLite, so what the orchestrator needs is not the `Fingerprint` — it is the
+    flattened form, and `facts()` owning that is what stops a node reaching into
+    the fingerprint and becoming a second place that changes when it grows a
+    facet. Asserted through `json.dumps`, because *representable as JSON* is the
+    actual requirement and a `Path` or an enum satisfies neither.
+    """
+    grounded = ground_workload(
+        subject,
+        python=[sys.executable],
+        request=requester(subject),
+        plan=plan(),
+        reset=proof(),
+    )
+
+    facts = grounded.facts()
+    assert json.loads(json.dumps(facts)) == facts, "a checkpoint cannot hold what will not encode"
+    assert facts["framework"] == "Django"
+    assert facts["anchor"] == "2024-05-06"
+    assert facts["root"] == str(subject)
+
+    assert grounded.workload.id == "shop.books"
+    assert grounded.workload.observations, "the workload carries what the sweep measured"
 
 
 def test_every_stage_completes_for_a_grounded_repository(subject: Path) -> None:
