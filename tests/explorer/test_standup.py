@@ -34,6 +34,7 @@ from coldfix.explorer.standup import (
 )
 from coldfix.sandbox import docker_available
 from coldfix.sandbox.production import VerifiedDatabase
+from fixtures.containers import require_image
 
 USER = PASSWORD = "coldfix_test"
 
@@ -142,6 +143,14 @@ def test_the_socket_probe_says_nothing_about_postgres(silent_port: int, dead_por
     assert accepts_connections("127.0.0.1", dead_port) is not None
 
 
+ALPINE = "alpine"
+POSTGRES = "postgres:16-alpine"
+"""The images these tests need. Named once each so `require_image` and the
+`docker run` cannot drift apart — a check against one name and a run against
+another would skip nothing and still time out."""
+
+
+@pytest.mark.docker
 def test_a_missing_container_is_its_own_state(dead_port: int) -> None:
     """*Exited* is a different repair from *still initialising*, and both look
     identical at the socket."""
@@ -188,9 +197,11 @@ def test_logs_reads_a_container_s_output() -> None:
     if not docker_available():
         pytest.skip("no Docker daemon is listening")
 
+    require_image(ALPINE)
+
     name = f"coldfix-logs-{uuid.uuid4().hex[:8]}"
     execute(
-        ["docker", "run", "--detach", "--name", name, "alpine", "sh", "-c", "echo standing up"],
+        ["docker", "run", "--detach", "--name", name, ALPINE, "sh", "-c", "echo standing up"],
         timeout=120.0,
     )
     try:
@@ -214,8 +225,10 @@ def test_ps_lists_what_is_running() -> None:
     if not docker_available():
         pytest.skip("no Docker daemon is listening")
 
+    require_image(ALPINE)
+
     name = f"coldfix-ps-{uuid.uuid4().hex[:8]}"
-    execute(["docker", "run", "--detach", "--name", name, "alpine", "sleep", "30"], timeout=120.0)
+    execute(["docker", "run", "--detach", "--name", name, ALPINE, "sleep", "30"], timeout=120.0)
     try:
         assert name in ps()
     finally:
@@ -311,6 +324,7 @@ def test_a_real_database_reads_as_ready_only_once_it_is() -> None:
     """
     if not docker_available():
         pytest.skip("no Docker daemon is listening")
+    require_image(POSTGRES)
 
     port = 55443
     name = f"coldfix-standup-{uuid.uuid4().hex[:8]}"
@@ -323,7 +337,7 @@ def test_a_real_database_reads_as_ready_only_once_it_is() -> None:
             "docker", "run", "--detach", "--name", name,
             "--publish", f"{port}:5432",
             "--env", f"POSTGRES_USER={USER}", "--env", f"POSTGRES_PASSWORD={PASSWORD}",
-            "--env", "POSTGRES_DB=coldfix_standup", "--", "postgres:16-alpine",
+            "--env", "POSTGRES_DB=coldfix_standup", "--", POSTGRES,
         ],
         timeout=180.0,
     )  # fmt: skip
@@ -349,6 +363,7 @@ def test_a_wrong_password_reads_as_refusing_not_as_down() -> None:
     this, and `NOT_LISTENING` would have told the agent to wait."""
     if not docker_available():
         pytest.skip("no Docker daemon is listening")
+    require_image(POSTGRES)
 
     port = 55444
     name = f"coldfix-standup-auth-{uuid.uuid4().hex[:8]}"
@@ -357,7 +372,7 @@ def test_a_wrong_password_reads_as_refusing_not_as_down() -> None:
             "docker", "run", "--detach", "--name", name,
             "--publish", f"{port}:5432",
             "--env", f"POSTGRES_USER={USER}", "--env", f"POSTGRES_PASSWORD={PASSWORD}",
-            "--env", "POSTGRES_DB=coldfix_standup", "--", "postgres:16-alpine",
+            "--env", "POSTGRES_DB=coldfix_standup", "--", POSTGRES,
         ],
         timeout=180.0,
     )  # fmt: skip

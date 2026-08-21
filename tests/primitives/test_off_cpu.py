@@ -27,7 +27,6 @@ from pathlib import Path
 import pytest
 
 from coldfix.bench.counting import count, register_hook, unregister_hook
-from coldfix.bench.execute import execute
 from coldfix.primitives.counters import CATALOGUE, describe
 from coldfix.primitives.measurement import (
     BLOCKED_SECONDS,
@@ -49,7 +48,9 @@ from coldfix.primitives.off_cpu import (
     counter_for,
     off_cpu,
 )
+from coldfix.sandbox import docker_available
 from coldfix.sandbox.runner import Sandbox
+from fixtures.containers import require_image
 
 SLEEP = 0.15
 
@@ -387,8 +388,15 @@ def test_the_measurement_works_inside_the_container_sandbox(tmp_path: Path) -> N
     directory and carries no installed package (S-2.1); what is being proved is
     that the *measurement* survives the container, not that the import path does.
     """
-    if execute(["docker", "image", "inspect", IMAGE], timeout=120.0).exit_code != 0:
-        pytest.skip(f"image {IMAGE} is not present locally; run `docker pull {IMAGE}`")
+    # **Both guards, and the second was missing.** The image check answers *can
+    # this container start*; it says nothing about whether the daemon can clean up
+    # afterwards. On a degraded Docker Desktop this test built its container, took
+    # its measurement, and then failed in teardown when `docker rm --force` blew
+    # past sixty seconds — reported as `ContainerNotDestroyedError`, which is a
+    # real safety failure (S-2.2) about somebody else's daemon.
+    if not docker_available():
+        pytest.skip("no usable Docker daemon")
+    require_image(IMAGE)
 
     (tmp_path / "probe.py").write_text(CONTAINER_PROBE, encoding="utf-8")
     result = Sandbox(image=IMAGE, workspace=tmp_path).run(
