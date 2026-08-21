@@ -41,6 +41,11 @@ from coldfix.orchestrator.graph import Node, Wiring, assemble
 from coldfix.state.checkpoint import CheckpointedState
 from coldfix.state.reference import CHECKPOINT_SIZE_LIMIT_BYTES, MAX_EXPERIMENTS
 
+# **Ungated throughout.** S-12.4 and S-12.5 park a run before `repair` and before
+# `ship`; every test here is about what the checkpointer writes and when, and a
+# run that stops at a gate visits four nodes rather than seven — which would let
+# *a checkpoint after every node* pass while proving it for less than half of
+# them.
 FLAGGED: dict[str, Any] = {"shop.books.list": {"growth": "superlinear"}}
 
 
@@ -118,7 +123,7 @@ def test_a_checkpoint_is_written_after_every_node(tmp_path: Path) -> None:
         ship={"screening": {}, "route": None},
     )
     with for_development(tmp_path / "run.sqlite") as saver:
-        graph = assemble(wiring, saver)
+        graph = assemble(wiring, saver, gated=False)
         graph.invoke(CheckpointedState(), thread("run-1"))
         written = saved(saver, "run-1")
 
@@ -141,7 +146,7 @@ def test_the_checkpoints_show_the_state_growing_one_node_at_a_time(
         screen={"screening": {}},
     )
     with for_development(tmp_path / "run.sqlite") as saver:
-        graph = assemble(wiring, saver)
+        graph = assemble(wiring, saver, gated=False)
         graph.invoke(CheckpointedState(), thread("run-2"))
         written = saved(saver, "run-2")
 
@@ -155,7 +160,7 @@ def test_two_runs_under_different_threads_do_not_mix(tmp_path: Path) -> None:
     and the second one silently starts a new run rather than resuming the first."""
     wiring = steps(ground={"project": {"adapter": "django"}}, screen={"screening": {}})
     with for_development(tmp_path / "run.sqlite") as saver:
-        graph = assemble(wiring, saver)
+        graph = assemble(wiring, saver, gated=False)
         graph.invoke(CheckpointedState(), thread("first"))
         graph.invoke(CheckpointedState(), thread("second"))
 
@@ -171,7 +176,7 @@ def test_the_state_survives_the_process_that_wrote_it(tmp_path: Path) -> None:
     wiring = steps(ground={"project": {"adapter": "django"}}, screen={"screening": {}})
 
     with for_development(store) as saver:
-        assemble(wiring, saver).invoke(CheckpointedState(), thread("durable"))
+        assemble(wiring, saver, gated=False).invoke(CheckpointedState(), thread("durable"))
 
     with for_development(store) as reopened:
         recovered = saved(reopened, "durable")
@@ -269,7 +274,7 @@ def test_a_real_run_stays_inside_the_bound_at_every_checkpoint(tmp_path: Path) -
         audit_finding={"route": "ESCALATE"},
     )
     with for_development(tmp_path / "run.sqlite") as saver:
-        graph = assemble(wiring, saver)
+        graph = assemble(wiring, saver, gated=False)
         graph.invoke(CheckpointedState(), thread("bounded"))
         written = saved(saver, "bounded")
 

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import JsonValue
 
 from coldfix.bench.stats import Growth
 from coldfix.diagnosis.chain import (
@@ -38,6 +39,7 @@ from coldfix.orchestrator.gate import (
     Approval,
     GateError,
     NotAtTheGateError,
+    found,
     pending,
     waiting_at,
 )
@@ -84,7 +86,7 @@ def test_a_gated_run_parks_before_ship(tmp_path: Path) -> None:
     stops with `ship` as its next step rather than having taken it."""
     store = tmp_path / "run.sqlite"
     with for_development(store) as saver:
-        graph = assemble(build(), saver)
+        graph = assemble(build(), saver, early_review=False)
         start(graph, "gated")
 
         assert progress_of(saver, "gated").started
@@ -97,7 +99,7 @@ def test_an_ungated_run_takes_the_step_the_gate_would_have_stopped(tmp_path: Pat
     there."""
     store = tmp_path / "run.sqlite"
     with for_development(store) as saver:
-        graph = assemble(build(), saver, gated=False)
+        graph = assemble(build(), saver, gated=False, early_review=False)
         start(graph, "open")
 
         assert waiting_at(graph, "open") == ()
@@ -107,7 +109,7 @@ def test_a_gated_graph_with_nowhere_to_park_is_refused() -> None:
     """`interrupt_before` parks the run *in the checkpoint*. With no checkpointer
     the run stops at `ship` and can never be resumed, so the approval a human
     gives has nothing to return to."""
-    with pytest.raises(GraphError, match="gated graph needs a checkpointer"):
+    with pytest.raises(GraphError, match="needs a checkpointer"):
         assemble(build())
 
 
@@ -125,7 +127,7 @@ def test_there_is_no_trust_level_parameter() -> None:
 
     assert "trust" not in parameters
     assert "trust_level" not in parameters
-    assert parameters == {"wiring", "checkpointer", "gated"}
+    assert parameters == {"wiring", "checkpointer", "gated", "early_review"}
 
 
 # ============================================ AC 2 — what the human sees
@@ -264,13 +266,13 @@ def test_an_approval_survives_the_process_that_produced_it(tmp_path: Path) -> No
     store = tmp_path / "run.sqlite"
 
     with for_development(store) as saver:
-        graph = assemble(build(), saver)
+        graph = assemble(build(), saver, early_review=False)
         start(graph, "thursday")
         assert waiting_at(graph, "thursday") == ("ship",)
 
     # Everything above is now closed. A new process, in every way that matters.
     with for_development(store) as reopened:
-        reopened_graph = assemble(build(), reopened)
+        reopened_graph = assemble(build(), reopened, early_review=False)
         assert waiting_at(reopened_graph, "thursday") == ("ship",), "still parked"
 
         final = resume(reopened_graph, reopened, "thursday")
@@ -297,10 +299,10 @@ def test_resuming_a_parked_run_runs_ship_once(tmp_path: Path) -> None:
         return Wiring(**{item.value: make(item.value) for item in Node})
 
     with for_development(store) as saver:
-        start(assemble(counting(), saver), "once")
+        start(assemble(counting(), saver, early_review=False), "once")
         before = list(visits)
 
-        resume(assemble(counting(), saver), saver, "once")
+        resume(assemble(counting(), saver, early_review=False), saver, "once")
 
     assert "ship" not in before, "the gate stopped it"
     assert visits[len(before) :] == ["ship"], "the resume took exactly the parked step"
@@ -367,3 +369,112 @@ def test_the_gate_error_hierarchy_lets_a_caller_tell_the_two_apart() -> None:
     assert issubclass(NotAtTheGateError, GateError)
     assert not issubclass(MissingInputError, GateError)
     assert re.search(r"\w", NotAtTheGateError.__doc__ or "")
+
+
+# ============================================ S-12.5 — the human arrives in time
+
+
+def audited(**overrides: object) -> CheckpointedState:
+    fields: dict[str, Any] = {
+        "target": "shop.books.list",
+        "flags": [
+            {
+                "finding_audit": (
+                    "Finding audit — sound\n  subject: the evidence chain\n"
+                    "  Next: repair\n  Why: every attack was answered"
+                ),
+                "subject": "the evidence chain",
+                "spends_repair": True,
+            }
+        ],
+    }
+    fields.update(overrides)
+    return CheckpointedState(**fields)
+
+
+def test_the_run_parks_before_repair_rather_than_after_it(tmp_path: Path) -> None:
+    """**F16, performed.** The ship gate alone means the human reviews after
+    grounding, screening, investigation, repair and audit are all paid for — and
+    if they would have rejected the direction, the whole budget is gone."""
+    store = tmp_path / "run.sqlite"
+    with for_development(store) as saver:
+        graph = assemble(build(), saver)
+        start(graph, "early")
+
+        assert waiting_at(graph, "early") == ("repair",), "before the Surgeon spends anything"
+
+
+def test_the_early_checkpoint_can_be_declined_and_the_ship_gate_cannot(tmp_path: Path) -> None:
+    """**The asymmetry is the decision.** S-12.5's AC says *optional* where
+    S-12.4's does not, and the word is doing work: the ship gate guards an
+    irreversible outward act, the early one guards a budget. An operator running
+    unattended may reasonably decline the second; declining the first would ship a
+    patch nobody read."""
+    store = tmp_path / "run.sqlite"
+    with for_development(store) as saver:
+        graph = assemble(build(), saver, early_review=False)
+        start(graph, "no-early")
+
+        assert waiting_at(graph, "no-early") == ("ship",), "still gated where it must be"
+
+
+def test_the_early_reader_is_shown_the_finding_and_why(chain: EvidenceChain) -> None:
+    """AC 2: *what was found and why, before any fix is attempted.*"""
+    finding = found(audited(chain=chain.model_dump(mode="json")))
+
+    assert finding.finding == "shop.books.list"
+    assert finding.chain.mechanism == chain.mechanism
+    assert "Why: every attack was answered" in finding.audit
+    assert finding.spends_repair
+
+
+def test_the_early_report_carries_no_patch_because_there_is_none(chain: EvidenceChain) -> None:
+    """**The question here is narrower**: not *is this patch right* but *is this
+    worth trying to fix*. A report with an empty patch section would invite the
+    reader to answer the later question with the earlier question's evidence."""
+    finding = found(audited(chain=chain.model_dump(mode="json")))
+
+    assert not hasattr(finding, "patch")
+    assert "PATCH" not in finding.render()
+    assert "spends the Surgeon's attempts" in finding.render()
+
+
+def test_a_finding_that_never_reaches_repair_says_nothing_is_waiting(
+    chain: EvidenceChain,
+) -> None:
+    """`Routing.spends_repair` is the premise of the gate. A finding going back for
+    more experiments spends no repair budget, so there is nothing to approve."""
+    state = audited(chain=chain.model_dump(mode="json"))
+    quiet = dict(state.flags[0])  # type: ignore[arg-type]
+    quiet["spends_repair"] = False
+
+    rendered = found(state.model_copy(update={"flags": [quiet]})).render()
+
+    assert "nothing is waiting on you" in rendered
+
+
+def test_a_run_that_has_not_been_audited_is_not_at_the_early_checkpoint() -> None:
+    with pytest.raises(NotAtTheGateError, match="no finding audit has been recorded"):
+        found(CheckpointedState())
+
+
+def test_an_audited_finding_with_no_chain_is_refused_rather_than_shown_blank() -> None:
+    """Same argument as the ship gate: a person shown an empty evidence section
+    reads it as *no evidence* rather than as *the report is broken*."""
+    with pytest.raises(MissingInputError, match="no evidence behind it"):
+        found(audited())
+
+
+def test_the_later_audit_is_the_one_shown(chain: EvidenceChain) -> None:
+    """S-9.8 sends an unsound finding back for more experiments, and the second
+    round appends another flag. Showing the earliest would present a human with
+    the verdict on an investigation that has since been extended."""
+    state = audited(chain=chain.model_dump(mode="json"))
+    earlier: JsonValue = {
+        "finding_audit": "Finding audit — unsound\n  Next: investigate\n  Why: thin evidence",
+        "subject": "the evidence chain",
+        "spends_repair": False,
+    }
+    rounds = [earlier, *state.flags]
+
+    assert found(state.model_copy(update={"flags": rounds})).spends_repair

@@ -216,6 +216,7 @@ def assemble(
     checkpointer: Any = None,  # noqa: ANN401
     *,
     gated: bool = True,
+    early_review: bool = True,
 ) -> Any:  # noqa: ANN401
     """Wire the seven nodes and compile. AC 1 and AC 3.
 
@@ -241,14 +242,27 @@ def assemble(
     What this parameter is for is the unit test that needs a graph which runs to
     completion, and its name says so.
 
+    **`early_review` is S-12.5's, and the asymmetry between the two is the
+    decision.** F16: *`interrupt_before=["ship"]` means the human reviews after
+    grounding, screening, investigation, repair and audit are all paid for — if
+    they would have rejected the direction, the whole budget is gone.* So this one
+    parks before `repair`, where a person can still decline to spend it.
+
+    Its AC says **optional** where S-12.4's does not, and that word is doing work:
+    the ship gate guards an irreversible outward act and the early one guards a
+    budget. An operator running unattended may reasonably decline the second, and
+    the worst case is euros. Declining the first would ship a patch nobody read.
+    A parameter that could turn *that* off is the thing S-12.4 refused, and this
+    one existing does not make that one exist.
+
     An ungated graph with no checkpointer is the shape S-12.1 tested. An
-    interrupted one without a checkpointer cannot resume at all, so the two
-    arguments are related: `interrupt_before` parks the run in the checkpoint, and
-    there is nowhere to park without one.
+    interrupted one without a checkpointer cannot resume at all, so the arguments
+    are related: `interrupt_before` parks the run in the checkpoint, and there is
+    nowhere to park without one.
 
     Raises:
         GraphError: a node has no step, a router names a node that is not in the
-            graph, or the run is gated with nothing to checkpoint into.
+            graph, or the run is interrupted with nothing to checkpoint into.
     """
     steps = wiring.steps()
     missing = sorted(item.value for item in Node if steps.get(item) is None)
@@ -264,12 +278,14 @@ def assemble(
     for name, step in steps.items():
         graph.add_node(name.value, node(step))
 
-    if gated and checkpointer is None:
+    parks = _interrupts(gated=gated, early_review=early_review)
+    if parks and checkpointer is None:
         message = (
-            "a gated graph needs a checkpointer. `interrupt_before` parks the run in the "
-            "checkpoint and waits for a person, so with nowhere to park the run stops at `ship` "
-            "and cannot be resumed — the approval a human gives on Thursday has nothing to "
-            "return to. Pass a checkpointer, or say `gated=False` if this is a test of the shape"
+            f"a graph that parks at {sorted(parks)} needs a checkpointer. `interrupt_before` "
+            "parks the run in the checkpoint and waits for a person, so with nowhere to park the "
+            "run stops there and cannot be resumed — the approval a human gives on Thursday has "
+            "nothing to return to. Pass a checkpointer, or say `gated=False, early_review=False` "
+            "if this is a test of the shape"
         )
         raise GraphError(message)
 
@@ -279,10 +295,29 @@ def assemble(
     for source, router in ROUTERS.items():
         graph.add_conditional_edges(source.value, router, _destinations(router))
 
-    return graph.compile(
-        checkpointer=checkpointer,
-        interrupt_before=[Node.SHIP.value] if gated else None,
-    )
+    return graph.compile(checkpointer=checkpointer, interrupt_before=list(parks) or None)
+
+
+def _interrupts(*, gated: bool, early_review: bool) -> tuple[str, ...]:
+    """Where this graph parks, in the order the run reaches them.
+
+    **`gated` is the master switch and `early_review` narrows it**, which is not
+    how the first draft read it. Two independent flags meant *no interrupts at
+    all* took two arguments, and fifteen existing tests said `gated=False` and
+    parked at `repair` anyway — the shape of a switch that does not do what its
+    one obvious use implies. So `gated=False` removes every gate, which is what a
+    test of the graph's shape wants, and `early_review=False` keeps the ship gate
+    and drops the early one, which is what an operator running unattended wants.
+
+    Ordered rather than a set, because the message a caller sees when it has no
+    checkpointer names them and *repair, then ship* is the order somebody
+    debugging a parked run is thinking in.
+    """
+    if not gated:
+        return ()
+    parks = [Node.REPAIR.value] if early_review else []
+    parks.append(Node.SHIP.value)
+    return tuple(parks)
 
 
 def _destinations(router: Callable[[CheckpointedState], str]) -> list[str]:
