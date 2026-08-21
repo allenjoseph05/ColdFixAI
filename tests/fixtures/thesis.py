@@ -182,10 +182,15 @@ def ablate_renderer(subject: Subject) -> tuple[Mapping[str, float], str]:
         counters=[QUERIES],
         process_identity=subject.process_identity,
     )
-    share = round(result.share("seconds"), 2)
+    # **The key comes from the primitive, not from this fixture.** It emitted
+    # exactly this quantity under exactly this spelling before anything in `src/`
+    # named it, and `shares_from` has to find it — a name each end spells for
+    # itself is a finding with no localization and nothing saying why.
+    name, measured = result.reported("seconds")
+    share = round(measured, 2)
     return (
         {
-            "seconds.share_removed": share,
+            name: share,
             "render.calls_baseline": float(result.calls_baseline),
             "render.calls_ablated": float(result.calls_ablated),
         },
