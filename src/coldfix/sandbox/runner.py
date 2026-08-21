@@ -56,6 +56,15 @@ _CONTAINER_NAME_PREFIX = "coldfix-"
 # broken one; short enough that a wedged daemon does not hang the run.
 _HOUSEKEEPING_TIMEOUT_SECONDS = 60.0
 
+_AVAILABILITY_TIMEOUT_SECONDS = 10.0
+"""How long a healthy daemon gets to list containers before it is called
+unusable.
+
+Deliberately far shorter than the housekeeping timeout. This runs once per test
+that needs Docker, so the cost of *discovering* a broken daemon is paid over and
+over — and a probe that waited a minute would turn a skipped suite into a slow
+one. Measured on a healthy daemon the same command answers in about a second."""
+
 _MIB = 1024**2
 _GIB = 1024**3
 
@@ -563,16 +572,43 @@ def _destroy(container: str) -> None:
 
 
 def docker_available() -> bool:
-    """Whether a daemon is listening. For skipping tests, never for control flow.
+    """Whether a daemon is **usable**. For skipping tests, never for control flow.
 
     A sandbox that cannot start is an error, not a condition to route around. If
     this were consulted before a run, the fallback would be running the workload
     somewhere else, and there is nowhere else.
+
+    **The probe runs the same command shape its callers do**, and three
+    measurements on one degraded Docker Desktop are why:
+
+    | command | result |
+    |---|---|
+    | `docker version --format ...` | under a second |
+    | `docker ps --quiet` | one second |
+    | `docker ps --filter name=... --format ...` | still running at ninety |
+
+    A version handshake is answered by the API layer and says nothing about the
+    container store; `--quiet` reaches the store and still misses it. Only the
+    filtered, formatted form — which is what `standup.diagnose` actually calls —
+    hangs. A probe that does not exercise the path its callers take will keep
+    reporting a daemon healthy right up until each of them spends its whole timeout
+    discovering otherwise, and a timeout is a **failing** test: it says *your code
+    is broken* about somebody else's daemon.
+
+    The name filtered on cannot match anything, so this lists nothing on a healthy
+    machine and is as cheap as the daemon allows.
     """
     try:
         result = execute(
-            ["docker", "version", "--format", "{{.Server.Version}}"],
-            timeout=_HOUSEKEEPING_TIMEOUT_SECONDS,
+            [
+                "docker",
+                "ps",
+                "--filter",
+                "name=coldfix-availability-probe",
+                "--format",
+                "{{.Names}}",
+            ],
+            timeout=_AVAILABILITY_TIMEOUT_SECONDS,
         )
     except (ExecutionStartError, ExecutionTimeoutError):
         return False
