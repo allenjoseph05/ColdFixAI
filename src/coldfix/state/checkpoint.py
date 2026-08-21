@@ -174,6 +174,35 @@ class CheckpointedState(BaseModel):
     chain: JsonValue | None = None
     """The proven cause, once one is proven. S-8.6's evidence chain."""
 
+    repaired: JsonValue | None = None
+    """What `repair` produced and `audit_patch` audits. Added at S-12.7.
+
+    **§1.1 has no channel for this and the omission is real.** Its field list was
+    written when `repair` and `audit_patch` were adjacent boxes in a diagram
+    rather than two nodes with a checkpoint between them. `repair` returns a
+    `Repaired` — the patch, its slack classification, every attempt — and
+    `audit_patch` needs the patch, the falsification test and the proof it failed
+    on unpatched code. Nothing in §1.1 carries any of it, so the two nodes could
+    not be joined at all: the same shape as all four defects Epic 11's
+    composition check found.
+
+    **Not `attempts`, which is the tempting place and the wrong one.** That
+    channel is the append-only history of what the Surgeon tried and why each
+    failed; reading the current handover off its last entry conflates *what
+    happened* with *what is being audited now*, and breaks the moment S-11.7
+    sends a patch back and a second round appends to it. This replaces rather
+    than appends, like `chain` and `target`, because there is one patch under
+    audit at a time.
+
+    `None` between repairs, and `None` again once a patch ships or escalates — a
+    stale one left here is a patch a resumed run would audit a second time.
+
+    **The one channel whose size no cap bounds**, and S-6.3's limit is what holds
+    it: a diff and a test are the payload, `within_limit` measures the whole
+    state, and a test pins a realistic one against the 64 KiB ceiling rather than
+    assuming a patch is small.
+    """
+
     verdict: str | None = None
     """E9's finding-audit outcome. Left a string because E9 names the values."""
 
