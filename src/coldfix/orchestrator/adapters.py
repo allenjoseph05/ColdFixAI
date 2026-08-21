@@ -342,7 +342,23 @@ def audit_finding(resources: Resources, state: CheckpointedState) -> Mapping[str
         finding_id=target,
     )
 
-    return {"verdict": routing.verdict.verdict.name, **decided(routing.route)}
+    # **The reasoning is recorded, not just the answer.** S-12.5 puts a human
+    # here before any repair budget is spent, and *what was found and why* is
+    # exactly what `Routing.describe` says — the verdict, where it sends the run,
+    # and why that rather than the obvious. Writing only the verdict name would
+    # leave a person deciding whether to spend three attempts on a finding they
+    # can see the label of and not the argument for.
+    return {
+        "verdict": routing.verdict.verdict.name,
+        "flags": [
+            {
+                "finding_audit": routing.describe(),
+                "subject": routing.verdict.subject.value,
+                "spends_repair": routing.spends_repair,
+            }
+        ],
+        **decided(routing.route),
+    }
 
 
 def repair(resources: Resources, state: CheckpointedState) -> Mapping[str, object]:
