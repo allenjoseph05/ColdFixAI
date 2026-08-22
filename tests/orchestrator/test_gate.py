@@ -33,6 +33,7 @@ from coldfix.orchestrator.gate import (
     GateError,
     NotAtTheGateError,
     found,
+    gates_for,
     pending,
     waiting_at,
 )
@@ -40,6 +41,7 @@ from coldfix.orchestrator.graph import GraphError, Node, Wiring, assemble
 from coldfix.orchestrator.resume import progress_of, resume, start
 from coldfix.repair.patch import Patch
 from coldfix.state.checkpoint import CheckpointedState
+from coldfix.state.trust import Level
 from fixtures.chains import an_evidence_chain
 
 DIFF = """\
@@ -424,3 +426,41 @@ def test_the_later_audit_is_the_one_shown(chain: EvidenceChain) -> None:
     rounds = [earlier, *state.flags]
 
     assert found(state.model_copy(update={"flags": rounds})).spends_repair
+
+
+# ============================================ S-13.6 — what a level opens, and what it does not
+
+
+def test_a_new_project_compiles_both_gates() -> None:
+    """Level 0 is where every project starts, and it is what S-12.4 and S-12.5
+    hardcoded while no ledger existed."""
+    assert gates_for(Level.GATED) == {"gated": True, "early_review": True}
+
+
+def test_the_early_checkpoint_opens_one_level_before_the_ship_gate() -> None:
+    """**ADR 131's asymmetry, now spent rather than restated.** The early gate
+    guards a budget and the ship gate guards an irreversible outward act, so the
+    cheaper protection is the one to drop first."""
+    assert gates_for(Level.FAMILIAR) == {"gated": True, "early_review": False}
+
+
+def test_only_a_trusted_project_ships_without_a_human() -> None:
+    assert gates_for(Level.TRUSTED) == {"gated": False, "early_review": False}
+
+
+def test_a_level_zero_project_is_gated_while_another_is_trusted(tmp_path: Path) -> None:
+    """**AC 5.** F15's finding, reached through the gates: one project's earned
+    autonomy is not another's, and the compiled graph is where that becomes true
+    rather than intended."""
+    theirs = gates_for(Level.TRUSTED)
+    mine = gates_for(Level.GATED)
+
+    assert theirs["gated"] is False
+    assert mine["gated"] is True
+
+    store = tmp_path / "run.sqlite"
+    with for_development(store) as saver:
+        graph = assemble(build(), saver, **mine)
+        start(graph, "mine")
+
+        assert waiting_at(graph, "mine") == ("repair",), "still stopped at the first gate"

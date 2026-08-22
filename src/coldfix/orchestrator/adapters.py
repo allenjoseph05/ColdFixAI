@@ -69,6 +69,7 @@ from coldfix.repair.falsification import FalsificationTest
 from coldfix.repair.memory import recall, record_all
 from coldfix.repair.mustfail import Falsified
 from coldfix.repair.patch import Patch
+from coldfix.repair.slack import REVIEWED_AT_EVERY_LEVEL
 from coldfix.sandbox.modes import CandidateSession, DiagnosticSession, ExecutionMode, Workbench
 from coldfix.sandbox.patching import touched_paths
 from coldfix.screening.growth import screen as screen_workloads
@@ -77,6 +78,7 @@ from coldfix.state.checkpoint import CheckpointedState
 from coldfix.state.persistent import PersistentStore
 from coldfix.state.staleness import Coverage, ScreeningAction, screening_plan
 from coldfix.state.staleness import Patch as StalePatch
+from coldfix.state.trust import Outcome, record_outcome
 
 _INVESTIGATION_PROMPT = hypothesis._SYSTEM
 _EXPLANATION_PROMPT = explain._SYSTEM
@@ -193,14 +195,35 @@ class Resources:
     sessions: Sessions
     client: ModelClient
     budget: Budget
-    failures: PersistentStore
-    """What was tried for each finding and did not work. **Required, not optional.**
+    store: PersistentStore
+    """The journal, and **all three of its collections**. Required, not optional.
 
-    S-13.3 is what makes `repair`'s `remembered` non-empty, and a run without it
-    is a run that repeats itself after a rewind — F5's defect, which is the whole
-    reason the persistent store exists. An optional store would be a switch that
-    turns that guarantee off with nothing to justify it, which is the argument
-    S-12.4 made about the ship gate."""
+    Renamed from `failures` at S-13.6, because by then it was one store answering
+    three questions: what was tried for a finding and did not work (S-13.3), what
+    has been learned about projects of a kind (S-13.1), and what autonomy this
+    project has earned (S-13.4). A field named for one of them is a field the
+    next caller looks past.
+
+    An optional store would be a switch that turns those guarantees off with
+    nothing to justify it — S-12.4's argument about the ship gate, and the reason
+    a run without it repeats itself after a rewind."""
+
+    project: str
+    """Which project this campaign is about. **The ledger's unit.**
+
+    A level is *this project's own history*, and F15's whole finding is that
+    trust learned elsewhere is context rather than authority — so an outcome
+    recorded without a project would be somebody else's history counted as this
+    one's."""
+
+    trust_key: str
+    """What this campaign's outcomes are filed under: `ledger_key(category,
+    shape)`.
+
+    **Supplied, because neither half is derivable here.** The fix category is a
+    string nothing enumerates (S-13.4), and the shape is measured from the
+    workload's own observations — which the caller has and this module would have
+    to reach up through two packages to obtain."""
 
     revision: str
     """The commit every session opens against. One value, so a diagnostic and a
@@ -425,12 +448,12 @@ def repair(resources: Resources, state: CheckpointedState) -> Mapping[str, objec
             # already failed — F5's defect, held open on purpose until S-13.3
             # gave it a source. `attempts` is checkpointed and is therefore
             # exactly what a rewind discards; this is not.
-            remembered=recall(resources.failures, finding),
+            remembered=recall(resources.store, finding),
             finding_id=finding,
         )
 
     if not isinstance(outcome, Repaired):
-        record_all(resources.failures, finding, outcome.attempts)
+        record_all(resources.store, finding, outcome.attempts)
         return {
             "repaired": None,
             "attempts": [{"escalated": outcome.report()}],
@@ -442,7 +465,7 @@ def repair(resources: Resources, state: CheckpointedState) -> Mapping[str, objec
     # approach that passed its own test and failed the audit is exactly what the
     # next attempt must not re-propose. Writing only on escalation would forget
     # precisely the attempts that got furthest.
-    record_all(resources.failures, finding, outcome.attempts)
+    record_all(resources.store, finding, outcome.attempts)
     return {
         "repaired": _repaired(outcome, falsified),
         "attempts": [{"attempt": len(outcome.attempts), "patch": outcome.patch.describe()}],
@@ -521,8 +544,21 @@ def ship(resources: Resources, state: CheckpointedState) -> Mapping[str, object]
     the evidence chain, the guard metrics, the Adversary verdict — and a stub here
     would be a second, worse answer to a question two epics away.
     """
-    patch, _falsified = _repaired_from(_require(state.repaired, "repaired", "ship a patch"))
+    handover = _require(state.repaired, "repaired", "ship a patch")
+    patch, _falsified = _repaired_from(handover)
     finding = str(_require(state.target, "target", "ship a patch"))
+
+    # **§4 holds at any trust level, and this is where that is true rather than
+    # intended.** S-13.6 lets a project's ledger level compile the ship gate away,
+    # and a compile-time decision cannot see a patch that does not exist yet — so
+    # a `slack-reducing` one is refused *here*, after it exists, whatever
+    # `gates_for` returned. S-10.6 blocks auto-approval permanently; a level is
+    # not a thing that clears it.
+    if isinstance(handover, Mapping) and handover.get("slack_reducing"):
+        return {
+            "flags": [{"withheld": patch.describe(), "because": REVIEWED_AT_EVERY_LEVEL}],
+            **decided(FindingRoute.ESCALATE),
+        }
 
     # **The diff is what says which files moved, not a field beside it.** `Patch`
     # deliberately has no `files`: the agent would be restating what the diff
@@ -534,6 +570,14 @@ def ship(resources: Resources, state: CheckpointedState) -> Mapping[str, object]
         for name, entry in (state.screening or {}).items()
         if plan.get(name, ScreeningAction.SCREEN_AGAIN) is ScreeningAction.KEEP
     }
+
+    # **A shipped patch is a clean outcome, and the ledger learns from it.**
+    # S-13.4 built the levels and nothing moved them; without this the gate at
+    # `gates_for` can only ever read `GATED`, which is a ledger that exists and
+    # is not written — as useless as one that exists and is not read.
+    record_outcome(
+        resources.store, resources.trust_key, project=resources.project, outcome=Outcome.ACCEPTED
+    )
 
     return {
         "screening": surviving,
