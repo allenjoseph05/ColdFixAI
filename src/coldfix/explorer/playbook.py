@@ -36,6 +36,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -337,3 +338,70 @@ def trusted(store: PersistentStore, key: str) -> tuple[PlaybookEntry, ...]:
     quarantined one does not reach it at all.
     """
     return tuple(item.entry for item in standings(store, key) if item.trusted)
+
+
+# ============================================================ S-13.6: writing one down
+
+
+class PlaybookWriter(Protocol):
+    """Somewhere to file what grounding learned. Supplied, never built here.
+
+    A callable rather than a store, for `PlaybookLookup`'s reason: `compose`
+    would otherwise have to hold a `PersistentStore` and a key, and grounding a
+    repository is not a thing that should need a database to be *possible* — only
+    to be remembered.
+    """
+
+    def __call__(self, entry: PlaybookEntry) -> None: ...
+
+
+def no_record(entry: PlaybookEntry) -> None:
+    """The writer used when there is nowhere to file anything.
+
+    A function rather than `None`, so that *recorded nowhere* and *not recorded*
+    are the same call site — the mirror of `no_playbook`, and for the same reason:
+    S-13.5 measures whether the tenth project of a kind grounds faster than the
+    first, which needs the write to have been attempted.
+    """
+    del entry
+
+
+def writer(store: PersistentStore, key: str) -> PlaybookWriter:
+    """File entries under one fingerprint key. **S-13.6's half of the seam.**
+
+    **Everything written here is provisional**, and that is structural rather
+    than a promise: `record` appends an entry and nothing else, and an entry only
+    becomes trusted when three *different* projects have recorded a successful
+    use of it through `note_use`. There is no argument on this function through
+    which something could be written already believed.
+    """
+
+    def file(entry: PlaybookEntry) -> None:
+        record(store, key, entry)
+
+    return file
+
+
+def learned_from_auth(*, requirement: str, credential: str | None, resolved: bool) -> PlaybookEntry:
+    """What the auth stage learned, as an entry. **F4's own example, written down.**
+
+    F4's poison is *"DRF always uses TokenAuthentication"* — a claim about what a
+    project of a kind requires. So the situation is what this project's route
+    turned out to require, the action is what was done about it, and the outcome
+    is whether the route could then be driven.
+
+    **The outcome is what happened, not whether it was right.** A resolution that
+    failed is worth recording: the next project of this kind learns that this
+    approach did not work here, which is half of what a playbook is for.
+    """
+    return PlaybookEntry(
+        situation=f"the route required {requirement}",
+        action=(
+            f"minted a credential: {credential}"
+            if credential
+            else "no credential was needed, so none was made"
+        ),
+        outcome=(
+            "the route could then be requested" if resolved else "the route stayed unreachable"
+        ),
+    )
