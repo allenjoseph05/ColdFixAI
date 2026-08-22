@@ -23,16 +23,9 @@ from typing import Any
 import pytest
 from pydantic import JsonValue
 
-from coldfix.bench.stats import Growth
 from coldfix.diagnosis.chain import (
     EvidenceChain,
-    Implicated,
-    LocalizationLink,
-    Site,
-    Symptom,
 )
-from coldfix.diagnosis.exclusions import Conditions, Exclusion
-from coldfix.diagnosis.log import ExperimentLog, Verdict
 from coldfix.orchestrator.adapters import MissingInputError
 from coldfix.orchestrator.checkpointing import for_development
 from coldfix.orchestrator.gate import (
@@ -45,9 +38,9 @@ from coldfix.orchestrator.gate import (
 )
 from coldfix.orchestrator.graph import GraphError, Node, Wiring, assemble
 from coldfix.orchestrator.resume import progress_of, resume, start
-from coldfix.primitives.scaling import Distribution
 from coldfix.repair.patch import Patch
 from coldfix.state.checkpoint import CheckpointedState
+from fixtures.chains import an_evidence_chain
 
 DIFF = """\
 --- a/shop/views.py
@@ -311,55 +304,8 @@ def test_resuming_a_parked_run_runs_ship_once(tmp_path: Path) -> None:
 @pytest.fixture
 def chain() -> EvidenceChain:
     """A real chain, because `pending` validates one and a stub would only prove
-    that the stub validates.
-
-    Built here rather than shared: every test file in this project that needs one
-    builds its own, and hoisting them into a fixture module is a change to test
-    infrastructure that S-12.4 has no reason to make.
-    """
-    log = ExperimentLog()
-    excluded = log.append(
-        hypothesis="the database is the bottleneck",
-        primitive="scaling.volume",
-        rationale="queries have not been counted against volume yet",
-        target="shop.books.list",
-        design="scaling.volume(scales=[10, 100, 1000])",
-        measurement={"db.query": 2.0},
-        verdict=Verdict.REJECTED,
-        outcome="queries flat at 2 across a 100x sweep",
-    )
-    confirmed = log.append(
-        hypothesis="the serializer re-renders the author for every book",
-        primitive="ablation.stub",
-        rationale="the serializer is the only component not yet stubbed",
-        target="BookSerializer.to_representation",
-        design="ablation.stub(attribute='to_representation')",
-        measurement={"seconds": 8.24, "seconds.share_removed": 0.89, "rows": 1000.0},
-        verdict=Verdict.CONFIRMED,
-        outcome="stubbing the serializer removed 89% of wall time",
-    )
-    conditions = Conditions.of(
-        fixture_shape=Distribution.UNIFORM.value,
-        platform="x86_64-linux",
-        concurrency=1,
-        scales=[10, 100, 1000],
-    )
-    return EvidenceChain.assemble(
-        symptom=Symptom(metric="seconds", magnitude=8.24, at_scale=1000),
-        exclusions=[Exclusion(experiment=excluded, conditions=conditions)],
-        localization=[
-            LocalizationLink(
-                scope="BookSerializer.to_representation",
-                experiment=confirmed,
-                share_of_cost=0.89,
-                basis="8.24s baseline against 0.90s ablated",
-            )
-        ],
-        mechanism="the serializer re-renders the author for every book",
-        complexity={"rows": Growth.LINEAR},
-        site=Site(path="shop/serializers.py", first_line=41, last_line=52),
-        context=[Implicated(path="shop/models.py", reason="declares the Author relation")],
-    )
+    that the stub validates. Shared, because three files wanted the same one."""
+    return an_evidence_chain()
 
 
 def test_the_gate_error_hierarchy_lets_a_caller_tell_the_two_apart() -> None:

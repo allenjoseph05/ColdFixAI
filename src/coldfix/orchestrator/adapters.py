@@ -66,6 +66,7 @@ from coldfix.repair import patch as patch_module
 from coldfix.repair.compose import Repaired, gate_and_audit
 from coldfix.repair.compose import repair as compose_repair
 from coldfix.repair.falsification import FalsificationTest
+from coldfix.repair.memory import recall, record_all
 from coldfix.repair.mustfail import Falsified
 from coldfix.repair.patch import Patch
 from coldfix.sandbox.modes import CandidateSession, DiagnosticSession, ExecutionMode, Workbench
@@ -73,6 +74,7 @@ from coldfix.sandbox.patching import touched_paths
 from coldfix.screening.growth import screen as screen_workloads
 from coldfix.screening.workload import BoundWorkload, Workload
 from coldfix.state.checkpoint import CheckpointedState
+from coldfix.state.persistent import PersistentStore
 from coldfix.state.staleness import Coverage, ScreeningAction, screening_plan
 from coldfix.state.staleness import Patch as StalePatch
 
@@ -191,6 +193,15 @@ class Resources:
     sessions: Sessions
     client: ModelClient
     budget: Budget
+    failures: PersistentStore
+    """What was tried for each finding and did not work. **Required, not optional.**
+
+    S-13.3 is what makes `repair`'s `remembered` non-empty, and a run without it
+    is a run that repeats itself after a rewind — F5's defect, which is the whole
+    reason the persistent store exists. An optional store would be a switch that
+    turns that guarantee off with nothing to justify it, which is the argument
+    S-12.4 made about the ship gate."""
+
     revision: str
     """The commit every session opens against. One value, so a diagnostic and a
     candidate session cannot silently be measuring two different trees."""
@@ -409,16 +420,29 @@ def repair(resources: Resources, state: CheckpointedState) -> Mapping[str, objec
             candidate=_candidate(candidate),
             measured_prefix_tokens=resources.tokens.prefix,
             measured_prompt_tokens=resources.tokens.prompt,
+            # **The half a rewind cannot reach.** S-12.6 added this parameter and
+            # left it empty, so a rewound run repeated the approach that had
+            # already failed — F5's defect, held open on purpose until S-13.3
+            # gave it a source. `attempts` is checkpointed and is therefore
+            # exactly what a rewind discards; this is not.
+            remembered=recall(resources.failures, finding),
             finding_id=finding,
         )
 
     if not isinstance(outcome, Repaired):
+        record_all(resources.failures, finding, outcome.attempts)
         return {
             "repaired": None,
             "attempts": [{"escalated": outcome.report()}],
             **decided(FindingRoute.ESCALATE),
         }
 
+    # **Recorded before the patch is handed on, and including the one that
+    # worked.** S-11.7 can send it back after the Adversary breaks it, and an
+    # approach that passed its own test and failed the audit is exactly what the
+    # next attempt must not re-propose. Writing only on escalation would forget
+    # precisely the attempts that got furthest.
+    record_all(resources.failures, finding, outcome.attempts)
     return {
         "repaired": _repaired(outcome, falsified),
         "attempts": [{"attempt": len(outcome.attempts), "patch": outcome.patch.describe()}],

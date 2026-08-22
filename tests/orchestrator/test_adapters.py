@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from typing import Any, cast
 
 import pytest
@@ -43,9 +44,11 @@ from coldfix.orchestrator.graph import GraphError, Node, Wiring, assemble, order
 from coldfix.repair.compose import Repaired
 from coldfix.repair.falsification import Cheat, CostClaim, FalsificationTest, Guard
 from coldfix.repair.mustfail import Falsified
-from coldfix.repair.patch import Patch
+from coldfix.repair.patch import Attempt, Patch
 from coldfix.repair.slack import Classification
+from coldfix.sandbox.modes import CandidateSession, DiagnosticSession, ExecutionMode
 from coldfix.state.checkpoint import CheckpointedState
+from fixtures.chains import an_evidence_chain
 
 DIFF = """\
 --- a/shop/rendering.py
@@ -285,6 +288,7 @@ def test_the_bound_steps_are_what_the_graph_will_accept() -> None:
             sessions=unused(),
             client=unused(),
             budget=unused(),
+            failures=unused(),
             revision="HEAD",
             ground=unused(),
             bind=unused(),
@@ -310,3 +314,162 @@ def test_a_wiring_missing_a_step_is_refused_rather_than_compiled() -> None:
     straight through the phase and the state simply never gains what it produces."""
     with pytest.raises(GraphError, match="no step supplied for"):
         assemble(Wiring(**{**{item.value: unused() for item in Node}, "ship": None}), gated=False)
+
+
+@pytest.fixture
+def chain_state() -> CheckpointedState:
+    """A state parked where `repair` reads: a target and a chain behind it."""
+    return CheckpointedState(
+        target="shop.books.list",
+        chain=an_evidence_chain().model_dump(mode="json"),
+    )
+
+
+# ==================================================== S-13.3 — the memory is consulted
+
+
+class FakeDiagnostic(DiagnosticSession):
+    """A diagnostic worktree that is opened and closed and does nothing else.
+
+    **Subclassed rather than duck-typed**, because `_diagnostic` and `_candidate`
+    check the type — the two sessions are the pair S-2.3 keeps apart, and an
+    adapter that accepted either would be the place that separation is lost. The
+    guards rejected a plain fake, which is them working.
+    """
+
+    def __init__(self) -> None:
+        return None
+
+    def __enter__(self) -> FakeDiagnostic:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+
+class FakeCandidate(CandidateSession):
+    def __init__(self) -> None:
+        return None
+
+    def __enter__(self) -> FakeCandidate:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+
+class FakeWorkbench:
+    def open(self, revision: str, *, mode: ExecutionMode) -> DiagnosticSession | CandidateSession:
+        del revision
+        return FakeDiagnostic() if mode is ExecutionMode.DIAGNOSTIC else FakeCandidate()
+
+
+class FakeStore:
+    """A failure memory that records what it was asked and told."""
+
+    def __init__(self, holds: list[Attempt] | None = None) -> None:
+        self.holds = holds or []
+        self.asked: list[str] = []
+        self.written: list[tuple[str, Attempt]] = []
+
+
+def a_repair_attempt(approach: str = "prefetch") -> Attempt:
+    return Attempt(
+        patch=Patch(diff=DIFF, approach=approach, rationale="the sweep says so"),
+        failure="still 1001 queries",
+    )
+
+
+def wire_repair(monkeypatch: pytest.MonkeyPatch, store: FakeStore) -> dict[str, Any]:
+    """Replace the epic calls and the store, leaving the adapter's own wiring.
+
+    **The point is what the adapter passes**, not what `repair` does with it —
+    Epic 10 has its own composition check for that. So the two model-calling
+    halves are recorded rather than run.
+    """
+    seen: dict[str, Any] = {}
+
+    def fake_recall(_store: Any, finding: str) -> tuple[Attempt, ...]:
+        store.asked.append(finding)
+        return tuple(store.holds)
+
+    def fake_record(_store: Any, finding: str, attempts: Sequence[Attempt]) -> int:
+        store.written.extend((finding, item) for item in attempts)
+        return len(attempts)
+
+    monkeypatch.setattr(adapters, "recall", fake_recall)
+    monkeypatch.setattr(adapters, "record_all", fake_record)
+    monkeypatch.setattr(
+        adapters,
+        "gate_and_audit",
+        lambda *a, **k: (a_falsified(), object()),
+    )
+
+    def fake_repair(*_a: Any, **kwargs: Any) -> Repaired:
+        seen.update(kwargs)
+        return Repaired(
+            patch=a_patch(),
+            classification=Classification(removals=()),
+            attempts=(a_repair_attempt("first"), a_repair_attempt("second")),
+        )
+
+    monkeypatch.setattr(adapters, "compose_repair", fake_repair)
+    return seen
+
+
+def repair_resources(store: FakeStore) -> Resources:
+    return Resources(
+        workbench=cast(Any, FakeWorkbench()),
+        sessions=lambda system: cast(Any, object()),
+        client=unused(),
+        budget=unused(),
+        failures=cast(Any, store),
+        revision="HEAD",
+        ground=unused(),
+        bind=unused(),
+        measure=unused(),
+        instruments=unused(),
+        executor=unused(),
+        probe=unused(),
+        source="shop/views.py",
+        suite_command=["pytest"],
+        metric="seconds",
+        tokens=Tokens(prefix=8000, prompt=900),
+    )
+
+
+def test_the_repair_node_hands_the_surgeon_what_the_store_remembers(
+    monkeypatch: pytest.MonkeyPatch, chain_state: CheckpointedState
+) -> None:
+    """**The join S-13.3 exists to make, and it was found by sabotage.**
+
+    `remembered` was a parameter nothing filled, and removing
+    `remembered=recall(...)` from this adapter changed no test outcome — the
+    adapter tests covered translation and the repair tests supplied `remembered`
+    by hand, so neither held both ends. This holds both ends.
+    """
+    store = FakeStore([a_repair_attempt("prefetch")])
+    seen = wire_repair(monkeypatch, store)
+
+    adapters.repair(repair_resources(store), chain_state)
+
+    assert store.asked == ["shop.books.list"], "asked for this finding's memory"
+    assert [item.patch.approach for item in seen["remembered"]] == ["prefetch"]
+
+
+def test_the_repair_node_records_every_attempt_it_made(
+    monkeypatch: pytest.MonkeyPatch, chain_state: CheckpointedState
+) -> None:
+    """**Including the one that worked.** S-11.7 can send it back after the
+    Adversary breaks it, and an approach that passed its own test and failed the
+    audit is exactly what the next attempt must not re-propose."""
+    store = FakeStore()
+    wire_repair(monkeypatch, store)
+
+    adapters.repair(repair_resources(store), chain_state)
+
+    assert [approach for _f, a in store.written for approach in [a.patch.approach]] == [
+        "first",
+        "second",
+    ]
+    assert {finding for finding, _a in store.written} == {"shop.books.list"}
