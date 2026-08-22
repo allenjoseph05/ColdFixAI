@@ -35,8 +35,12 @@ from coldfix.explorer.entrypoints import (
 )
 from coldfix.explorer.fingerprint import Detected, Fingerprint, Framework
 from coldfix.explorer.playbook import (
+    DEMOTION_THRESHOLD,
+    PROMOTION_THRESHOLD,
     PlaybookEntry,
     PlaybookError,
+    Standing,
+    Status,
     as_entry,
     describe_all,
     from_entry,
@@ -252,3 +256,68 @@ def _never_used() -> VerifiedReset:
     """A reset proof the test never reaches: it stops at `resolve_auth`, which is
     six stages before emission."""
     return cast(VerifiedReset, object())
+
+
+# ==================================================== S-13.2 — what may be believed
+
+
+def standing(*, succeeded_on: Sequence[str] = (), failures: int = 0) -> Standing:
+    return Standing(entry=an_entry(), succeeded_on=frozenset(succeeded_on), failures=failures)
+
+
+def test_a_new_entry_is_provisional() -> None:
+    """**F4's first point.** Written is not earned — *the Explorer writes playbook
+    entries that all future runs trust*, and nothing validated a write."""
+    assert standing().status is Status.PROVISIONAL
+    assert not standing().trusted
+
+
+def test_promotion_counts_projects_and_not_uses() -> None:
+    """**Fifty successes on one project is one project's opinion.**
+
+    F15 reaches the same conclusion from the trust-ledger side: *a select_related
+    fix approved 50 times may have been on projects with narrow tables.* Trust
+    learned in one place is context, not authority.
+    """
+    same_project_repeatedly = standing(succeeded_on=["shop"] * 9)
+
+    assert same_project_repeatedly.status is Status.PROVISIONAL
+
+
+def test_enough_different_projects_promotes() -> None:
+    promoted = standing(succeeded_on=["shop", "blog", "billing"])
+
+    assert promoted.status is Status.TRUSTED
+    assert len(promoted.succeeded_on) == PROMOTION_THRESHOLD
+
+
+def test_one_short_is_still_provisional() -> None:
+    """The boundary, from below. Without this the threshold could be anything
+    less than three and the test above would still pass."""
+    assert standing(succeeded_on=["shop", "blog"]).status is Status.PROVISIONAL
+
+
+def test_two_failures_quarantine() -> None:
+    """F4's third point, verbatim: *an entry that fails twice is demoted and
+    quarantined.*"""
+    assert standing(failures=DEMOTION_THRESHOLD).status is Status.QUARANTINED
+
+
+def test_a_quarantined_entry_cannot_be_outvoted_by_successes() -> None:
+    """**The order of the checks is the safety property.**
+
+    F4's remedy for a poisoned entry is that it stops being offered. A rule where
+    successes outweighed failures would let a widely-repeated mistake earn its
+    way back — which is the compounding F4 names.
+    """
+    popular_and_broken = standing(succeeded_on=["a", "b", "c", "d", "e"], failures=2)
+
+    assert popular_and_broken.status is Status.QUARANTINED
+    assert not popular_and_broken.trusted
+
+
+def test_trust_is_strictly_harder_to_reach_than_quarantine() -> None:
+    """Otherwise an entry with two successes and two failures is both at once,
+    and which one wins is decided by the order of two `if`s rather than by a
+    reason."""
+    assert PROMOTION_THRESHOLD > DEMOTION_THRESHOLD
