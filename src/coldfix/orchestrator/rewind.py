@@ -97,7 +97,7 @@ def history(graph: Any, run_id: str) -> tuple[Point, ...]:  # noqa: ANN401 - see
 
 
 def before(graph: Any, run_id: str, node: Node) -> Point:  # noqa: ANN401 - see `assemble`
-    """The checkpoint the run was at just before it took `node`.
+    """The checkpoint to rewind to so the run re-enters `node`.
 
     **Addressed by the node rather than by a checkpoint id**, because that is how
     the decision is actually made: somebody rewinds *to before the repair*, not to
@@ -106,22 +106,49 @@ def before(graph: Any, run_id: str, node: Node) -> Point:  # noqa: ANN401 - see 
 
     **The first such point, not the last.** A graph with a cycle visits `repair`
     more than once — S-11.7 sends a broken patch back — and *before the repair*
-    means before the first of them, since rewinding to the second keeps the
-    attempt that the rewind is presumably about.
+    means before the first of them. A run that has already been rewound has
+    several, and taking the first keeps *rewind to before the repair* meaning the
+    same point however many times it is asked.
+
+    **For a gated node this is one step earlier, and Epic 12's composition check
+    is what found why.** The checkpoint whose next step is `repair` is the same
+    checkpoint a gated run *parks* at, and `invoke(None, ...)` from there is what
+    a human approving the gate does. So rewinding to it ran repair immediately —
+    measured: a fresh run parked at `repair`, and a rewind to the identical point
+    ran straight through to `ship`. **A rewind to a gate silently counted as
+    approving it**, which is the opposite of what somebody reconsidering the
+    direction is asking for.
+
+    Targeting the checkpoint one earlier makes the run *re-enter* the node, and
+    the interrupt fires as it does on any other entry. That re-runs the preceding
+    phase, which costs a model call — so it is done only where a gate would
+    otherwise be skipped, and `interrupt_before_nodes` is asked rather than
+    assumed.
 
     Raises:
         NoSuchCheckpointError: the run never stood before that node.
     """
-    for point in history(graph, run_id):
+    points = history(graph, run_id)
+    for index, point in enumerate(points):
         if node.value in point.next_nodes:
-            return point
+            return points[index - 1] if _gated(graph, node) and index else point
 
-    reached = sorted({name for item in history(graph, run_id) for name in item.next_nodes})
+    reached = sorted({name for item in points for name in item.next_nodes})
     message = (
         f"this run never stood before {node.value!r}, so there is no checkpoint to rewind to. "
         f"It was about to take: {reached or 'nothing — nothing was ever checkpointed'}"
     )
     raise NoSuchCheckpointError(message)
+
+
+def _gated(graph: Any, node: Node) -> bool:  # noqa: ANN401 - see `assemble`
+    """Whether the compiled graph parks before `node`.
+
+    Asked of the graph rather than passed in, because the answer is a property of
+    how it was compiled and a caller repeating it would be a second statement of
+    the same fact — wrong the first time somebody assembles with different gates.
+    """
+    return node.value in set(getattr(graph, "interrupt_before_nodes", ()) or ())
 
 
 def rewind(graph: Any, point: Point) -> Mapping[str, Any]:  # noqa: ANN401 - see `assemble`
