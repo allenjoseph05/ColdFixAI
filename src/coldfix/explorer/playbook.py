@@ -31,11 +31,20 @@ silently to all future runs and compounds*.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from coldfix.state.persistent import Collection, Entry, PersistentStore
+from coldfix.state.persistent import (
+    Collection,
+    Entry,
+    PersistentStore,
+    PersistentStoreError,
+)
 
 
 class PlaybookError(Exception):
@@ -80,12 +89,37 @@ class PlaybookEntry(BaseModel):
             raise ValueError(message)
         return value
 
+    def digest(self) -> str:
+        """A stable identity for this entry, so a use can name which one it was.
+
+        Canonical JSON — sorted keys, fixed separators — so the digest is a
+        property of the entry rather than of how the object was assembled, which
+        is `Experiment.digest`'s construction and for the same reason: two
+        processes that recorded the same entry must agree about it.
+        """
+        rendered = json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(rendered.encode()).hexdigest()[:16]
+
     def describe(self) -> str:
         return f"when {self.situation}: {self.action} — {self.outcome}"
 
 
+ENTRY = "entry"
+USE = "use"
+"""What kind of record a journal row is.
+
+**The row and the thing are two schemas, and this is the seam between them.**
+`PlaybookEntry` stays the three fields S-13.1's criterion names — adding a fourth
+is the mistake that story refused — while the *row* carries a discriminator,
+because S-13.2 files uses under the same key and a reader has to tell them apart.
+Explicit rather than inferred from shape: a row with neither tag is a corrupt
+record and must raise, and a row tagged `use` is a different record and must be
+skipped. Guessing from which fields happen to be present would collapse those.
+"""
+
+
 def as_entry(entry: PlaybookEntry) -> Mapping[str, str]:
-    return dict(entry.model_dump(mode="json"))
+    return {"kind": ENTRY, **entry.model_dump(mode="json")}
 
 
 def from_entry(entry: Mapping[str, object]) -> PlaybookEntry:
@@ -99,7 +133,9 @@ def from_entry(entry: Mapping[str, object]) -> PlaybookEntry:
             one.
     """
     try:
-        return PlaybookEntry.model_validate(entry)
+        return PlaybookEntry.model_validate(
+            {name: value for name, value in entry.items() if name != "kind"}
+        )
     except ValidationError as error:
         message = (
             f"this playbook entry is not one this system wrote: {error.errors()[0]['msg']}. It "
@@ -109,13 +145,22 @@ def from_entry(entry: Mapping[str, object]) -> PlaybookEntry:
 
 
 def recall(store: PersistentStore, key: str) -> tuple[PlaybookEntry, ...]:
-    """Everything filed under this fingerprint key, oldest first.
+    """Every entry filed under this fingerprint key, oldest first.
 
     Oldest first because the journal's order is what is being preserved — *what
     was learned and in what order* — and a reader sorted by recency would present
     a superseded lesson and a current one alike.
+
+    **Uses are skipped and corrupt rows are not.** A row tagged `use` is a record
+    this module wrote for a different purpose; a row tagged neither is one nobody
+    can account for, and `from_entry` says so. Collapsing the two would let a
+    malformed entry disappear as quietly as a use.
     """
-    return tuple(from_entry(item.entry) for item in store.read(Collection.PLAYBOOKS, key))
+    return tuple(
+        from_entry(item.entry)
+        for item in store.read(Collection.PLAYBOOKS, key)
+        if item.entry.get("kind") != USE
+    )
 
 
 def record(store: PersistentStore, key: str, entry: PlaybookEntry) -> Entry:
@@ -147,3 +192,148 @@ def describe_all(entries: Sequence[PlaybookEntry]) -> str:
     lines = [f"playbook: {len(entries)} entry(s) for projects of this kind"]
     lines.extend(f"  {item.describe()}" for item in entries)
     return "\n".join(lines)
+
+
+# ============================================================ S-13.2: what may be believed
+
+PROMOTION_THRESHOLD = 3
+"""Successful uses on **distinct** projects before an entry may be trusted.
+
+F4 says *N successful uses across different projects* and does not fix N, so this
+is a decision rather than a transcription. Two is the smallest number for which
+*different projects* means anything at all, and is therefore the weakest reading
+that satisfies the words; three is the smallest that survives one coincidence —
+two projects sharing a wrong belief is an ordinary thing when both are built from
+the same tutorial.
+
+**It must also exceed the demotion threshold**, or an entry with two successes
+and two failures is simultaneously promotable and quarantined. Trust being
+strictly harder to reach than quarantine is the asymmetry a safety property
+wants.
+"""
+
+DEMOTION_THRESHOLD = 2
+"""Failures after which an entry is quarantined. F4's *fails twice*, verbatim."""
+
+
+class Status(StrEnum):
+    """What may be done with an entry. **F4's three states.**"""
+
+    PROVISIONAL = "provisional: written but not yet earned, and not to be acted on"
+    TRUSTED = "trusted: it worked on enough different projects"
+    QUARANTINED = "quarantined: it failed twice and is not offered again"
+
+
+@dataclass(frozen=True)
+class Standing:
+    """One entry and everything recorded about how it has gone.
+
+    **The counters are derived, and F4 assumes otherwise.** It says entries
+    *carry a use counter with success and failure tallies* — but the journal is
+    append-only at the database level, where a trigger refuses `UPDATE`, `DELETE`
+    and `TRUNCATE`. A counter on the entry could never be incremented. So a use
+    is its own appended row and the tally is a fold over them, which is a better
+    answer than the one the audit imagined: **the evidence for a promotion is
+    itself append-only**, so nothing can quietly raise a count.
+    """
+
+    entry: PlaybookEntry
+    succeeded_on: frozenset[str]
+    failures: int
+
+    @property
+    def status(self) -> Status:
+        """**Quarantine is checked first, and the order is the safety property.**
+
+        An entry that failed twice is quarantined however many successes it also
+        has: F4's remedy for a poisoned entry is that it stops being offered, and
+        a rule that let successes outvote failures would let a widely-repeated
+        mistake earn its way back.
+        """
+        if self.failures >= DEMOTION_THRESHOLD:
+            return Status.QUARANTINED
+        if len(self.succeeded_on) >= PROMOTION_THRESHOLD:
+            return Status.TRUSTED
+        return Status.PROVISIONAL
+
+    @property
+    def trusted(self) -> bool:
+        return self.status is Status.TRUSTED
+
+    def describe(self) -> str:
+        return (
+            f"{self.status.value}\n  {self.entry.describe()}\n"
+            f"  worked on {len(self.succeeded_on)} project(s), failed {self.failures} time(s)"
+        )
+
+
+def note_use(
+    store: PersistentStore, key: str, entry: PlaybookEntry, *, project: str, worked: bool
+) -> Entry:
+    """Record that this entry was used on this project, and how it went.
+
+    `project` is what makes promotion mean *across different projects* rather
+    than *often*. Fifty successes on one project is one project's opinion, which
+    is exactly F15's finding about the trust ledger — trust learned elsewhere is
+    context, not authority — reached from the playbook side.
+
+    Raises:
+        PersistentStoreError: an empty project, which would make a use
+            unattributable and let one project promote an entry by itself.
+    """
+    if not project.strip():
+        message = (
+            "a use needs the project it was used on. Promotion is *across different projects*, "
+            "and an unattributed use is one that could have come from the same project every "
+            "time — which is the tally F15 says is not authority"
+        )
+        raise PersistentStoreError(message)
+
+    return store.append(
+        Collection.PLAYBOOKS,
+        key=key,
+        entry={"kind": USE, "of": entry.digest(), "project": project, "worked": worked},
+    )
+
+
+def standings(store: PersistentStore, key: str) -> tuple[Standing, ...]:
+    """Every entry under this key with what has been recorded about it.
+
+    **Fingerprint-scoped, never global**, which is F4's fourth point and comes
+    free from the key: `store.read` takes one, and there is no call here that
+    reads the collection whole. An entry learned about Django 5 is not offered to
+    a Flask project because nothing asks for it under that key.
+    """
+    rows = store.read(Collection.PLAYBOOKS, key)
+    entries = [from_entry(row.entry) for row in rows if row.entry.get("kind") != USE]
+    uses = [row.entry for row in rows if row.entry.get("kind") == USE]
+
+    return tuple(
+        Standing(
+            entry=item,
+            succeeded_on=frozenset(
+                str(use["project"])
+                for use in uses
+                if use.get("of") == item.digest() and use.get("worked")
+            ),
+            failures=sum(
+                1 for use in uses if use.get("of") == item.digest() and not use.get("worked")
+            ),
+        )
+        for item in entries
+    )
+
+
+def trusted(store: PersistentStore, key: str) -> tuple[PlaybookEntry, ...]:
+    """Only the entries that have earned it. **AC 5's protection.**
+
+    A caller acting on a playbook asks this rather than `recall`. A provisional
+    entry is still *readable* — the Explorer may be shown it as context, and
+    `resolve_auth` carries entries unread for exactly that reason — but nothing
+    that acts on one should be reading a list that contains it.
+
+    So a wrong entry learned on one project reaches a different project as
+    something nobody may act on until two more projects have agreed, and a
+    quarantined one does not reach it at all.
+    """
+    return tuple(item.entry for item in standings(store, key) if item.trusted)

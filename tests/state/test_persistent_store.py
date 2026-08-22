@@ -24,6 +24,17 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import JsonValue
 
 from coldfix.bench.execute import execute
+from coldfix.explorer.playbook import (
+    PlaybookEntry,
+    Status,
+    note_use,
+    record,
+    standings,
+    trusted,
+)
+from coldfix.explorer.playbook import (
+    recall as recall_playbook,
+)
 from coldfix.repair.memory import recall, remember
 from coldfix.repair.patch import Attempt, Patch
 from coldfix.sandbox import docker_available
@@ -458,3 +469,101 @@ def test_failure_memory_is_read_per_finding(store: PersistentStore) -> None:
 
     assert [item.patch.approach for item in recall(store, "shop.books.list")] == ["prefetch"]
     assert [item.patch.approach for item in recall(store, "shop.slow_import")] == ["lazy import"]
+
+
+# ------------------------------------------- S-13.2, against the journal that refuses UPDATE
+
+
+@pytest.mark.postgres
+@pytest.mark.slow
+def test_a_wrong_provisional_entry_does_not_affect_a_different_project(
+    store: PersistentStore,
+) -> None:
+    """**S-13.2 AC 5, and F4's own example of the poison.**
+
+    *A wrong entry — "DRF always uses TokenAuthentication" — propagates silently
+    and compounds.* Project A learns it and it works there once. Project B has the
+    same fingerprint, so it **sees** the entry; what it must not do is act on it.
+    """
+    poison = PlaybookEntry(
+        situation="the project installs djangorestframework",
+        action="assume TokenAuthentication and mint a token",
+        outcome="the list endpoint answered 200",
+    )
+    record(store, "Django/5", poison)
+    note_use(store, "Django/5", poison, project="project-a", worked=True)
+
+    # Project B, same fingerprint key, asks what it may act on.
+    assert trusted(store, "Django/5") == (), "one project's success is not authority"
+    assert [item.status for item in standings(store, "Django/5")] == [Status.PROVISIONAL]
+    assert recall_playbook(store, "Django/5") == (poison,), (
+        "still readable as context, just not trusted"
+    )
+
+
+@pytest.mark.postgres
+@pytest.mark.slow
+def test_three_different_projects_promote_and_a_fourth_may_act_on_it(
+    store: PersistentStore,
+) -> None:
+    sound = PlaybookEntry(
+        situation="the settings module names a custom AUTH_USER_MODEL",
+        action="create the user through get_user_model() rather than User",
+        outcome="the fixture seeded without an integrity error",
+    )
+    record(store, "Django/5", sound)
+    for project in ("shop", "blog", "billing"):
+        note_use(store, "Django/5", sound, project=project, worked=True)
+
+    assert trusted(store, "Django/5") == (sound,)
+
+
+@pytest.mark.postgres
+@pytest.mark.slow
+def test_two_failures_quarantine_an_entry_that_had_been_trusted(
+    store: PersistentStore,
+) -> None:
+    """**Demotion is real, not just a label on a new entry.**
+
+    The journal refuses `UPDATE`, so nothing rewrites the entry — the two
+    failures are appended and the standing is recomputed. That is what makes the
+    evidence for a demotion as durable as the evidence for the promotion.
+    """
+    entry = PlaybookEntry(situation="s", action="a", outcome="o")
+    record(store, "Django/5", entry)
+    for project in ("shop", "blog", "billing"):
+        note_use(store, "Django/5", entry, project=project, worked=True)
+    assert trusted(store, "Django/5") == (entry,), "trusted first"
+
+    note_use(store, "Django/5", entry, project="wide-tables", worked=False)
+    note_use(store, "Django/5", entry, project="legacy", worked=False)
+
+    assert trusted(store, "Django/5") == (), "and quarantined after"
+    assert [item.status for item in standings(store, "Django/5")] == [Status.QUARANTINED]
+
+
+@pytest.mark.postgres
+@pytest.mark.slow
+def test_entries_are_fingerprint_scoped_and_never_global(store: PersistentStore) -> None:
+    """F4's fourth point. Nothing here reads the collection whole, so an entry
+    learned about Django 5 is not offered to a Flask project."""
+    entry = PlaybookEntry(situation="s", action="a", outcome="o")
+    record(store, "Django/5", entry)
+    for project in ("shop", "blog", "billing"):
+        note_use(store, "Django/5", entry, project=project, worked=True)
+
+    assert trusted(store, "Django/5") == (entry,)
+    assert trusted(store, "Flask/2") == ()
+    assert recall_playbook(store, "Flask/2") == ()
+
+
+@pytest.mark.postgres
+@pytest.mark.slow
+def test_a_use_with_no_project_is_refused(store: PersistentStore) -> None:
+    """An unattributed use is one that could have come from the same project
+    every time, which is the tally F15 says is not authority."""
+    entry = PlaybookEntry(situation="s", action="a", outcome="o")
+    record(store, "Django/5", entry)
+
+    with pytest.raises(PersistentStoreError, match="needs the project it was used on"):
+        note_use(store, "Django/5", entry, project="   ", worked=True)
