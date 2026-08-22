@@ -54,8 +54,22 @@ def build(die_at: str | None) -> Wiring:
 
 def main() -> int:
     store, run_id, die_at = sys.argv[1], sys.argv[2], sys.argv[3]
+
+    # **A fourth argument, added by Epic 12's composition check.** S-12.3's tests
+    # want an ungated run, because a run that parks at a gate never reaches the
+    # nodes whose writes they check. The composition wants the opposite: the
+    # epic's sentence is *durable execution across hours, crashes, and multi-day
+    # human gates*, and a crash during a **gated** run is the join where those
+    # two halves meet. Defaulted so every existing caller is unchanged.
+    gated = len(sys.argv) > 4 and sys.argv[4] == "gated"
+
     with for_development(store) as saver:
-        graph = assemble(build(None if die_at == "-" else die_at), saver, gated=False)
+        graph = assemble(
+            build(None if die_at == "-" else die_at),
+            saver,
+            gated=gated,
+            early_review=gated,
+        )
         # Through `start` rather than `invoke`, so this run is as durable as a
         # real one. Calling `invoke` here would test a configuration nothing
         # ships with — and the default loses every checkpoint to the kill.
