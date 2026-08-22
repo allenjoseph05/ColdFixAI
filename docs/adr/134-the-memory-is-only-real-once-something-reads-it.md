@@ -75,11 +75,15 @@ has meant a missing test rather than a redundant guard.
 learned, which is F5's *rewind the code and keep the learning* actually performed
 rather than merely made possible.
 
-**AC 3's empirical half is written and unverified here.** The journal is Postgres
-and Docker Desktop is not running on this machine — the named pipe does not
-exist — so the two `postgres`-marked tests that round-trip an `Attempt` through
-the real store and confirm it survives a rewind are skipped rather than passed.
-The translation either side of the store is checked at unit speed, and that is
-where an attempt is actually lost; the store's own durability is S-6.2's, already
-proven by a test in `test_persistent_store.py` that rewinds a graph and reads the
-journal afterwards.
+**AC 3 was reported unverified, and then verified.** The journal is Postgres, and
+Docker Desktop was not running when the story was written — so the two
+`postgres`-marked tests that round-trip an `Attempt` through the real store were
+**skipped rather than passed**, and the story said so rather than rounding up.
+Docker was then started: both pass, along with **93 `postgres`/`docker` tests**
+that had been skipping for the whole session.
+
+**That is worth a note about the gate rather than about this story.** A suite
+reporting *2796 passed, 8 skipped* is green in a way that means less than it
+looks when an entire marker is being skipped for an environmental reason. It
+compounds with S-0.9: one gate flakes under load and another silently narrows
+when a daemon is down, and neither is visible in the headline number.
