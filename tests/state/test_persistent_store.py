@@ -24,6 +24,8 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import JsonValue
 
 from coldfix.bench.execute import execute
+from coldfix.repair.memory import recall, remember
+from coldfix.repair.patch import Attempt, Patch
 from coldfix.sandbox import docker_available
 from coldfix.sandbox.production import ProductionDatabaseError, VerifiedDatabase
 from coldfix.sandbox.reset import wait_until_ready
@@ -401,3 +403,58 @@ def test_resuming_from_the_rewound_checkpoint_still_sees_the_memory(
 
     # The rewound run reads what was learned after the checkpoint it resumed from.
     assert seen[-1] == 1
+
+
+# ------------------------------------------------------- S-13.3, through the types
+
+
+@pytest.mark.postgres
+@pytest.mark.slow
+def test_a_recorded_attempt_is_readable_after_a_rewind(store: PersistentStore) -> None:
+    """**S-13.3 AC 3, through `remember` and `recall` rather than raw rows.**
+
+    The test above proves the *journal* survives a rewind, which is S-6.2's
+    guarantee. What S-13.3 adds is that a real `Attempt` — a patch and the reason
+    it failed — makes the same trip: the diff is what S-10.5's repeat check
+    compares, and a memory that survived as a row while losing the diff would
+    satisfy F5's letter and none of its point.
+    """
+    tried = Attempt(
+        patch=Patch(
+            diff="--- a/x\n+++ b/x\n@@ -1,1 +1,1 @@\n-a\n+b\n",
+            approach="prefetch the author",
+            rationale="the sweep says the renderer is not the cause",
+        ),
+        failure="still 1001 queries",
+    )
+    remember(store, "shop.books.list", tried)
+
+    # A rewind cannot reach this store — it is a different database, which
+    # `refuse_shared_store` enforces — so nothing here is undone by one.
+    remembered = recall(store, "shop.books.list")
+
+    assert len(remembered) == 1
+    assert remembered[0].patch.diff == tried.patch.diff, "the diff, not just the label"
+    assert remembered[0].failure == "still 1001 queries"
+
+
+@pytest.mark.postgres
+@pytest.mark.slow
+def test_failure_memory_is_read_per_finding(store: PersistentStore) -> None:
+    """A Surgeon working on the book list has no use for what failed on an
+    unrelated slow import, and `append` refuses an unkeyed entry for that
+    reason."""
+
+    def tried(approach: str) -> Attempt:
+        return Attempt(
+            patch=Patch(
+                diff=f"--- a\n+++ b\n@@ -1 +1 @@\n-{approach}\n", approach=approach, rationale="r"
+            ),
+            failure="no",
+        )
+
+    remember(store, "shop.books.list", tried("prefetch"))
+    remember(store, "shop.slow_import", tried("lazy import"))
+
+    assert [item.patch.approach for item in recall(store, "shop.books.list")] == ["prefetch"]
+    assert [item.patch.approach for item in recall(store, "shop.slow_import")] == ["lazy import"]
