@@ -50,6 +50,17 @@ from coldfix.state.persistent import (
     SharedStoreError,
     refuse_shared_store,
 )
+from coldfix.state.trust import (
+    ACCEPTED_PER_LEVEL,
+    Level,
+    Outcome,
+    Shape,
+    ledger_key,
+    record_outcome,
+)
+from coldfix.state.trust import (
+    standing as trust_standing,
+)
 
 # =========================================================== no server needed
 
@@ -143,6 +154,9 @@ PASSWORD = "coldfix_test"
 
 # Not 5432, and not the port S-2.6's reset tests pinned. A store pointed at the
 # wrong database would still appear to work, which is the worst way to fail.
+NARROW_SHAPE = Shape(orm="django", database="postgres", payload_magnitude=2)
+WIDE_SHAPE = Shape(orm="django", database="postgres", payload_magnitude=4)
+
 PORT = 55441
 
 
@@ -567,3 +581,83 @@ def test_a_use_with_no_project_is_refused(store: PersistentStore) -> None:
 
     with pytest.raises(PersistentStoreError, match="needs the project it was used on"):
         note_use(store, "Django/5", entry, project="   ", worked=True)
+
+
+# ------------------------------------------------- S-13.4, against the real journal
+
+
+@pytest.mark.postgres
+@pytest.mark.slow
+def test_a_new_project_is_gated_however_much_everyone_else_agrees(
+    store: PersistentStore,
+) -> None:
+    """**F15's own example, end to end.** *A `select_related` fix approved 50
+    times may have been on projects with narrow tables.*"""
+    key = ledger_key("query-batching", NARROW_SHAPE)
+    for n in range(10):
+        for _ in range(5):
+            record_outcome(store, key, project=f"other-{n}", outcome=Outcome.ACCEPTED)
+
+    newcomer = trust_standing(store, key, project="wide-tables-inc")
+
+    assert newcomer.level is Level.GATED
+    assert sum(newcomer.elsewhere.values()) == 50, "the history is there and is not authority"
+    assert newcomer.accepted == 0
+
+
+@pytest.mark.postgres
+@pytest.mark.slow
+def test_a_project_earns_its_own_level(store: PersistentStore) -> None:
+    key = ledger_key("query-batching", NARROW_SHAPE)
+    for _ in range(ACCEPTED_PER_LEVEL):
+        record_outcome(store, key, project="shop", outcome=Outcome.ACCEPTED)
+
+    assert trust_standing(store, key, project="shop").level is Level.FAMILIAR
+
+
+@pytest.mark.postgres
+@pytest.mark.slow
+def test_a_revert_demotes_and_the_evidence_is_as_durable_as_the_grant(
+    store: PersistentStore,
+) -> None:
+    """The journal refuses `UPDATE`, so a demotion is an appended row rather than
+    a decremented field — ADR 136's argument, reached from the ledger side."""
+    key = ledger_key("query-batching", NARROW_SHAPE)
+    for _ in range(ACCEPTED_PER_LEVEL * 2):
+        record_outcome(store, key, project="shop", outcome=Outcome.ACCEPTED)
+    assert trust_standing(store, key, project="shop").level is Level.TRUSTED
+
+    record_outcome(store, key, project="shop", outcome=Outcome.REVERTED)
+
+    assert trust_standing(store, key, project="shop").level is Level.FAMILIAR
+
+
+@pytest.mark.postgres
+@pytest.mark.slow
+def test_trust_earned_on_narrow_tables_does_not_reach_a_wide_table_project(
+    store: PersistentStore,
+) -> None:
+    """**The transfer F15 refuses**, at the key rather than in a rule somebody has
+    to remember to apply."""
+    narrow = ledger_key("query-batching", NARROW_SHAPE)
+    wide = ledger_key("query-batching", WIDE_SHAPE)
+    for _ in range(ACCEPTED_PER_LEVEL * 2):
+        record_outcome(store, narrow, project="shop", outcome=Outcome.ACCEPTED)
+
+    assert trust_standing(store, narrow, project="shop").level is Level.TRUSTED
+    assert trust_standing(store, wide, project="shop").level is Level.GATED
+    assert trust_standing(store, wide, project="shop").elsewhere == {}, "not even as advice"
+
+
+@pytest.mark.postgres
+@pytest.mark.slow
+def test_an_outcome_with_no_project_is_refused(store: PersistentStore) -> None:
+    """An unattributed outcome would be somebody else's history counted as this
+    project's, which is the transfer the whole story refuses."""
+    with pytest.raises(PersistentStoreError, match="needs the project it happened on"):
+        record_outcome(
+            store,
+            ledger_key("query-batching", NARROW_SHAPE),
+            project="  ",
+            outcome=Outcome.ACCEPTED,
+        )
