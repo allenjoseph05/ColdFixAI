@@ -45,7 +45,15 @@ from pathlib import Path
 from pydantic import JsonValue
 
 from coldfix.explorer.anchor import Anchor, Interpreter, anchor_for, interpreter_for, resolve
-from coldfix.explorer.auth import Credential, Reply, Resolution, attach, resolve_auth
+from coldfix.explorer.auth import (
+    Credential,
+    PlaybookLookup,
+    Reply,
+    Resolution,
+    attach,
+    no_playbook,
+    resolve_auth,
+)
 from coldfix.explorer.emission import EmittedWorkload, emit
 from coldfix.explorer.entrypoints import Enumeration, enumerate_entry_points
 from coldfix.explorer.fingerprint import Detected, Fingerprint, Identification, fingerprint
@@ -150,13 +158,18 @@ class Grounded:
         }
 
 
-def ground_workload(
+def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
+    # request from it, what the Explorer decided, the reset proof and what has
+    # been learned about projects of this kind are six independent facts from
+    # five different owners. Bundling them would invent a type whose only
+    # purpose is to be unpacked here.
     root: Path,
     *,
     python: Sequence[str],
     request: Callable[[str], Reply],
     plan: Plan,
     reset: VerifiedReset,
+    playbook: PlaybookLookup = no_playbook,
 ) -> Grounded:
     """Take one repository from unknown to emitted workload. **AC 1.**
 
@@ -164,6 +177,19 @@ def ground_workload(
     reach the network or choose an interpreter on its own account — S-7.2's
     convention for commands and S-7.3's for interpreters, and the reason `Reply`
     is deliberately not an HTTP client.
+
+    **`playbook` is S-13.1's third criterion — *retrieved into Explorer context
+    at grounding*.** The seam was built at S-7.4 and nothing filled it: this
+    function called `resolve_auth` without a key, so the consult never happened
+    and `no_playbook` was not even reached. Defaulted to `no_playbook` rather than
+    made required, because that is a real configuration — a first run against a
+    fresh store has learned nothing — and because a function is what keeps
+    *consulted and empty* distinct from *not consulted*, which S-13.5's learning
+    curve depends on.
+
+    **The key is the fingerprint's**, not one derived here. `playbook_key()` is
+    framework and major version, and a second spelling of it would file entries
+    where nothing looks for them.
 
     Raises:
         NotGroundableError: the repository is not a supported framework, has no
@@ -196,7 +222,14 @@ def ground_workload(
         message = f"{best.name} was reported drivable and has no request path"
         raise NotGroundableError(message)
 
-    auth = resolve_auth(root, python=python, path=path, request=request)
+    auth = resolve_auth(
+        root,
+        python=python,
+        path=path,
+        request=request,
+        playbook=playbook,
+        playbook_key=identification.playbook_key(),
+    )
     if not auth.resolved:
         message = (
             f"{path} needs a credential that could not be resolved.\n{auth.describe()}\n"
