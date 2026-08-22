@@ -46,7 +46,7 @@ from coldfix.diagnosis.exclusions import Conditions, Exclusion
 from coldfix.diagnosis.log import ExperimentLog, Verdict
 from coldfix.llm.client import ReplayingClient
 from coldfix.primitives.scaling import Distribution
-from coldfix.repair import compose, falsification, testaudit
+from coldfix.repair import compose, falsification, retry, testaudit
 from coldfix.repair import patch as patch_module
 from coldfix.repair.compose import Outcome, Repaired, gate_and_audit, repair, verify
 from coldfix.repair.falsification import Cheat, CostClaim, FalsificationTest, Guard
@@ -59,7 +59,7 @@ from coldfix.repair.mustfail import (
     run_gate,
     wrap,
 )
-from coldfix.repair.patch import Patch, PatchError
+from coldfix.repair.patch import Attempt, Patch, PatchError
 from coldfix.repair.retry import Escalation
 from coldfix.repair.sessions import refuse_foreign_session
 from coldfix.sandbox.modes import CandidateSession, DiagnosticSession
@@ -781,3 +781,139 @@ def test_an_out_of_scope_patch_never_reaches_the_worktree(
             finding_id=FINDING,
         )
     assert candidate.applied == []
+
+
+# ============ S-12.6 — what a rewind must not throw away (08-audit.md F5)
+
+
+def test_a_remembered_attempt_reaches_the_surgeon(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**The seam F5 needs.** *We want to rewind the code and keep the learning* —
+    and keeping it means putting it back in front of the Surgeon, not merely
+    failing to destroy it. Before S-12.6 `repair` began every call with no prior
+    attempts, so a rewound run was handed the earlier code state and none of the
+    later knowledge."""
+    generations = _patched_generate([a_patch(diff=a_diff(added="        return cached"))])
+    monkeypatch.setattr(patch_module, "generate", generations)
+    remembered = (
+        Attempt(
+            patch=a_patch(diff=a_diff(added="        return stale")),
+            failure="still 1001 queries",
+        ),
+    )
+
+    repair(
+        surgeon_session(patch_module._SYSTEM),
+        surgeon_session(testaudit.SYSTEM),
+        ReplayingClient([]),
+        chain=a_chain(),
+        falsified=a_falsified(),
+        candidate=FakeCandidate(script_result=PASSING_SCRIPT),
+        measured_prefix_tokens=100,
+        measured_prompt_tokens=900,
+        remembered=remembered,
+        finding_id=FINDING,
+    )
+
+    assert generations.priors == [1], "the first attempt already knew about the earlier one"
+
+
+def test_an_approach_that_failed_before_a_rewind_is_refused_as_a_repeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**AC 3.** The agent does not repeat the approach the discarded state knew
+    had failed.
+
+    The repeat check compares **diffs**, not the `approach` label — F12 records
+    that the label is self-judged and the agent can rename the same idea — so
+    this remembers a patch and generates the identical edit.
+    """
+    same = a_diff(added="        return cached")
+    generations = _patched_generate(
+        [a_patch(diff=same), a_patch(diff=a_diff(added="        return fresh"))]
+    )
+    monkeypatch.setattr(patch_module, "generate", generations)
+    remembered = (Attempt(patch=a_patch(diff=same), failure="still 1001 queries"),)
+
+    result = repair(
+        surgeon_session(patch_module._SYSTEM),
+        surgeon_session(testaudit.SYSTEM),
+        ReplayingClient([]),
+        chain=a_chain(),
+        falsified=a_falsified(),
+        candidate=FakeCandidate(script_result=PASSING_SCRIPT),
+        measured_prefix_tokens=100,
+        measured_prompt_tokens=900,
+        remembered=remembered,
+        finding_id=FINDING,
+    )
+
+    assert isinstance(result, Repaired)
+    assert "changed the same lines" in result.attempts[0].failure, "refused before any gate ran"
+    assert result.patch.diff != same, "and the repair is the second, different edit"
+
+
+def test_without_the_memory_the_same_run_ships_what_already_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**The control, and it is F5 itself.**
+
+    Identical to the test above with `remembered` dropped — which is exactly what
+    a rewind leaves behind. The repeat is not caught, and the run verifies a patch
+    the discarded state already knew did not work.
+    """
+    same = a_diff(added="        return cached")
+    generations = _patched_generate(
+        [a_patch(diff=same), a_patch(diff=a_diff(added="        return fresh"))]
+    )
+    monkeypatch.setattr(patch_module, "generate", generations)
+
+    result = repair(
+        surgeon_session(patch_module._SYSTEM),
+        surgeon_session(testaudit.SYSTEM),
+        ReplayingClient([]),
+        chain=a_chain(),
+        falsified=a_falsified(),
+        candidate=FakeCandidate(script_result=PASSING_SCRIPT),
+        measured_prefix_tokens=100,
+        measured_prompt_tokens=900,
+        finding_id=FINDING,
+    )
+
+    assert isinstance(result, Repaired)
+    assert result.patch.diff == same, "the approach that already failed, shipped"
+    assert generations.priors == [0], "because nothing told it otherwise"
+
+
+def test_the_counters_do_not_see_the_remembered_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**The cap counts what *this* repair spends.**
+
+    `authorize_attempt`, `temperature_for` and `escalate` read `attempts` alone,
+    because those are facts about this run: charging a rewound repair for the
+    attempts it is only being told about would let two rewinds exhaust a budget
+    without the Surgeon writing a line.
+    """
+    generations = _patched_generate([a_patch(diff=a_diff(added="        return cached"))])
+    monkeypatch.setattr(patch_module, "generate", generations)
+    session = surgeon_session(patch_module._SYSTEM)
+    remembered = tuple(
+        Attempt(patch=a_patch(diff=a_diff(added=f"        return v{n}")), failure="no")
+        for n in range(3)
+    )
+
+    repair(
+        session,
+        surgeon_session(testaudit.SYSTEM),
+        ReplayingClient([]),
+        chain=a_chain(),
+        falsified=a_falsified(),
+        candidate=FakeCandidate(script_result=PASSING_SCRIPT),
+        measured_prefix_tokens=100,
+        measured_prompt_tokens=900,
+        remembered=remembered,
+        finding_id=FINDING,
+    )
+
+    assert session.budget.used(Phase.REPAIR, FINDING) == 1, "one attempt, not four"
+    assert generations.temperatures == [retry.temperature_for(1)], "the ramp is this run's"
