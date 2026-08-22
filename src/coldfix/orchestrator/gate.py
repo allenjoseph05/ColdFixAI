@@ -41,6 +41,7 @@ from coldfix.orchestrator.checkpointing import thread
 from coldfix.repair.patch import Patch
 from coldfix.repair.slack import LABEL
 from coldfix.state.checkpoint import CheckpointedState
+from coldfix.state.trust import Level
 
 
 class GateError(Exception):
@@ -323,3 +324,36 @@ def _change(was: float, now: float) -> str:
         return "was zero, so no ratio"
     share = (was - now) / was
     return f"{abs(share):.0%} {'better' if share > 0 else 'worse'}" if share else "unchanged"
+
+
+# ============================================================ S-13.6: what the level opens
+
+
+def gates_for(level: Level) -> Mapping[str, bool]:
+    """Which interrupts a project at `level` compiles with. **S-13.6 AC 1.**
+
+    `03-agents.md` §450 gives the rule — *`interrupt_before=["ship"]` at trust
+    level 0* — and until S-13.4 there was no ledger, so ADR 130 hardcoded it and
+    refused a parameter that could have turned it off with nothing to justify it.
+    That refusal was right and is now spent: a level is a thing a project earned,
+    recorded append-only, and `standing` is the only way to obtain one.
+
+    **The early checkpoint opens one level before the ship gate**, and the
+    asymmetry is ADR 131's: the early one guards a budget and the ship gate guards
+    an irreversible outward act, so the cheaper protection is the one to drop
+    first.
+
+    | level | early review | ship gate |
+    |---|---|---|
+    | `GATED` | yes | yes |
+    | `FAMILIAR` | no | yes |
+    | `TRUSTED` | no | no |
+
+    **`TRUSTED` still does not clear a slack-reducing patch.** That is not decided
+    here: the ship node refuses one whatever this returns, because a compile-time
+    answer cannot see a patch that does not exist yet.
+    """
+    return {
+        "gated": level < Level.TRUSTED,
+        "early_review": level < Level.FAMILIAR,
+    }

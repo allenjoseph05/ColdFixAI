@@ -61,6 +61,18 @@ LABEL = "slack-reducing"
 """The label F1 requires. A constant because Epic 14's ledger has to match on it
 and a second spelling would be a trust level cleared by a typo."""
 
+REVIEWED_AT_EVERY_LEVEL = (
+    f"this patch is {LABEL}, and `00-BRIEF.md` §4 requires human review for one at any trust "
+    "level. Auto-approval is blocked permanently and no ledger entry clears it"
+)
+"""Why a project the trust ledger has promoted is still stopped.
+
+**Here rather than in the orchestrator**, and not only to avoid an import
+cycle: the refusal belongs with the classifier that decides the label, so the
+node that enforces it and the report that explains it read the same sentence.
+Two spellings of a refusal is how they come to disagree — which is the
+argument `LABEL` itself makes one line up."""
+
 RESIDUE = (
     "This is static detection, not verification. `08-audit.md` F1: a "
     "spike-and-recovery test is not executable in a single container with one "
