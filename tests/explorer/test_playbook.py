@@ -24,7 +24,14 @@ import pytest
 
 from coldfix.explorer import compose
 from coldfix.explorer.anchor import Anchor
-from coldfix.explorer.auth import PlaybookLookup
+from coldfix.explorer.auth import (
+    AuthProfile,
+    Established,
+    PlaybookLookup,
+    Requirement,
+    Scheme,
+)
+from coldfix.explorer.auth import Resolution as AuthResolution
 from coldfix.explorer.entrypoints import (
     Candidate,
     Discovery,
@@ -44,6 +51,7 @@ from coldfix.explorer.playbook import (
     as_entry,
     describe_all,
     from_entry,
+    learned_from_auth,
 )
 from coldfix.sandbox.verification import VerifiedReset
 
@@ -321,3 +329,87 @@ def test_trust_is_strictly_harder_to_reach_than_quarantine() -> None:
     and which one wins is decided by the order of two `if`s rather than by a
     reason."""
     assert PROMOTION_THRESHOLD > DEMOTION_THRESHOLD
+
+
+# ==================================================== S-13.6 — writing one down
+
+
+def test_what_the_auth_stage_learned_becomes_an_entry() -> None:
+    """**F4's own poison, written down properly.** *"DRF always uses
+    TokenAuthentication"* is a claim about what a project of a kind requires, so
+    the situation is what this route turned out to require."""
+    entry = learned_from_auth(requirement="TOKEN", credential="TOKEN", resolved=True)
+
+    assert "required TOKEN" in entry.situation
+    assert "minted a credential" in entry.action
+    assert "could then be requested" in entry.outcome
+
+
+def test_a_failed_resolution_is_worth_recording() -> None:
+    """The outcome is what happened, not whether it was right. The next project
+    of this kind learns that this approach did not work here, which is half of
+    what a playbook is for."""
+    entry = learned_from_auth(requirement="UNKNOWN", credential=None, resolved=False)
+
+    assert "stayed unreachable" in entry.outcome
+    assert "none was made" in entry.action
+
+
+def test_grounding_records_what_the_auth_stage_learned(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**The join.** S-13.1 shipped no production writer on purpose and S-13.2
+    built the gate; this is the call that was still missing, and dropping `learn`
+    from `ground_workload` is the sabotage it fails on.
+
+    Stops after the auth stage, which is where the entry is written — a run that
+    fails later has still learned whether this kind of project needs a credential.
+    """
+    written: list[PlaybookEntry] = []
+
+    def file(entry: PlaybookEntry) -> None:
+        """**Not `written.append`, and S-6.3's note is why.** `PlaybookWriter`
+        declares a *named* parameter and `list.append`'s is positional-only, so
+        the obvious one-liner does not satisfy the protocol. Fourth place in
+        this project that trap has been hit."""
+        written.append(entry)
+
+    def fake_resolve_auth(_root: object, **_kwargs: object) -> object:
+        return _a_resolution()
+
+    monkeypatch.setattr(compose, "fingerprint", lambda _root: _a_fingerprint())
+    monkeypatch.setattr(compose, "anchor_for", lambda _root: _an_anchor())
+    monkeypatch.setattr(compose, "interpreter_for", lambda _root: None)
+    monkeypatch.setattr(compose, "enumerate_entry_points", lambda _r, **_k: _an_enumeration())
+    monkeypatch.setattr(compose, "resolve_auth", fake_resolve_auth)
+    monkeypatch.setattr(compose, "carried", lambda *_a: (_ for _ in ()).throw(ReachedAuthError))
+
+    with pytest.raises(ReachedAuthError):
+        compose.ground_workload(
+            _a_fingerprint().root,
+            python=["python"],
+            request=lambda path: pytest.fail(f"nothing should be requested: {path}"),
+            plan=compose.Plan(workload_id="w", description="d"),
+            reset=_never_used(),
+            learn=file,
+        )
+
+    assert len(written) == 1, "grounding filed what it learned"
+    assert "required NONE" in written[0].situation
+
+
+def _a_resolution() -> AuthResolution:
+    """A route that needed nothing, resolved. The simplest real shape."""
+    return AuthResolution(
+        profile=AuthProfile(
+            settings_module=Detected("config.settings", "manage.py"),
+            declared=(),
+            user_model=None,
+            login_url=None,
+            session_cookie_name="sessionid",
+        ),
+        requirement=Requirement(
+            path="/books/",
+            scheme=Scheme.NONE,
+            established=Established.OBSERVED,
+        ),
+        credential=None,
+    )

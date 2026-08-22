@@ -58,6 +58,7 @@ from coldfix.explorer.emission import EmittedWorkload, emit
 from coldfix.explorer.entrypoints import Enumeration, enumerate_entry_points
 from coldfix.explorer.fingerprint import Detected, Fingerprint, Identification, fingerprint
 from coldfix.explorer.fixtures import Mechanism, discover, factory_seeder, prefer
+from coldfix.explorer.playbook import PlaybookWriter, learned_from_auth, no_record
 from coldfix.explorer.stages import Grounding, Progress, evaluate
 from coldfix.explorer.work import Seeder, verify_work
 from coldfix.sandbox.reset import ResetStrategy
@@ -170,6 +171,7 @@ def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
     plan: Plan,
     reset: VerifiedReset,
     playbook: PlaybookLookup = no_playbook,
+    learn: PlaybookWriter = no_record,
 ) -> Grounded:
     """Take one repository from unknown to emitted workload. **AC 1.**
 
@@ -190,6 +192,17 @@ def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
     **The key is the fingerprint's**, not one derived here. `playbook_key()` is
     framework and major version, and a second spelling of it would file entries
     where nothing looks for them.
+
+    **`learn` is S-13.6's half, and it writes only what auth established.** S-13.1
+    deliberately shipped no production writer, because *a wrong entry propagates
+    silently to all future runs and compounds* and S-13.2 was the gate. That gate
+    exists now, so this records — and everything it records is **provisional**,
+    which is structural: nothing here can write an entry already believed, and
+    three different projects have to agree before one is trusted.
+
+    Recorded **after** the auth stage rather than at the end, because that is
+    what it is about; a run that fails later has still learned whether this kind
+    of project needs a credential.
 
     Raises:
         NotGroundableError: the repository is not a supported framework, has no
@@ -237,6 +250,14 @@ def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
             "real measurement of the wrong thing"
         )
         raise NotGroundableError(message)
+
+    learn(
+        learned_from_auth(
+            requirement=auth.requirement.scheme.name,
+            credential=None if auth.credential is None else auth.credential.scheme.name,
+            resolved=auth.resolved,
+        )
+    )
 
     headers, cookies = carried(auth.credential, plan)
     verification = verify_work(

@@ -288,7 +288,9 @@ def test_the_bound_steps_are_what_the_graph_will_accept() -> None:
             sessions=unused(),
             client=unused(),
             budget=unused(),
-            failures=unused(),
+            store=unused(),
+            project="shop",
+            trust_key="query-batching@django/postgres/1e2",
             revision="HEAD",
             ground=unused(),
             bind=unused(),
@@ -423,7 +425,9 @@ def repair_resources(store: FakeStore) -> Resources:
         sessions=lambda system: cast(Any, object()),
         client=unused(),
         budget=unused(),
-        failures=cast(Any, store),
+        store=cast(Any, store),
+        project="shop",
+        trust_key="query-batching@django/postgres/1e2",
         revision="HEAD",
         ground=unused(),
         bind=unused(),
@@ -473,3 +477,88 @@ def test_the_repair_node_records_every_attempt_it_made(
         "second",
     ]
     assert {finding for finding, _a in store.written} == {"shop.books.list"}
+
+
+# ==================================================== S-13.6 — §4 holds at any level
+
+
+class LedgerStore:
+    """A journal that records what `record_outcome` was told."""
+
+    def __init__(self) -> None:
+        self.outcomes: list[tuple[str, str, str]] = []
+
+
+def shipping_resources(store: LedgerStore) -> Resources:
+    return Resources(
+        workbench=cast(Any, FakeWorkbench()),
+        sessions=lambda system: cast(Any, object()),
+        client=unused(),
+        budget=unused(),
+        store=cast(Any, store),
+        project="shop",
+        trust_key="query-batching@django/postgres/1e2",
+        revision="HEAD",
+        ground=unused(),
+        bind=unused(),
+        measure=unused(),
+        instruments=unused(),
+        executor=unused(),
+        probe=unused(),
+        source="shop/views.py",
+        suite_command=["pytest"],
+        metric="seconds",
+        tokens=Tokens(prefix=8000, prompt=900),
+    )
+
+
+def parked_patch(*, slack_reducing: bool) -> CheckpointedState:
+    outcome = Repaired(
+        patch=a_patch(),
+        classification=Classification(removals=()),
+        attempts=(),
+    )
+    handover = dict(cast(dict[str, Any], _repaired(outcome, a_falsified())))
+    handover["slack_reducing"] = slack_reducing
+    return CheckpointedState(
+        target="shop.books.list",
+        repaired=cast(Any, handover),
+        screening={"shop.books.list": {"flagged": True}},
+    )
+
+
+def test_a_slack_reducing_patch_is_withheld_even_when_the_gate_is_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**AC 2, and the reason it lives in the node.**
+
+    S-13.6 lets a trusted project compile the ship gate away, and a compile-time
+    decision cannot see a patch that does not exist yet. `00-BRIEF.md` §4 requires
+    review for a slack-reducing patch *at any trust level*, so the refusal has to
+    be here — after the patch exists.
+    """
+    store = LedgerStore()
+    recorded: list[Any] = []
+    monkeypatch.setattr(adapters, "record_outcome", lambda *a, **k: recorded.append(k))
+
+    update = adapters.ship(shipping_resources(store), parked_patch(slack_reducing=True))
+
+    assert "withheld" in str(update["flags"])
+    assert "any trust level" in str(update["flags"])
+    assert "screening" not in update, "nothing was invalidated, because nothing shipped"
+    assert recorded == [], "and an outcome was not recorded for a patch that did not ship"
+
+
+def test_a_patch_that_ships_records_a_clean_outcome(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**AC 4.** S-13.4 built the levels and nothing moved them; without this the
+    gate can only ever read `GATED` — a ledger that exists and is not written."""
+    store = LedgerStore()
+    recorded: list[Any] = []
+    monkeypatch.setattr(adapters, "record_outcome", lambda *a, **k: recorded.append(k))
+
+    update = adapters.ship(shipping_resources(store), parked_patch(slack_reducing=False))
+
+    assert "shipped" in str(update["flags"])
+    assert update["repaired"] is None
+    assert [item["project"] for item in recorded] == ["shop"]
+    assert [item["outcome"].name for item in recorded] == ["ACCEPTED"]
