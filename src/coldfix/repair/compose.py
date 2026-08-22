@@ -224,6 +224,7 @@ def repair(  # noqa: PLR0913 - the two sessions, the client, the chain, the two
     measured_prefix_tokens: int,
     measured_prompt_tokens: int,
     amplification: Amplification | None = None,
+    remembered: Sequence[Attempt] = (),
     finding_id: str | None = None,
 ) -> Repaired | Escalation:
     """Write patches until one makes the test pass, or until the attempts run out.
@@ -253,6 +254,25 @@ def repair(  # noqa: PLR0913 - the two sessions, the client, the chain, the two
     """
     attempts: list[Attempt] = []
 
+    def known() -> list[Attempt]:
+        """What this Surgeon has been told was already tried.
+
+        **`remembered` first, and it is S-12.6's half of F5.** *Time travel
+        restores state at checkpoint T, but the reason for rewinding is a failure
+        discovered at T+n — and that failure record lives in the state being
+        discarded. We rewind and the agent repeats the same attempt.* A rewind
+        empties `attempts`, so without this the run resumes with the earlier code
+        state and none of the later knowledge, which inverts the intent.
+
+        **The counters deliberately do not see it.** `authorize_attempt`,
+        `temperature_for` and `escalate` all read `attempts` alone, because those
+        are facts about *this* repair: the cap counts what this run spends, and
+        an escalation reports what it tried. What `remembered` changes is what
+        the Surgeon is shown and what the repeat check compares against — the
+        two places where knowing a thing failed before is the whole point.
+        """
+        return [*remembered, *attempts]
+
     while True:
         try:
             retry.authorize_attempt(surgeon.budget, finding_id)
@@ -266,13 +286,13 @@ def repair(  # noqa: PLR0913 - the two sessions, the client, the chain, the two
             falsified=falsified,
             measured_prefix_tokens=measured_prefix_tokens,
             measured_prompt_tokens=measured_prompt_tokens,
-            prior=attempts,
+            prior=known(),
             temperature=retry.temperature_for(len(attempts) + 1),
             finding_id=finding_id,
         )
         candidate_patch = written.value
 
-        repetition = retry.repeats(candidate_patch, attempts)
+        repetition = retry.repeats(candidate_patch, known())
         if repetition is not None:
             attempt = Attempt(patch=candidate_patch, failure=repetition.describe())
             attempts.append(attempt)
