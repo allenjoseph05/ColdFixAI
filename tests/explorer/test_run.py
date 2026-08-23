@@ -571,3 +571,36 @@ def test_an_attempt_is_recorded_with_the_agents_own_words(subject: Path) -> None
 
     assert run.attempts[0].what == "installed the postgres driver"
     assert run.attempts[0].outcome.verdict is Verdict.FAILS
+
+
+# ============================ S-7.14: the report an attempt was judged against
+
+
+def test_the_report_an_attempt_was_judged_against_is_kept(subject: Path) -> None:
+    """A driver has to know which stage to work on next, and `attempt` hands back
+    one stage's outcome while the command it ran may have moved another. Without
+    this the driver measures all nine again with nothing having happened in
+    between, and routes on a reading that is not the one the bounds were enforced
+    against."""
+    assert run_for(subject).measured is None, "nothing has been judged yet"
+    run = run_for(subject)
+
+    outcome = run.attempt(Stage.MIGRATE, "ran migrate")
+
+    kept = run.measured
+    assert kept is not None
+    assert kept.outcome(Stage.MIGRATE) == outcome
+    assert len(kept.outcomes) == len(Stage), "all nine, not the one asked about"
+
+
+def test_evidence_arriving_makes_the_kept_report_stale(subject: Path) -> None:
+    """`observed` is the one thing that changes what the predicates can see, so it
+    is the one thing that has to invalidate the last reading of them."""
+    run = run_for(subject)
+    run.attempt(Stage.MIGRATE, "ran migrate")
+    kept = run.measured
+    assert kept is not None, "and the fixture has something to invalidate"
+
+    run.observed(work=verified_workload())
+
+    assert run.measured is None

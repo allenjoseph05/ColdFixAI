@@ -29,6 +29,7 @@ from coldfix.agents.roles import (
 )
 from coldfix.audit import invocation, patchaudit, testquality
 from coldfix.cost.accounting import Agent, Phase
+from coldfix.explorer import proposal
 from coldfix.repair import falsification, testaudit
 
 SOURCE = Path(__file__).resolve().parents[2] / "src" / "coldfix"
@@ -200,32 +201,24 @@ def test_a_billed_role_with_no_prompt_is_refused() -> None:
         )
 
 
-# ============ the gap the index exists to keep visible
+# ============ the gap the index kept visible until S-7.14 closed it
 
 
-def test_the_explorer_is_declared_and_nothing_bills_to_it() -> None:
-    """**Kept visible rather than tidied away.** `Agent.EXPLORER` appears in no call
-    site in `src/`: grounding authorizes and records `Phase.GROUND` against the
-    budget, so the spend is bounded, but no model call is attributed to the agent
-    that is supposed to make them.
+def test_the_gap_the_index_was_written_to_show_is_closed() -> None:
+    """**The test that was written to fail, and did.**
 
-    This test passes today by asserting the gap. When the grounding loop is built
-    it will fail, and the index will have to be corrected — which is the point."""
-    assert [role.agent for role in unattributed()] == [Agent.EXPLORER]
-
-    named = [
-        path.relative_to(SOURCE).as_posix()
-        for path in SOURCE.rglob("*.py")
-        if "Agent.EXPLORER" in path.read_text(encoding="utf-8")
-        and path.name not in ATTRIBUTION_EXEMPT
-    ]
-    assert named == [], f"the Explorer is now attributed in {named}; update its role"
+    Its previous version asserted the gap: `Agent.EXPLORER` named in no call site
+    in `src/`, with grounding's spend bounded and no model call attributed to the
+    agent supposed to make them. It said *when the grounding loop is built it will
+    fail, and the index will have to be corrected — which is the point*. S-7.14
+    built the loop, so the assertion is now the opposite one and nothing is
+    unattributed.
+    """
+    assert unattributed() == ()
 
 
-def test_every_other_role_is_attributed_somewhere() -> None:
+def test_every_role_is_attributed_somewhere() -> None:
     for agent in Agent:
-        if agent is Agent.EXPLORER:
-            continue
         named = [
             path
             for path in SOURCE.rglob("*.py")
@@ -233,6 +226,17 @@ def test_every_other_role_is_attributed_somewhere() -> None:
             and path.name not in ATTRIBUTION_EXEMPT
         ]
         assert named, f"{agent.value} is declared attributed and no call site names it"
+
+
+def test_the_explorer_is_billed_where_the_grounding_loop_asks_for_a_command() -> None:
+    """Attribution is a property of a call site, not of the index describing it —
+    so the file that names the agent has to be the one that makes the call."""
+    assert ROLES[Agent.EXPLORER].attributed
+    assert ROLES[Agent.EXPLORER].prompts == (proposal._SYSTEM,)
+    assert owner_of(proposal._SYSTEM) is Agent.EXPLORER
+
+    source = (SOURCE / "explorer" / "proposal.py").read_text(encoding="utf-8")
+    assert "agent=Agent.EXPLORER" in source
 
 
 # ============ the index of enforcements
@@ -253,8 +257,24 @@ def test_the_six_enforcements_are_listed_where_somebody_can_find_them() -> None:
 
 
 def test_the_index_renders_the_gap_and_the_boundaries() -> None:
+    """The unattributed line is rendered against an index that has one, because the
+    real one no longer does — and a branch nothing can reach is one nobody has
+    checked. Same argument as `role_of`'s parameter, and S-7.14 is when it stopped
+    being hypothetical."""
+    unbilled = {
+        Agent.EXPLORER: Role(
+            agent=Agent.EXPLORER,
+            purpose="a role nothing bills to yet",
+            prompts=(),
+            phases=frozenset({Phase.GROUND}),
+            receives=("the repository",),
+            attributed=False,
+        )
+    }
+    assert "no call site names this agent" in describe(unbilled)
+
     rendered = describe()
-    assert "no call site names this agent" in rendered
+    assert "no call site names this agent" not in rendered
     assert "cannot be given" in rendered
     assert "Where the boundaries are enforced" in rendered
     for agent in Agent:

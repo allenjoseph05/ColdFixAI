@@ -60,7 +60,7 @@ from coldfix.explorer.fingerprint import Detected, Fingerprint, Identification, 
 from coldfix.explorer.fixtures import Mechanism, discover, factory_seeder, prefer
 from coldfix.explorer.playbook import PlaybookWriter, learned_from_auth, no_record
 from coldfix.explorer.stages import Grounding, Progress, evaluate
-from coldfix.explorer.work import Seeder, verify_work
+from coldfix.explorer.work import Seeder, Verification, verify_work
 from coldfix.sandbox.reset import ResetStrategy
 from coldfix.sandbox.verification import VerifiedReset
 from coldfix.screening.workload import EnvironmentAnchor, Workload
@@ -130,6 +130,14 @@ class Grounded:
     interpreter: Interpreter | None
     enumeration: Enumeration
     auth: Resolution
+    verification: Verification
+    reset: VerifiedReset
+    """The measurement and the proof, carried because **`emitted` cannot be taken
+    apart again** and S-7.14's loop needs both: `GroundingRun.finish` is the only
+    way a run succeeds and it takes these two, not the document they produced.
+    Without them a driver has two choices and both are worse — invent a second
+    success path, or re-run a sweep it has already paid for."""
+
     emitted: EmittedWorkload
     progress: Progress
 
@@ -282,6 +290,8 @@ def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
         interpreter=interpreter,
         enumeration=enumeration,
         auth=auth,
+        verification=verification,
+        reset=reset,
         emitted=emit(verification, reset=reset),
         progress=evaluate(
             identification,
