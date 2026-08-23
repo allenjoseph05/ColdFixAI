@@ -29,12 +29,12 @@ beside it check the description against the code: a prompt that gains an owner i
 does not have, a withheld field that quietly reappears on the handover type, or a
 sixth prompt added with no role claiming it, all fail.
 
-**One role is declared and unused, and saying so is the point.** `Agent.EXPLORER`
-appears in no call site anywhere in `src/`: grounding authorizes and records
-`Phase.GROUND` against the budget, and no model call is attributed to the agent
-that is supposed to make them. Either E7 built the mechanics without the loop that
-drives them, or grounding's calls are billed to nobody. An index that omitted the
-role would hide that; this one has a field for it.
+**One role was declared and unused for five epics, and the field that said so is
+what closed it.** `Agent.EXPLORER` appeared in no call site anywhere in `src/`,
+with a note reading *either E7 built the mechanics without the loop that drives
+them, or grounding's calls are billed to nobody*. It was the first, and S-7.14
+built the loop. The field stays, because the next role added will spend a while
+in the same state and an index that could not express it would hide that too.
 """
 
 from __future__ import annotations
@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from coldfix.audit import invocation, patchaudit, testquality
 from coldfix.cost.accounting import Agent, Phase
 from coldfix.diagnosis import design, explain, hypothesis, interpretation
+from coldfix.explorer import proposal
 from coldfix.repair import falsification, patch, testaudit
 
 
@@ -108,17 +109,21 @@ ROLES: Mapping[Agent, Role] = {
     Agent.EXPLORER: Role(
         agent=Agent.EXPLORER,
         purpose="stand an unfamiliar repository up and drive one workload at controllable scale",
-        prompts=(),
+        prompts=(proposal._SYSTEM,),
         phases=frozenset({Phase.GROUND}),
-        receives=("the repository", "the adapter's fingerprint"),
-        attributed=False,
+        receives=(
+            "the repository",
+            "the fingerprint",
+            "the harness's report on all nine stage predicates",
+            "the last twenty commands run at the blocked stage, with their exit codes",
+        ),
         notes=(
-            "**Declared and unused.** No call site in `src/` names `Agent.EXPLORER`. "
-            "`explorer/run.py` authorizes and records `Phase.GROUND` against the budget, so the "
-            "spend is bounded, but nothing attributes a model call to the agent that is supposed "
-            "to make them — and `00-BRIEF.md` §5 step 5 is emphatic that grounding is the step "
-            "the project's viability turns on. Either the loop that drives it is not built, or "
-            "its calls are billed to nobody."
+            "**One prompt, because the loop is one step repeated**: propose a command, run it, "
+            "measure the nine predicates, ask again. There is no second prompt for *is it done* "
+            "and there is nowhere for one to go — `08-audit.md` F6 removed the self-judged "
+            "success criterion, and what replaced it is a predicate table this agent is shown "
+            "rather than consulted about. The one thing it may conclude on its own account is "
+            "that the repository will not ground, which `00-BRIEF.md` §9 ships as an answer."
         ),
     ),
     Agent.DIAGNOSTICIAN: Role(
@@ -271,10 +276,17 @@ def unattributed() -> tuple[Role, ...]:
     return tuple(role for role in ROLES.values() if not role.attributed)
 
 
-def describe() -> str:
-    """The whole index, for somebody verifying the system rather than running it."""
-    lines = ["AGENT ROLES — five declared, and what each is shown."]
-    for role in ROLES.values():
+def describe(roles: Mapping[Agent, Role] = ROLES) -> str:
+    """The whole index, for somebody verifying the system rather than running it.
+
+    `roles` is a parameter for `role_of`'s reason, and S-7.14 is when that stopped
+    being hypothetical: the *no call site names this agent* line was reachable
+    only while the Explorer had none, and closing that gap made the branch
+    unreachable — a line nobody can render is a line nobody has checked. The next
+    role will spend a while unattributed and this is what will show it.
+    """
+    lines = [f"AGENT ROLES — {len(roles)} declared, and what each is shown."]
+    for role in roles.values():
         billed = ", ".join(sorted(item.value for item in role.phases))
         lines.append(f"  {role.agent.value} — {role.purpose}")
         lines.append(f"    billed to: {billed}; prompts: {len(role.prompts)}")

@@ -41,7 +41,19 @@ the one path S-5.6 guarantees exists is the one path the metric is blind to. The
 share is measured from the models the ledger recorded instead.
 
 Nothing here calls a model. The caller supplies what the API returned; this
-prices it, counts it, and refuses the next one when the budget is gone.
+prices it, and refuses the next one when the budget is gone.
+
+**It does not count the phase's unit, and S-7.14 is where that stopped being a
+detail.** This used to record a step for any phase whose cap is counted in
+`StepUnit.STEP` — which is grounding and nothing else — while
+`GroundingRun.attempt` recorded one too. Two records per turn halve a sixty-step
+cap, and they do worse to the stall check: a model call carrying no conclusion
+**clears** the run of repeats, so fifteen identical stage reports could never
+accumulate and S-7.10's second bound was switched off by the first caller that
+made a model call. Every other phase already counted its own unit in its own
+loop; grounding was the seventh recorder of six. The rule is now uniform — **the
+session bills, the phase's owner counts** — and `conclusion` is gone from `run`
+because there was nowhere left for it to go. See ADR 139.
 """
 
 from __future__ import annotations
@@ -62,7 +74,7 @@ from coldfix.cost.accounting import (
     TokenUsage,
     total_of,
 )
-from coldfix.cost.budget import DEFAULT_STALL_AFTER, Budget, StepUnit, worst_case_usd
+from coldfix.cost.budget import DEFAULT_STALL_AFTER, Budget, worst_case_usd
 from coldfix.cost.cascade import EscalationLog, cascade, dearer_than
 from coldfix.cost.context import Block, Investigation, Viability
 from coldfix.cost.pruning import PrunedLog
@@ -280,9 +292,9 @@ class Session:
 
     def run[T](  # noqa: PLR0913 - the measured counts are two different numbers
         # (a prefix and a whole prompt) and collapsing them is the conflation this
-        # epic keeps catching; `call` and `validate` are S-5.6's two halves, and
-        # `conclusion` is what S-5.4 detects a stall from. None may be defaulted
-        # without making a guarantee depend on a number nobody chose.
+        # epic keeps catching, and `call` and `validate` are S-5.6's two halves.
+        # None may be defaulted without making a guarantee depend on a number
+        # nobody chose.
         self,
         step: Step,
         *,
@@ -290,7 +302,6 @@ class Session:
         measured_prefix_tokens: int,
         measured_prompt_tokens: int,
         call: Callable[[str], tuple[T, TokenUsage]],
-        conclusion: str | None = None,
         validate: Callable[[T], bool] | None = None,
     ) -> StepOutcome[T]:
         """Route a step, authorize it, assemble its prompt, run it, and bill it.
@@ -305,10 +316,16 @@ class Session:
         because a cascade makes up to three calls and the last of them runs a
         tier dearer than the one the budget was asked about.
 
+        **What it does not do is count the step against the phase's cap.** The
+        cap is enforced — `authorize` reads the same counter before every attempt
+        — and the counter is advanced by whatever owns the phase's unit: S-8.9's
+        loop when an experiment finishes, `GroundingRun.attempt` when a grounding
+        step does, `retry` for an attempt, the two audits for a round. A model
+        call is none of those units in any phase.
+
         Raises:
             SessionError: the measured prompt is shorter than its own prefix.
             BudgetExhaustedError: a cap or the ceiling stopped the next attempt.
-            ProgressStalledError: the phase concluded the same thing too often.
             NoValidatorError: a validator was supplied for a step §3 says has none.
             NoDearerTierError: the result failed its check on the dearest tier.
         """
@@ -353,20 +370,17 @@ class Session:
             value = cascaded.value
             escalated = cascaded.escalated
 
-        # **Only where the phase's cap counts model calls**, and S-5.4 predicted
-        # the defect this fixes in its own docstring: *§12.1 budgets 120 model
-        # calls per finding in investigate against a cap of 40 experiments — so
-        # an experiment is about three calls, and a cap counted in calls would
-        # halt investigation at a third of its intended budget.* This line
-        # counted every call, so the forty-experiment cap was a thirteen-
-        # experiment cap until S-8.9 ran a whole loop against it.
-        #
-        # A phase counted in experiments, attempts or rounds has its unit counted
-        # by whoever owns that unit — for investigate, S-8.9's loop, which is the
-        # only thing that knows when an experiment finished.
-        if self.budget.caps[step.phase].unit is StepUnit.STEP:
-            self.budget.record_step(step.phase, step.finding_id, conclusion)
-
+        # **No step is recorded here, and the last version of this line is the
+        # story.** S-5.4 predicted half of it in its own docstring: *§12.1 budgets
+        # 120 model calls per finding in investigate against a cap of 40
+        # experiments*, so counting calls made the forty-experiment cap a
+        # thirteen-experiment one until S-8.9 ran a whole loop against it. The fix
+        # then was to count only where the unit was `STEP` — and `STEP` is
+        # grounding alone, whose unit `GroundingRun.attempt` was already counting.
+        # S-7.14 built the loop that makes both fire on the same turn: the cap
+        # halves, and a call carrying no conclusion *clears* the stall history, so
+        # fifteen identical stage reports could never accumulate. The session
+        # bills; the phase's owner counts. ADR 139.
         return StepOutcome(
             value=value,
             step=step,
