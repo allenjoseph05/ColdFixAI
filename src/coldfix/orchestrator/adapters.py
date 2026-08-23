@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from pydantic import JsonValue
@@ -57,7 +58,9 @@ from coldfix.diagnosis.compose import chain_of
 from coldfix.diagnosis.emit import conditions_for
 from coldfix.diagnosis.log import Experiment, ExperimentLog
 from coldfix.diagnosis.loop import Executor, run_investigation
+from coldfix.explorer import proposal
 from coldfix.explorer.compose import Grounded
+from coldfix.explorer.loop import Hands, explore
 from coldfix.llm.client import ModelClient
 from coldfix.orchestrator.graph import Step, Wiring, decided, null_result
 from coldfix.primitives.registry import Selection
@@ -80,6 +83,7 @@ from coldfix.state.staleness import Coverage, ScreeningAction, screening_plan
 from coldfix.state.staleness import Patch as StalePatch
 from coldfix.state.trust import Outcome, record_outcome
 
+_EXPLORER_PROMPT = proposal._SYSTEM
 _INVESTIGATION_PROMPT = hypothesis._SYSTEM
 _EXPLANATION_PROMPT = explain._SYSTEM
 _FINDING_AUDIT_PROMPT = invocation._SYSTEM
@@ -144,7 +148,15 @@ class Sessions(Protocol):
 
 
 class Grounder(Protocol):
-    """Stand the project up. `explorer.compose.ground_workload`, bound to a repo."""
+    """Run S-7.13's mechanical sequence. `ground_workload`, bound to a repo.
+
+    **No longer the whole of grounding**, and the narrowing is S-7.14's. The
+    sequence establishes three of the nine stage predicates and cannot establish
+    the other six; the loop above it repairs those, and it is the loop the node
+    calls. What is supplied here is what a bound sequence always was — the
+    repository's own facts: its interpreter, how to make a request of it, the plan
+    the Explorer decided, and the reset proof.
+    """
 
     def __call__(self) -> Grounded: ...
 
@@ -229,7 +241,24 @@ class Resources:
     """The commit every session opens against. One value, so a diagnostic and a
     candidate session cannot silently be measuring two different trees."""
 
+    root: Path
+    """The checkout the Explorer stands up. Supplied rather than derived from
+    `revision`, because a revision names a commit and the Explorer needs a
+    directory the stage predicates can be measured against."""
+
+    python: Sequence[str]
+    """The subject's interpreter, as a command. S-7.2's convention: nothing under
+    `src/` chooses one on its own account."""
+
     ground: Grounder
+    hands: Hands
+    """How a command the Explorer proposes actually gets run.
+
+    Supplied for the same reason `executor` is: `03-agents.md` §2.5 puts the
+    denylist, the blocked egress and the workspace confinement on the container
+    the command runs in, and a loop holding its own `execute` would be a second
+    place all three have to exist."""
+
     bind: Binder
     measure: Measurer
     instruments: Selection
@@ -253,16 +282,45 @@ class Resources:
 
 
 def ground(resources: Resources, state: CheckpointedState) -> Mapping[str, object]:
-    """Stand the project up. Writes `project` and `workloads`.
+    """Run the Explorer. Writes `project` and `workloads`.
 
     Reads nothing from `state`: grounding is the first node and there is nothing
     yet to read. It takes the argument because every `Step` does.
+
+    **The session is built here rather than inside the loop**, and that is what
+    puts the Explorer inside the boundary the other four agents are already
+    behind: `Sessions` is keyed on the step's system prompt because that is what
+    `refuse_shared_session` compares, so a loop that made its own session would
+    be the one agent whose prefix nobody checked.
+
+    **A repository that will not ground is a null result, not an exception.**
+    S-7.11's acceptance is that the Explorer reports failure on a fourth
+    repository rather than claiming success on empty data, and `00-BRIEF.md` §9
+    ships that as an answer — so the failure report reaches the channel a person
+    reads instead of unwinding the graph.
     """
     del state
-    grounded = resources.ground()
+    exploration = explore(
+        resources.sessions(_EXPLORER_PROMPT),
+        resources.client,
+        root=resources.root,
+        python=resources.python,
+        ground=resources.ground,
+        hands=resources.hands,
+        measured_prefix_tokens=resources.tokens.prefix,
+        measured_prompt_tokens=resources.tokens.prompt,
+    )
+    if exploration.grounded is None:
+        return null_result(exploration.report())
+
     return {
-        "project": dict(grounded.facts()),
-        "workloads": [grounded.workload.model_dump(mode="json")],
+        "project": dict(exploration.grounded.facts()),
+        "workloads": [exploration.grounded.workload.model_dump(mode="json")],
+        # **S-13.5's curve reads this and had nothing to read before.** Steps to
+        # first runnable workload is the learning-curve axis, and while grounding
+        # was nine mechanical stages run once each it was the same number for
+        # every repository in the world.
+        "flags": [{"grounding_steps": exploration.steps}],
     }
 
 

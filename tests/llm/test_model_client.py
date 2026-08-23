@@ -460,7 +460,6 @@ def test_a_replayed_call_prices_through_the_ledger() -> None:
         measured_prefix_tokens=2_000,
         measured_prompt_tokens=2_100,
         call=call,
-        conclusion="growth=linear",
     )
 
     assert outcome.routed_model == "claude-sonnet-5"

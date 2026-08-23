@@ -32,7 +32,12 @@ from coldfix.cost.accounting import (
     StepClass,
     TokenUsage,
 )
-from coldfix.cost.budget import BudgetExhaustedError, Disposition, ProgressStalledError
+from coldfix.cost.budget import (
+    PHASE_CAPS,
+    BudgetExhaustedError,
+    Disposition,
+    ProgressStalledError,
+)
 from coldfix.cost.cascade import CHEAP_ATTEMPTS, NoValidatorError, cascade
 from coldfix.cost.context import Cacheability, ContextError, Investigation, is_append_only
 from coldfix.cost.pruning import RETRIEVAL_NOTICE, PrunedLog
@@ -128,7 +133,6 @@ def test_an_investigation_runs_end_to_end_and_reports_euros_per_finding() -> Non
         measured_prefix_tokens=2_000,
         measured_prompt_tokens=2_100,
         call=api("n+1 on author"),
-        conclusion="growth=quadratic",
     )
 
     assert outcome.value == "n+1 on author"
@@ -274,7 +278,6 @@ def test_the_stable_prefix_is_byte_identical_between_consecutive_calls() -> None
         measured_prefix_tokens=2_000,
         measured_prompt_tokens=2_100,
         call=api(),
-        conclusion="one",
     )
     session.log_experiment(primitive="ablation", target="x", outcome="87%", detail=DETAIL)
     second = session.run(
@@ -283,7 +286,6 @@ def test_the_stable_prefix_is_byte_identical_between_consecutive_calls() -> None
         measured_prefix_tokens=2_000,
         measured_prompt_tokens=2_100,
         call=api(),
-        conclusion="two",
     )
 
     assert first.blocks[:3] == second.blocks[:3]
@@ -692,8 +694,17 @@ def test_a_phase_that_keeps_concluding_the_same_thing_escalates() -> None:
     assert "queries flat" in raised.value.stall.conclusion
 
 
-def test_grounding_is_counted_once_per_run_and_billed_to_no_finding() -> None:
-    """§11's sharing, through the ledger and the budget at once."""
+def test_grounding_is_billed_to_no_finding_and_counted_by_nothing_here() -> None:
+    """§11's sharing through the ledger — and **the counter this used to move**.
+
+    Grounding's cap is counted in `StepUnit.STEP`, which was the one unit this
+    session recorded for itself, and `GroundingRun.attempt` records the same unit
+    for the same phase. Nothing noticed while no loop made a model call between
+    two attempts; S-7.14's does, and then a turn costs two of sixty and a call
+    carrying no conclusion clears the stall history every turn. The rule is now
+    the one the other five phases already followed: the session bills, the
+    phase's owner counts. ADR 139.
+    """
     session = make_session()
     for index in range(3):
         session.run(
@@ -702,13 +713,30 @@ def test_grounding_is_counted_once_per_run_and_billed_to_no_finding() -> None:
             measured_prefix_tokens=5_000,
             measured_prompt_tokens=5_100,
             call=api(),
-            conclusion=f"found-{index}",
         )
 
-    assert session.budget.used(Phase.GROUND) == 3
+    assert session.budget.used(Phase.GROUND) == 0, "the owner of the unit counts it"
     assert session.ledger.by_finding() == {}
     assert session.ledger.unattributed_usd == session.ledger.total_usd
     assert session.ledger.reconciles
+
+
+def test_the_cap_is_still_enforced_against_the_counter_the_owner_moves() -> None:
+    """The control. Not recording is not the same as not enforcing: `authorize`
+    reads the same counter before every attempt, so a phase at its cap refuses
+    the next call whoever advanced it there."""
+    session = make_session()
+    for _ in range(PHASE_CAPS[Phase.GROUND].limit):
+        session.budget.record_step(Phase.GROUND, conclusion=None)
+
+    with pytest.raises(BudgetExhaustedError):
+        session.run(
+            ground(),
+            question="One more endpoint?",
+            measured_prefix_tokens=5_000,
+            measured_prompt_tokens=5_100,
+            call=api(),
+        )
 
 
 def test_the_ledger_reconciles_across_a_mixed_run() -> None:
