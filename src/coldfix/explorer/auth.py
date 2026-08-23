@@ -43,11 +43,20 @@ and S-7.8 would correctly report that its bytes do not grow with the data. `Repl
 therefore carries the path that actually answered, and a `200` from a path other
 than the one requested is never read as *no authentication required*.
 
-**The playbook is consulted before the first request, and its entries are not
-interpreted here.** AC 4 wants the consult; S-13.1 owns what an entry means, and
-S-13.2 owns the promotion gate that makes trusting one safe. Reading entries as
-opaque is the whole of what this story can honestly do — `persistent.py` already
-declined to invent their columns for the same reason.
+**The playbook is consulted before the first request, and there are two lists.**
+S-7.4 could only carry entries unread: S-13.1 owned what one means and S-13.2
+owned the gate that makes trusting one safe, and reading them here would have been
+this stage deciding both. Both now exist, so S-13.7 added the second list.
+`playbook` is *context* — it holds provisional entries, it is what the Explorer is
+shown, and `Resolution` still carries it unread. `trusted_entries` holds only what
+three different projects recorded a successful use of, and it is the only one a
+decision may rest on.
+
+**A memory may fill a gap and may never overrule a measurement.** The one place
+it decides anything is a route that answered `401` without naming a scheme:
+something is enforcing authentication, `UNKNOWN` is not mintable, and today that
+repository simply does not ground. Every other verdict is a measurement of *this*
+route, and a prior about projects of its kind does not get to override it.
 """
 
 from __future__ import annotations
@@ -65,6 +74,7 @@ from typing import Any, Protocol
 from coldfix.bench.execute import ExecutionError, execute
 from coldfix.explorer.entrypoints import settings_module
 from coldfix.explorer.fingerprint import Detected
+from coldfix.explorer.playbook import PlaybookEntry, remembered_requirement, trusted
 from coldfix.state.persistent import Collection, PersistentStore
 
 PROFILE_TIMEOUT_SECONDS = 120.0
@@ -134,6 +144,16 @@ class Established(StrEnum):
 
     DECLARED = "configured in the subject's settings"
     OBSERVED = "established by making a request and reading the answer"
+    REMEMBERED = "carried over from a playbook entry three other projects earned"
+    """S-13.7. **The weakest of the three, and it may only fill a gap.**
+
+    A declaration describes what the project offers and an observation measures
+    what a route demands; this is neither — it is what projects *of this kind*
+    demanded, which is a prior and not a fact about this one. So it never
+    overrides an observation that established a scheme, and `resolve_auth` reaches
+    for it in exactly one situation: the route said a credential is needed and
+    would not say which.
+    """
 
 
 @dataclass(frozen=True)
@@ -419,6 +439,47 @@ def no_playbook(key: str) -> Sequence[Mapping[str, object]]:
     """
     del key
     return ()
+
+
+class TrustedLookup(Protocol):
+    """The entries a caller may **act on**, as opposed to be shown.
+
+    **A second seam beside `PlaybookLookup`, and the separation is the safety
+    property.** `recall` returns provisional entries too and that list is
+    *context* — the Explorer may read it, `Resolution` carries it unread. This one
+    returns only what `standings` promoted: three different projects recorded a
+    successful use, and no two failures quarantined it. F4's poison propagates
+    because nothing validates a write; three projects agreeing is the validation,
+    and keeping the two lists apart at the type level is what stops a caller
+    acting on the wrong one by reaching for the nearer name.
+    """
+
+    def __call__(self, key: str) -> Sequence[PlaybookEntry]: ...
+
+
+def no_trusted(key: str) -> Sequence[PlaybookEntry]:
+    """The lookup used when nothing has earned trust yet — which is most runs.
+
+    A function rather than `None`, for `no_playbook`'s reason: *consulted and
+    empty* and *not consulted* have to be different call sites, or S-13.5's
+    learning curve is measuring something else.
+    """
+    del key
+    return ()
+
+
+def trusted_from_store(store: PersistentStore) -> TrustedLookup:
+    """Only the entries `standings` promoted. **S-13.2's gate, as a lookup.**
+
+    The counterpart of `playbook_from_store`, and deliberately not a filter a
+    caller applies to it: a lookup that returned everything and left the
+    filtering to the call site would put the safety decision at every call site.
+    """
+
+    def lookup(key: str) -> Sequence[PlaybookEntry]:
+        return trusted(store, key)
+
+    return lookup
 
 
 def playbook_from_store(store: PersistentStore) -> PlaybookLookup:
@@ -944,6 +1005,57 @@ def default_recipe(scheme: Scheme, user_model: UserModel) -> Recipe:
     )
 
 
+# ================================================================== acting on a memory
+
+
+def actionable(entries: Sequence[PlaybookEntry]) -> tuple[PlaybookEntry, Scheme] | None:
+    """The one trusted entry worth acting on, or `None`. **S-13.7's whole judgement.**
+
+    Four ways to answer `None`, and each is a refusal rather than a gap:
+
+    - **nothing is trusted.** The ordinary case, and the one every first run is in.
+    - **no trusted entry names a scheme this can act on.** `remembered_requirement`
+      returns `None` for an entry some other stage wrote, for one whose outcome
+      records a failure, and for a name that is not a `Scheme`; `can_be_minted`
+      removes `JWT`, which is detectable and not mintable, and `NONE`, which asks
+      for nothing to be done.
+    - **two trusted entries name different schemes.** Refused rather than
+      resolved. Each was earned on three different projects, so a disagreement is
+      evidence that the fingerprint does not determine the answer — and picking
+      one is the alphabetical tie-break that seeded a hundred authors and drove
+      the wrong route at S-7.13.
+    - the caller's own guard: `resolve_auth` does not ask unless the probe left
+      the scheme `UNKNOWN`.
+
+    Returns the entry alongside the scheme, because acting on it has to be
+    recorded against the entry that was acted on — `note_use` files a use by
+    digest, and a scheme with no entry behind it could not be demoted.
+    """
+    named: dict[Scheme, PlaybookEntry] = {}
+    for entry in entries:
+        remembered = remembered_requirement(entry)
+        if remembered is None:
+            continue
+        scheme = _SCHEMES_BY_NAME.get(remembered)
+        if scheme is None or not scheme.can_be_minted:
+            continue
+        named.setdefault(scheme, entry)
+
+    if len(named) != 1:
+        return None
+    scheme, entry = next(iter(named.items()))
+    return entry, scheme
+
+
+_SCHEMES_BY_NAME: Mapping[str, Scheme] = {item.name: item for item in Scheme}
+"""By `name`, because that is what `learned_from_auth` was given to write down.
+
+`Scheme` is a `StrEnum` whose *values* are sentences, so `Scheme("TOKEN")` raises
+and `Scheme("a token in an Authorization header, …")` is what would work — which
+is not what any entry holds. An unrecognised name yields `None` and the entry is
+not acted on."""
+
+
 # ================================================================== the stage
 
 
@@ -961,6 +1073,17 @@ class Resolution:
     credential: Credential | None
     playbook_entries: tuple[Mapping[str, object], ...] = ()
     playbook_key: str | None = None
+
+    acted_on: PlaybookEntry | None = None
+    """The trusted entry this resolution acted on, where it acted on one.
+
+    **Reported so that a use can be recorded against it.** S-13.2's demotion is
+    what makes reading an entry safe at all, and a run that acted on one and did
+    not say which could never demote it — the poisoned entry would keep its three
+    successes and go on being offered. The composition records the use once the
+    workload has been driven, because *the mint succeeded* is not the same claim
+    as *the route answered*.
+    """
 
     @property
     def resolved(self) -> bool:
@@ -980,6 +1103,12 @@ class Resolution:
                 f"  playbook consulted under {self.playbook_key}: "
                 f"{len(self.playbook_entries)} entry(s), carried unread — S-13.1 defines them"
             )
+        if self.acted_on is not None:
+            lines.append(
+                f"  acted on a trusted entry: {self.acted_on.describe()}\n"
+                "    the route asked for a credential and would not say which; this is what "
+                "three other projects of this kind turned out to need"
+            )
         if self.credential is not None:
             lines.append(f"  credential: {self.credential.describe()}")
         elif self.requirement.needs_credential:
@@ -997,6 +1126,7 @@ def resolve_auth(  # noqa: PLR0913 - the subject, how to run it, what to probe a
     path: str,
     request: Callable[[str], Reply],
     playbook: PlaybookLookup = no_playbook,
+    trusted_entries: TrustedLookup = no_trusted,
     playbook_key: str | None = None,
     recipe: Recipe | None = None,
     timeout: float = PROFILE_TIMEOUT_SECONDS,
@@ -1012,8 +1142,16 @@ def resolve_auth(  # noqa: PLR0913 - the subject, how to run it, what to probe a
     anyway would write a user into the subject for no reason, and ADR 009's
     predicate for this stage is that a protected route answered — not that an
     account exists.
+
+    **Two lookups, and only one of them may change what happens.** `playbook` is
+    the context list: it holds provisional entries and is carried unread, which is
+    what S-13.1 built and what the Explorer is shown. `trusted_entries` holds only
+    what three different projects agreed on, and it is the one a decision may rest
+    on. Both are consulted before the probe; the second is *used* after it, and
+    only where the probe left a gap.
     """
     entries = tuple(playbook(playbook_key)) if playbook_key is not None else ()
+    earned = tuple(trusted_entries(playbook_key)) if playbook_key is not None else ()
 
     profile = read_profile(root, python=python, timeout=timeout)
     observation = Observation(path=path, reply=request(path))
@@ -1024,6 +1162,26 @@ def resolve_auth(  # noqa: PLR0913 - the subject, how to run it, what to probe a
         observation=observation,
         declared=profile.declared_schemes,
     )
+
+    # **The one place a memory may decide anything, and the condition is narrow on
+    # purpose.** `UNKNOWN` is the route saying *something is enforcing
+    # authentication and I will not say what* — a gap, with a credential known to
+    # be needed. Every other verdict is either a measurement of this route, which
+    # a prior about projects of its kind must not override, or `inconclusive`,
+    # where the answer said nothing about authentication at all and the next move
+    # is a different path rather than a user nobody asked for.
+    acted_on = None
+    if requirement.scheme is Scheme.UNKNOWN and not requirement.inconclusive:
+        found = actionable(earned)
+        if found is not None:
+            acted_on, remembered = found
+            requirement = Requirement(
+                path=path,
+                scheme=remembered,
+                established=Established.REMEMBERED,
+                observation=observation,
+                declared=profile.declared_schemes,
+            )
 
     # One condition, not two. *Do not mint for a route that needs nothing* and
     # *do not mint what cannot be minted* look like separate rules and are the
@@ -1048,4 +1206,5 @@ def resolve_auth(  # noqa: PLR0913 - the subject, how to run it, what to probe a
         credential=credential,
         playbook_entries=entries,
         playbook_key=playbook_key,
+        acted_on=acted_on,
     )

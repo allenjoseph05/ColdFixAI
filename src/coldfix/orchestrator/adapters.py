@@ -59,8 +59,15 @@ from coldfix.diagnosis.emit import conditions_for
 from coldfix.diagnosis.log import Experiment, ExperimentLog
 from coldfix.diagnosis.loop import Executor, run_investigation
 from coldfix.explorer import proposal
+from coldfix.explorer.auth import (
+    PlaybookLookup,
+    TrustedLookup,
+    playbook_from_store,
+    trusted_from_store,
+)
 from coldfix.explorer.compose import Grounded
 from coldfix.explorer.loop import Hands, explore
+from coldfix.explorer.playbook import PlaybookWriter, UseRecorder, uses, writer
 from coldfix.llm.client import ModelClient
 from coldfix.orchestrator.graph import Step, Wiring, decided, null_result
 from coldfix.primitives.registry import Selection
@@ -153,12 +160,26 @@ class Grounder(Protocol):
     **No longer the whole of grounding**, and the narrowing is S-7.14's. The
     sequence establishes three of the nine stage predicates and cannot establish
     the other six; the loop above it repairs those, and it is the loop the node
-    calls. What is supplied here is what a bound sequence always was — the
-    repository's own facts: its interpreter, how to make a request of it, the plan
-    the Explorer decided, and the reset proof.
+    calls. What a caller binds is the repository's own facts: its interpreter, how
+    to make a request of it, the plan the Explorer decided, and the reset proof.
+
+    **The four journal seams are the node's, not the campaign's, and S-13.7 is
+    where that was settled.** They stayed empty for two stories because the key
+    they file under is `Fingerprint.playbook_key()` — derived inside the sequence
+    — so a caller could only bind one by fingerprinting the repository itself
+    first. Passed here instead: the campaign owns the repository, the run owns the
+    journal, and `Resources` already holds the store and the project it is
+    attributed to.
     """
 
-    def __call__(self) -> Grounded: ...
+    def __call__(
+        self,
+        *,
+        playbook: PlaybookLookup,
+        trusted_entries: TrustedLookup,
+        learn: PlaybookWriter,
+        used: UseRecorder,
+    ) -> Grounded: ...
 
 
 class Binder(Protocol):
@@ -305,7 +326,7 @@ def ground(resources: Resources, state: CheckpointedState) -> Mapping[str, objec
         resources.client,
         root=resources.root,
         python=resources.python,
-        ground=resources.ground,
+        ground=_remembering(resources),
         hands=resources.hands,
         measured_prefix_tokens=resources.tokens.prefix,
         measured_prompt_tokens=resources.tokens.prompt,
@@ -322,6 +343,37 @@ def ground(resources: Resources, state: CheckpointedState) -> Mapping[str, objec
         # every repository in the world.
         "flags": [{"grounding_steps": exploration.steps}],
     }
+
+
+def _remembering(resources: Resources) -> Callable[[], Grounded]:
+    """The sequence, with the journal wired into it. **S-13.7's production caller.**
+
+    Four seams, and all four were unreachable before this: `playbook_from_store`
+    since S-13.1, `writer` since S-13.6, and `trusted_from_store` and `uses` from
+    this story. Each was written, tested and given no way to be filled, because
+    the only object that could fill them held a repository and not a journal.
+
+    **The two lists are separate here as well, and that is the whole safety
+    argument.** `playbook_from_store` returns everything filed under the key
+    including provisional entries, and it is what the Explorer is *shown*;
+    `trusted_from_store` returns only what three different projects recorded a
+    successful use of, and it is the only one `resolve_auth` may act on. A single
+    lookup with a flag would put that decision at the call site.
+
+    Reduced to a callable of no arguments because that is what the loop takes: it
+    drives a repository and has no business carrying a journal through itself.
+    """
+    store = resources.store
+
+    def ground_it() -> Grounded:
+        return resources.ground(
+            playbook=playbook_from_store(store),
+            trusted_entries=trusted_from_store(store),
+            learn=writer(store),
+            used=uses(store, project=resources.project),
+        )
+
+    return ground_it
 
 
 def screen(resources: Resources, state: CheckpointedState) -> Mapping[str, object]:

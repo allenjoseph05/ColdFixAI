@@ -350,12 +350,20 @@ class PlaybookWriter(Protocol):
     would otherwise have to hold a `PersistentStore` and a key, and grounding a
     repository is not a thing that should need a database to be *possible* — only
     to be remembered.
+
+    **The key is a parameter and not bound in, which is S-13.7's correction.**
+    S-13.6 built `writer(store, key)`, and the key is `Fingerprint.playbook_key()`
+    — derived *inside* the sequence, from the repository the sequence is
+    fingerprinting. So a caller could only bind one by fingerprinting the
+    repository itself first, and the one place that would happen twice is the one
+    place two spellings of a key can disagree. Nothing filled the seam, and this
+    is why. `PlaybookLookup` had it right from the start.
     """
 
-    def __call__(self, entry: PlaybookEntry) -> None: ...
+    def __call__(self, key: str, entry: PlaybookEntry) -> None: ...
 
 
-def no_record(entry: PlaybookEntry) -> None:
+def no_record(key: str, entry: PlaybookEntry) -> None:
     """The writer used when there is nowhere to file anything.
 
     A function rather than `None`, so that *recorded nowhere* and *not recorded*
@@ -363,11 +371,11 @@ def no_record(entry: PlaybookEntry) -> None:
     S-13.5 measures whether the tenth project of a kind grounds faster than the
     first, which needs the write to have been attempted.
     """
-    del entry
+    del key, entry
 
 
-def writer(store: PersistentStore, key: str) -> PlaybookWriter:
-    """File entries under one fingerprint key. **S-13.6's half of the seam.**
+def writer(store: PersistentStore) -> PlaybookWriter:
+    """File entries under whatever key the sequence derived. **S-13.6's seam.**
 
     **Everything written here is provisional**, and that is structural rather
     than a promise: `record` appends an entry and nothing else, and an entry only
@@ -376,10 +384,62 @@ def writer(store: PersistentStore, key: str) -> PlaybookWriter:
     which something could be written already believed.
     """
 
-    def file(entry: PlaybookEntry) -> None:
+    def file(key: str, entry: PlaybookEntry) -> None:
         record(store, key, entry)
 
     return file
+
+
+# ============================================================ S-13.7: acting on one
+
+
+class UseRecorder(Protocol):
+    """Somewhere to record that an entry was acted on and how it went.
+
+    The other half of `PlaybookWriter`, and supplied for the same reason: a
+    composition that had to hold a store, a key and a project name to be able to
+    ground a repository would need a database for grounding to be *possible*
+    rather than to be remembered.
+    """
+
+    def __call__(self, key: str, entry: PlaybookEntry, *, worked: bool) -> None: ...
+
+
+def no_use(key: str, entry: PlaybookEntry, *, worked: bool) -> None:
+    """The recorder used when there is nowhere to record a use.
+
+    The mirror of `no_record` and `no_playbook`. A function rather than `None`, so
+    that *recorded nowhere* and *not recorded* are the same call site.
+    """
+    del key, entry, worked
+
+
+def uses(store: PersistentStore, *, project: str) -> UseRecorder:
+    """Record uses of entries, attributed to one project.
+
+    **`project` is bound here and the key is not**, and the asymmetry is the
+    point: the project is a fact about the run, known before anything is ground,
+    while the key is derived from the repository once it has been fingerprinted.
+    `note_use` refuses an empty project precisely so that promotion means *across
+    different projects* rather than *often*, and a recorder taking it per call
+    would let one run attribute two uses to two names.
+    """
+
+    def used(key: str, entry: PlaybookEntry, *, worked: bool) -> None:
+        note_use(store, key, entry, project=project, worked=worked)
+
+    return used
+
+
+_REQUIRED = "the route required "
+_REACHED = "the route could then be requested"
+_UNREACHED = "the route stayed unreachable"
+"""The three fragments the auth entry is made of. **One owner for the sentence.**
+
+S-13.7 reads back what S-13.6 wrote, and a reader that spelled the template a
+second time would be a second place it has to change — `slack.py` keeps
+`REVIEWED_AT_EVERY_LEVEL` beside `LABEL` for this reason and it is the same
+reason here. A round-trip test walks every `Scheme` name through both."""
 
 
 def learned_from_auth(*, requirement: str, credential: str | None, resolved: bool) -> PlaybookEntry:
@@ -395,13 +455,34 @@ def learned_from_auth(*, requirement: str, credential: str | None, resolved: boo
     approach did not work here, which is half of what a playbook is for.
     """
     return PlaybookEntry(
-        situation=f"the route required {requirement}",
+        situation=f"{_REQUIRED}{requirement}",
         action=(
             f"minted a credential: {credential}"
             if credential
             else "no credential was needed, so none was made"
         ),
-        outcome=(
-            "the route could then be requested" if resolved else "the route stayed unreachable"
-        ),
+        outcome=_REACHED if resolved else _UNREACHED,
     )
+
+
+def remembered_requirement(entry: PlaybookEntry) -> str | None:
+    """What scheme this entry says projects of the kind require, if it says one.
+
+    **S-13.7's reader, and the inverse of the writer above.** `None` for anything
+    this module did not write in that shape — an entry recorded by some other
+    stage, or one whose situation was edited into a sentence nobody can act on.
+    Returning the name rather than a `Scheme` keeps the dependency one-way: auth
+    imports this module, so this module cannot import auth's vocabulary without a
+    cycle, and the caller is the one that has to recognise the name anyway.
+
+    **An entry recording a failure is not actionable and returns `None`.** The
+    outcome *the route stayed unreachable* is worth remembering — the next
+    project of this kind learns the approach did not work — but it is a record of
+    what to expect, not an instruction. Acting on one would repeat a failure
+    somebody already paid for.
+    """
+    if not entry.situation.startswith(_REQUIRED):
+        return None
+    if entry.outcome != _REACHED:
+        return None
+    return entry.situation.removeprefix(_REQUIRED).strip() or None

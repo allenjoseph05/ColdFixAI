@@ -363,14 +363,20 @@ def test_grounding_records_what_the_auth_stage_learned(monkeypatch: pytest.Monke
     Stops after the auth stage, which is where the entry is written — a run that
     fails later has still learned whether this kind of project needs a credential.
     """
-    written: list[PlaybookEntry] = []
+    written: list[tuple[str, PlaybookEntry]] = []
 
-    def file(entry: PlaybookEntry) -> None:
+    def file(key: str, entry: PlaybookEntry) -> None:
         """**Not `written.append`, and S-6.3's note is why.** `PlaybookWriter`
-        declares a *named* parameter and `list.append`'s is positional-only, so
+        declares *named* parameters and `list.append`'s is positional-only, so
         the obvious one-liner does not satisfy the protocol. Fourth place in
-        this project that trap has been hit."""
-        written.append(entry)
+        this project that trap has been hit.
+
+        **The key is a parameter now, which is S-13.7's correction.** It is
+        `Fingerprint.playbook_key()`, derived inside the sequence — so binding one
+        into the writer meant fingerprinting the repository twice, and nothing
+        ever did.
+        """
+        written.append((key, entry))
 
     def fake_resolve_auth(_root: object, **_kwargs: object) -> object:
         return _a_resolution()
@@ -393,7 +399,8 @@ def test_grounding_records_what_the_auth_stage_learned(monkeypatch: pytest.Monke
         )
 
     assert len(written) == 1, "grounding filed what it learned"
-    assert "required NONE" in written[0].situation
+    assert "required NONE" in written[0][1].situation
+    assert written[0][0] == _a_fingerprint().playbook_key(), "under the fingerprint's own key"
 
 
 def _a_resolution() -> AuthResolution:
