@@ -163,6 +163,23 @@ class GroundingRun:
     stage_attempts: int = DEFAULT_STAGE_ATTEMPTS
     attempts: list[Attempt] = field(default_factory=list)
 
+    measured: Progress | None = None
+    """The stage report the last attempt was judged against, or `None` before one.
+
+    Added at S-7.14, and `CLAUDE.md` asks that a reuse like this be noted rather
+    than slipped in — it is the class of change this system flags in other
+    people's code. Both reasons are real. A stage report costs a
+    `django.setup()`, a `manage.py check` and a route enumeration, and a driver
+    that asked which stage to work on next by re-measuring would pay for all
+    three twice a turn with nothing having happened in between. It would also
+    route on a *different reading* from the one the bounds were enforced against,
+    because `attempt` hands back one stage's outcome while the command it ran may
+    have moved another.
+
+    `observed` clears it, because evidence arriving is exactly the thing that
+    makes the last reading stale.
+    """
+
     def __post_init__(self) -> None:
         if self.stage_attempts < 1:
             message = (
@@ -209,6 +226,8 @@ class GroundingRun:
             self.grounding = replace(self.grounding, auth=auth)
         if work is not None:
             self.grounding = replace(self.grounding, work=work)
+        if auth is not None or work is not None:
+            self.measured = None
 
     def progress(self) -> Progress:
         """Every stage, measured now."""
@@ -245,6 +264,7 @@ class GroundingRun:
 
         progress = self.progress()
         outcome = progress.outcome(stage)
+        self.measured = progress
         self.attempts.append(Attempt(step=self.steps + 1, stage=stage, what=what, outcome=outcome))
 
         try:
@@ -310,7 +330,12 @@ class GroundingRun:
         stopped_at: Stage | None = None,
         progress: Progress | None = None,
     ) -> Failure:
-        measured = progress or self.progress()
+        # The caller's reading, then the last attempt's, then a fresh one. The
+        # middle one was added at S-7.14: a failure report describes the state the
+        # run stopped in, and re-measuring it charges another `django.setup()` and
+        # `manage.py check` for the same nine verdicts the attempt was judged
+        # against — with the run already over.
+        measured = progress or self.measured or self.progress()
         stage_outcome = (
             measured.outcome(stopped_at) if stopped_at is not None else measured.first_incomplete
         )

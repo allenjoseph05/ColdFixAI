@@ -17,13 +17,17 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
 from pydantic import JsonValue
 
+from coldfix.agents.roles import owner_of
 from coldfix.bench.stats import Growth
+from coldfix.cost.accounting import Agent
 from coldfix.diagnosis.log import Experiment, ExperimentLog, Verdict
+from coldfix.explorer import proposal
 from coldfix.orchestrator import adapters
 from coldfix.orchestrator.adapters import (
     MissingInputError,
@@ -47,8 +51,10 @@ from coldfix.repair.mustfail import Falsified
 from coldfix.repair.patch import Attempt, Patch
 from coldfix.repair.slack import Classification
 from coldfix.sandbox.modes import CandidateSession, DiagnosticSession, ExecutionMode
+from coldfix.screening.workload import Workload
 from coldfix.state.checkpoint import CheckpointedState
 from fixtures.chains import an_evidence_chain
+from fixtures.workloads import HELPDESK_TICKETS
 
 DIFF = """\
 --- a/shop/rendering.py
@@ -292,7 +298,10 @@ def test_the_bound_steps_are_what_the_graph_will_accept() -> None:
             project="shop",
             trust_key="query-batching@django/postgres/1e2",
             revision="HEAD",
+            root=Path(),
+            python=["python"],
             ground=unused(),
+            hands=unused(),
             bind=unused(),
             measure=unused(),
             instruments=unused(),
@@ -429,7 +438,10 @@ def repair_resources(store: FakeStore) -> Resources:
         project="shop",
         trust_key="query-batching@django/postgres/1e2",
         revision="HEAD",
+        root=Path(),
+        python=["python"],
         ground=unused(),
+        hands=unused(),
         bind=unused(),
         measure=unused(),
         instruments=unused(),
@@ -499,7 +511,10 @@ def shipping_resources(store: LedgerStore) -> Resources:
         project="shop",
         trust_key="query-batching@django/postgres/1e2",
         revision="HEAD",
+        root=Path(),
+        python=["python"],
         ground=unused(),
+        hands=unused(),
         bind=unused(),
         measure=unused(),
         instruments=unused(),
@@ -562,3 +577,135 @@ def test_a_patch_that_ships_records_a_clean_outcome(monkeypatch: pytest.MonkeyPa
     assert update["repaired"] is None
     assert [item["project"] for item in recorded] == ["shop"]
     assert [item["outcome"].name for item in recorded] == ["ACCEPTED"]
+
+
+# ==================================================== S-7.14 — the ground node drives the loop
+
+
+def grounding_resources() -> Resources:
+    return Resources(
+        workbench=cast(Any, FakeWorkbench()),
+        sessions=lambda system: cast(Any, f"session for {system[:20]}"),
+        client=cast(Any, "the client"),
+        budget=unused(),
+        store=unused(),
+        project="shop",
+        trust_key="query-batching@django/postgres/1e2",
+        revision="HEAD",
+        root=Path("/repos/shop"),
+        python=["/venv/bin/python"],
+        ground=cast(Any, "the mechanical sequence"),
+        hands=cast(Any, "the hands"),
+        bind=unused(),
+        measure=unused(),
+        instruments=unused(),
+        executor=unused(),
+        probe=unused(),
+        source="shop/views.py",
+        suite_command=["pytest"],
+        metric="seconds",
+        tokens=Tokens(prefix=8000, prompt=900),
+    )
+
+
+class FakeGrounded:
+    """What the sequence produced, with only what the node reads off it."""
+
+    def facts(self) -> dict[str, Any]:
+        return {"root": "/repos/shop", "framework": "Django"}
+
+    @property
+    def workload(self) -> Workload:
+        return HELPDESK_TICKETS
+
+
+def wire_explore(monkeypatch: pytest.MonkeyPatch, exploration: Any) -> dict[str, Any]:
+    """Replace the loop, leaving the node's own wiring. **The join, held at both ends.**
+
+    Epic 7 has its own composition check for what `explore` does with these; what
+    is checked here is that the node passes them at all. A story whose content is
+    a join with no test of the join is how S-13.3's survived a sabotage, and this
+    is the same shape one node along.
+    """
+    seen: dict[str, Any] = {}
+
+    def fake_explore(*args: Any, **kwargs: Any) -> Any:
+        seen["positional"] = args
+        seen.update(kwargs)
+        return exploration
+
+    monkeypatch.setattr(adapters, "explore", fake_explore)
+    return seen
+
+
+class FakeExploration:
+    def __init__(self, *, grounded: Any, steps: int) -> None:
+        self.grounded = grounded
+        self.steps = steps
+
+    def report(self) -> str:
+        return "Exploration: 4 step(s)\nGrounding failed: no database driver"
+
+
+def test_the_ground_node_drives_the_explorer_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**AC 1's production caller.** `ExperimentRef`, `gates_for` and the playbook
+    read are all designed and unreachable; a fourth would be a pattern rather than
+    an accident. The node that is named `ground` is what calls the loop, and it
+    hands over the four things only a campaign knows: the checkout, its
+    interpreter, the bound sequence and the hands that run a command."""
+    seen = wire_explore(monkeypatch, FakeExploration(grounded=FakeGrounded(), steps=4))
+
+    adapters.ground(grounding_resources(), CheckpointedState())
+
+    assert seen["root"] == Path("/repos/shop")
+    assert seen["python"] == ["/venv/bin/python"]
+    assert seen["ground"] == "the mechanical sequence"
+    assert seen["hands"] == "the hands"
+    assert seen["measured_prefix_tokens"] == 8000
+    assert seen["measured_prompt_tokens"] == 900
+
+
+def test_the_explorers_session_is_keyed_on_the_prompt_it_owns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**The session is the node's, not the loop's.** `Sessions` keys on the step's
+    system prompt because that is what `refuse_shared_session` compares, so a loop
+    that built its own would be the one agent whose cached prefix nobody checked."""
+    seen = wire_explore(monkeypatch, FakeExploration(grounded=FakeGrounded(), steps=1))
+
+    adapters.ground(grounding_resources(), CheckpointedState())
+
+    session, client = seen["positional"]
+    assert session == f"session for {proposal._SYSTEM[:20]}"
+    assert client == "the client"
+    assert owner_of(proposal._SYSTEM) is Agent.EXPLORER
+
+
+def test_the_ground_node_writes_the_steps_the_learning_curve_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S-13.5's first criterion had nothing to record: while grounding was nine
+    mechanical stages run once each, *steps to ground* was the same number for
+    every repository in the world."""
+    wire_explore(monkeypatch, FakeExploration(grounded=FakeGrounded(), steps=7))
+
+    update = adapters.ground(grounding_resources(), CheckpointedState())
+
+    assert update["flags"] == [{"grounding_steps": 7}]
+    assert update["project"] == {"root": "/repos/shop", "framework": "Django"}
+    assert len(cast(list[Any], update["workloads"])) == 1
+
+
+def test_a_repository_that_will_not_ground_is_a_null_result_and_not_an_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S-7.11's acceptance: *reports failure rather than claiming success on empty
+    data.* `00-BRIEF.md` §9 ships that as an answer, so the report reaches the
+    channel a person reads rather than unwinding the graph."""
+    wire_explore(monkeypatch, FakeExploration(grounded=None, steps=4))
+
+    update = adapters.ground(grounding_resources(), CheckpointedState())
+
+    assert "workloads" not in update, "nothing was ground, so nothing is claimed"
+    assert "no database driver" in str(update["flags"])
+    assert update["target"] is None
