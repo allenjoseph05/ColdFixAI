@@ -398,7 +398,6 @@ def interpret(  # noqa: PLR0913 - what was believed, what was run, what came bac
             measured_prompt_tokens=measured_prompt_tokens,
             call=call,
             validate=lambda attempt: attempt.valid,
-            conclusion=None,
         )
     except NoDearerTierError as error:
         raise UninterpretableError(rejections) from error

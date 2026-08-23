@@ -253,7 +253,6 @@ def explain(  # noqa: PLR0913 - the symptom, the confirmations, the exclusions a
             measured_prompt_tokens=measured_prompt_tokens,
             call=call,
             validate=lambda attempt: attempt.valid,
-            conclusion=None,
         )
     except NoDearerTierError as error:
         raise UnexplainableError(rejections) from error
