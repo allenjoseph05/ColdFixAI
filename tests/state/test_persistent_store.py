@@ -24,13 +24,16 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import JsonValue
 
 from coldfix.bench.execute import execute
+from coldfix.explorer.auth import Scheme, actionable, trusted_from_store
 from coldfix.explorer.playbook import (
     PlaybookEntry,
     Status,
+    learned_from_auth,
     note_use,
     record,
     standings,
     trusted,
+    uses,
 )
 from coldfix.explorer.playbook import (
     recall as recall_playbook,
@@ -661,3 +664,59 @@ def test_an_outcome_with_no_project_is_refused(store: PersistentStore) -> None:
             project="  ",
             outcome=Outcome.ACCEPTED,
         )
+
+
+# ------------------------------------------------- S-13.7: what a caller may act on
+
+
+@pytest.mark.postgres
+@pytest.mark.slow
+def test_an_entry_becomes_actionable_only_when_it_is_promoted(
+    store: PersistentStore,
+) -> None:
+    """**S-13.7 through the real gate, and the whole of AC 2.**
+
+    The entry is the same object throughout; what changes is what three different
+    projects recorded about it. `actionable` reads the list `trusted_from_store`
+    returns, so a provisional entry is invisible to it — not filtered out at the
+    call site, absent from the list the call site was given.
+    """
+    entry = learned_from_auth(requirement="TOKEN", credential="TOKEN", resolved=True)
+    record(store, "Django/5", entry)
+    lookup = trusted_from_store(store)
+
+    assert actionable(lookup("Django/5")) is None, "written, and not yet earned"
+
+    for project in ("shop", "blog", "billing"):
+        note_use(store, "Django/5", entry, project=project, worked=True)
+
+    found = actionable(lookup("Django/5"))
+    assert found is not None
+    assert found[1] is Scheme.TOKEN
+
+
+@pytest.mark.postgres
+@pytest.mark.slow
+def test_a_wrong_entry_demotes_itself_out_of_being_acted_on(
+    store: PersistentStore,
+) -> None:
+    """**AC 3's point, end to end.** F4's fear is an entry that propagates and
+    compounds; what stops it is that acting on one is recorded, and two projects
+    finding it wrong take it out of the actionable list for good.
+
+    The recorder is the one the composition holds, so this is the same call the
+    `ground_workload` failure path makes rather than a second spelling of it.
+    """
+    poison = learned_from_auth(requirement="TOKEN", credential="TOKEN", resolved=True)
+    record(store, "Django/5", poison)
+    for project in ("shop", "blog", "billing"):
+        note_use(store, "Django/5", poison, project=project, worked=True)
+    assert actionable(trusted_from_store(store)("Django/5")) is not None
+
+    uses(store, project="wide-tables")("Django/5", poison, worked=False)
+    uses(store, project="legacy")("Django/5", poison, worked=False)
+
+    assert actionable(trusted_from_store(store)("Django/5")) is None
+    assert recall_playbook(store, "Django/5") == (poison,), (
+        "still readable as context — quarantine removes the authority, not the record"
+    )

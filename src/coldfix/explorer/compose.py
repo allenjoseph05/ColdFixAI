@@ -50,17 +50,25 @@ from coldfix.explorer.auth import (
     PlaybookLookup,
     Reply,
     Resolution,
+    TrustedLookup,
     attach,
     no_playbook,
+    no_trusted,
     resolve_auth,
 )
-from coldfix.explorer.emission import EmittedWorkload, emit
+from coldfix.explorer.emission import EmissionError, EmittedWorkload, emit
 from coldfix.explorer.entrypoints import Enumeration, enumerate_entry_points
 from coldfix.explorer.fingerprint import Detected, Fingerprint, Identification, fingerprint
 from coldfix.explorer.fixtures import Mechanism, discover, factory_seeder, prefer
-from coldfix.explorer.playbook import PlaybookWriter, learned_from_auth, no_record
+from coldfix.explorer.playbook import (
+    PlaybookWriter,
+    UseRecorder,
+    learned_from_auth,
+    no_record,
+    no_use,
+)
 from coldfix.explorer.stages import Grounding, Progress, evaluate
-from coldfix.explorer.work import Seeder, Verification, verify_work
+from coldfix.explorer.work import Seeder, Verification, WorkVerificationError, verify_work
 from coldfix.sandbox.reset import ResetStrategy
 from coldfix.sandbox.verification import VerifiedReset
 from coldfix.screening.workload import EnvironmentAnchor, Workload
@@ -179,7 +187,9 @@ def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
     plan: Plan,
     reset: VerifiedReset,
     playbook: PlaybookLookup = no_playbook,
+    trusted_entries: TrustedLookup = no_trusted,
     learn: PlaybookWriter = no_record,
+    used: UseRecorder = no_use,
 ) -> Grounded:
     """Take one repository from unknown to emitted workload. **AC 1.**
 
@@ -249,6 +259,7 @@ def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
         path=path,
         request=request,
         playbook=playbook,
+        trusted_entries=trusted_entries,
         playbook_key=identification.playbook_key(),
     )
     if not auth.resolved:
@@ -260,29 +271,37 @@ def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
         raise NotGroundableError(message)
 
     learn(
+        identification.playbook_key(),
         learned_from_auth(
             requirement=auth.requirement.scheme.name,
             credential=None if auth.credential is None else auth.credential.scheme.name,
             resolved=auth.resolved,
-        )
+        ),
     )
 
     headers, cookies = carried(auth.credential, plan)
-    verification = verify_work(
-        root,
-        python=python,
-        path=path,
-        workload_id=plan.workload_id,
-        description=plan.description,
-        reset=plan.reset,
-        reset_between=plan.reset_between,
-        target=plan.target,
-        seed=_seeder(root, plan),
-        environment=_environment(plan, anchor=anchor, interpreter=interpreter),
-        headers=headers,
-        cookies=cookies,
-        repeats=plan.repeats,
-    )
+    try:
+        verification = verify_work(
+            root,
+            python=python,
+            path=path,
+            workload_id=plan.workload_id,
+            description=plan.description,
+            reset=plan.reset,
+            reset_between=plan.reset_between,
+            target=plan.target,
+            seed=_seeder(root, plan),
+            environment=_environment(plan, anchor=anchor, interpreter=interpreter),
+            headers=headers,
+            cookies=cookies,
+            repeats=plan.repeats,
+        )
+        emitted = emit(verification, reset=reset)
+    except (WorkVerificationError, EmissionError):
+        _note(used, identification.playbook_key(), auth, worked=False)
+        raise
+
+    _note(used, identification.playbook_key(), auth, worked=True)
 
     return Grounded(
         identification=identification,
@@ -292,12 +311,39 @@ def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
         auth=auth,
         verification=verification,
         reset=reset,
-        emitted=emit(verification, reset=reset),
+        emitted=emitted,
         progress=evaluate(
             identification,
             Grounding(root=root, python=python, auth=auth, work=verification),
         ),
     )
+
+
+def _note(used: UseRecorder, key: str, auth: Resolution, *, worked: bool) -> None:
+    """Record how acting on a trusted entry went. **S-13.7's demotion path.**
+
+    **Recorded here rather than in `resolve_auth`, because this is where the
+    answer is.** A mint that succeeds says a user was created; it does not say the
+    route accepted the credential — and F4's poisoned entry (*DRF always uses
+    TokenAuthentication*) mints perfectly well in a session-authenticated project
+    and then gets a `403` on every request. What settles it is the workload being
+    driven, and that happens here.
+
+    **Only a failure the credential could have caused counts as one.**
+    `WorkVerificationError` and `EmissionError` are *the work did not hold up*,
+    which is what a wrong scheme produces: `verify_work` refuses to measure an
+    error response, so a route answering `403` throughout arrives as exactly this.
+    Anything else — an interpreter that would not start, a database that went away
+    — travels without a use being recorded, because it is not evidence about the
+    entry. Two failures quarantine an entry, and spending one of them on a fact
+    about the machine would demote a memory that was right.
+
+    A run that acted on nothing records nothing. There is no *use* of an entry
+    that was never read.
+    """
+    if auth.acted_on is None:
+        return
+    used(key, auth.acted_on, worked=worked)
 
 
 def carried(

@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -28,6 +29,7 @@ from coldfix.bench.stats import Growth
 from coldfix.cost.accounting import Agent
 from coldfix.diagnosis.log import Experiment, ExperimentLog, Verdict
 from coldfix.explorer import proposal
+from coldfix.explorer.playbook import PlaybookEntry, as_entry, learned_from_auth
 from coldfix.orchestrator import adapters
 from coldfix.orchestrator.adapters import (
     MissingInputError,
@@ -53,6 +55,8 @@ from coldfix.repair.slack import Classification
 from coldfix.sandbox.modes import CandidateSession, DiagnosticSession, ExecutionMode
 from coldfix.screening.workload import Workload
 from coldfix.state.checkpoint import CheckpointedState
+from coldfix.state.persistent import Collection
+from coldfix.state.persistent import Entry as PersistentEntry
 from fixtures.chains import an_evidence_chain
 from fixtures.workloads import HELPDESK_TICKETS
 
@@ -594,7 +598,7 @@ def grounding_resources() -> Resources:
         revision="HEAD",
         root=Path("/repos/shop"),
         python=["/venv/bin/python"],
-        ground=cast(Any, "the mechanical sequence"),
+        ground=cast(Any, lambda **_seams: FakeGrounded()),
         hands=cast(Any, "the hands"),
         bind=unused(),
         measure=unused(),
@@ -659,7 +663,7 @@ def test_the_ground_node_drives_the_explorer_loop(monkeypatch: pytest.MonkeyPatc
 
     assert seen["root"] == Path("/repos/shop")
     assert seen["python"] == ["/venv/bin/python"]
-    assert seen["ground"] == "the mechanical sequence"
+    assert callable(seen["ground"]), "the sequence, with the journal wired into it"
     assert seen["hands"] == "the hands"
     assert seen["measured_prefix_tokens"] == 8000
     assert seen["measured_prompt_tokens"] == 900
@@ -709,3 +713,177 @@ def test_a_repository_that_will_not_ground_is_a_null_result_and_not_an_exception
     assert "workloads" not in update, "nothing was ground, so nothing is claimed"
     assert "no database driver" in str(update["flags"])
     assert update["target"] is None
+
+
+# ==================================================== S-13.7 — the journal reaches the sequence
+
+
+def test_the_ground_node_wires_the_journal_into_the_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**Four seams, and all four were unreachable before this.**
+
+    `playbook_from_store` since S-13.1, `writer` since S-13.6, and
+    `trusted_from_store` and `uses` from S-13.7. Each was written, tested and
+    given no way to be filled, because the only object that could fill them held a
+    repository and not a journal — and the key they file under is derived inside
+    the sequence, so a caller could only bind one by fingerprinting the repository
+    itself first.
+    """
+    seen: dict[str, Any] = {}
+
+    def fake_ground(**kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return FakeGrounded()
+
+    resources = grounding_resources()
+    monkeypatch.setattr(
+        adapters, "explore", lambda *a, **k: FakeExploration(grounded=k["ground"](), steps=1)
+    )
+    object.__setattr__(resources, "ground", fake_ground)
+
+    adapters.ground(resources, CheckpointedState())
+
+    assert set(seen) == {"playbook", "trusted_entries", "learn", "used"}
+    assert all(callable(seam) for seam in seen.values())
+
+
+def test_the_context_list_and_the_actionable_list_are_not_the_same_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**The safety property, at the wiring.** `playbook` returns everything filed
+    under the key including provisional entries and is what the Explorer is
+    *shown*; `trusted_entries` returns only what three different projects agreed
+    on. Wiring one lookup to both is the mistake this asserts against — it would
+    hand `resolve_auth` a provisional entry to act on and nothing downstream could
+    tell."""
+    seen: dict[str, Any] = {}
+
+    def fake_ground(**kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return FakeGrounded()
+
+    resources = grounding_resources()
+    monkeypatch.setattr(
+        adapters, "explore", lambda *a, **k: FakeExploration(grounded=k["ground"](), steps=1)
+    )
+    object.__setattr__(resources, "ground", fake_ground)
+
+    adapters.ground(resources, CheckpointedState())
+
+    assert seen["playbook"] is not seen["trusted_entries"]
+
+
+class JournalStub:
+    """A journal holding rows in memory, with the two calls the seams make.
+
+    Not a `PersistentStore`: what the wiring needs from one is `read` and
+    `append`, and standing a Postgres container up to prove that a lookup reads
+    the trusted list would be testing the database.
+    """
+
+    def __init__(self, rows: Sequence[Mapping[str, Any]] = ()) -> None:
+        self.rows = list(rows)
+        self.appended: list[tuple[str, Mapping[str, Any]]] = []
+
+    def read(self, collection: Any, key: str | None = None) -> Sequence[Any]:
+        del collection, key
+        return [
+            PersistentEntry(
+                id=index,
+                collection=Collection.PLAYBOOKS,
+                key="Django/5",
+                entry=cast(Any, row),
+                written_at=datetime(2026, 8, 23, tzinfo=UTC),
+            )
+            for index, row in enumerate(self.rows)
+        ]
+
+    def append(self, collection: Any, key: str, entry: Mapping[str, Any]) -> Any:
+        del collection
+        self.appended.append((key, entry))
+        return None
+
+
+def earned() -> PlaybookEntry:
+    return learned_from_auth(requirement="TOKEN", credential="TOKEN", resolved=True)
+
+
+def unearned() -> PlaybookEntry:
+    return learned_from_auth(requirement="SESSION", credential="SESSION", resolved=True)
+
+
+def a_journal() -> JournalStub:
+    """One entry three projects agreed on, and one nobody has used yet."""
+    promoted, provisional = earned(), unearned()
+    return JournalStub(
+        [
+            as_entry(promoted),
+            as_entry(provisional),
+            *(
+                {"kind": "use", "of": promoted.digest(), "project": name, "worked": True}
+                for name in ("shop", "blog", "billing")
+            ),
+        ]
+    )
+
+
+def wired(monkeypatch: pytest.MonkeyPatch, store: JournalStub) -> dict[str, Any]:
+    seen: dict[str, Any] = {}
+
+    def fake_ground(**kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return FakeGrounded()
+
+    resources = grounding_resources()
+    object.__setattr__(resources, "store", store)
+    object.__setattr__(resources, "ground", fake_ground)
+    monkeypatch.setattr(
+        adapters, "explore", lambda *a, **k: FakeExploration(grounded=k["ground"](), steps=1)
+    )
+
+    adapters.ground(resources, CheckpointedState())
+    return seen
+
+
+def test_the_actionable_lookup_the_node_wires_returns_only_promoted_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**The join, held at both ends.** Wiring *a* callable is not wiring the
+    trusted list: a lookup returning nothing satisfies every shape assertion and
+    silently turns the memory off, and one returning everything hands
+    `resolve_auth` a provisional entry to act on. Both are what this fails on."""
+    seen = wired(monkeypatch, a_journal())
+
+    assert list(seen["trusted_entries"]("Django/5")) == [earned()]
+
+
+def test_the_context_lookup_the_node_wires_returns_the_provisional_ones_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half of the same property. The Explorer is *shown* everything
+    filed under the key; what it may act on is the shorter list."""
+    seen = wired(monkeypatch, a_journal())
+
+    shown = list(seen["playbook"]("Django/5"))
+
+    assert len(shown) > 1, "provisional entries and uses are context"
+    assert any(row.get("situation") == unearned().situation for row in shown)
+
+
+def test_a_use_the_node_records_is_attributed_to_this_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`project` is what makes promotion mean *across different projects* rather
+    than *often*, and `Resources.project` is the campaign's unit for exactly that
+    reason — F15 reached from the ledger side, and this is the playbook side."""
+    store = a_journal()
+    seen = wired(monkeypatch, store)
+
+    seen["used"]("Django/5", earned(), worked=False)
+
+    key, row = store.appended[-1]
+    assert key == "Django/5"
+    assert row["project"] == "shop"
+    assert row["worked"] is False
+    assert row["of"] == earned().digest()
