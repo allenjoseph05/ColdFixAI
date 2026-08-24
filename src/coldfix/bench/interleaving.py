@@ -65,6 +65,49 @@ class ComparisonError(Exception):
 
 
 @dataclass(frozen=True)
+class Schedule:
+    """The order two conditions are sampled in, and the seed that reproduces it.
+
+    **Extracted at S-13.5, because this module's docstring says the order is what
+    it owns** — *what it owns is the order the samples are taken in, which is the
+    part that decides whether the comparison means anything.* A second study
+    needing the same interleaving had two options: copy the loop, or take it from
+    here. A copy is a second answer to *what a fair schedule is*, and the two
+    would drift the first time either moved.
+    """
+
+    order: tuple[str, ...]
+    seed: int
+    rounds: int
+
+
+def schedule(rounds: int, label_a: str, label_b: str, *, seed: int | None = None) -> Schedule:
+    """Draw a fresh order for each round, so neither condition is front-loaded.
+
+    Randomized *within* each round rather than shuffled across the session. A
+    single shuffle of `n` A's and `n` B's can deal all the A's into the first
+    half by chance, which is the block design interleaving exists to replace.
+    Drawing per round keeps both conditions balanced across every prefix — so a
+    machine that drifts monotonically drifts under both equally — while leaving
+    no fixed phase for a periodic disturbance to lock onto.
+
+    The seed is recorded whether it was supplied or drawn, because an experiment
+    that cannot be re-run in the order it originally ran in is not reproducible.
+    """
+    if seed is None:
+        seed = random.getrandbits(_SEED_BITS)
+    rng = random.Random(seed)
+
+    order: list[str] = []
+    for _ in range(rounds):
+        pair = [label_a, label_b]
+        rng.shuffle(pair)
+        order.extend(pair)
+
+    return Schedule(order=tuple(order), seed=seed, rounds=rounds)
+
+
+@dataclass(frozen=True)
 class InterleavedComparison:
     """Two distributions taken in one session, and the test between them.
 
@@ -161,32 +204,17 @@ def compare(  # noqa: PLR0913
         )
         raise ValueError(message)
 
-    if seed is None:
-        seed = random.getrandbits(_SEED_BITS)
-    rng = random.Random(seed)
+    drawn = schedule(n, label_a, label_b, seed=seed)
 
     variants = {label_a: variant_a, label_b: variant_b}
     samples: dict[str, list[Sample]] = {label_a: [], label_b: []}
-    order: list[str] = []
 
-    position = 0
-    for round_index in range(n):
-        # A fresh order per round rather than one shuffle over the session. See
-        # the module docstring: a single shuffle can front-load one condition,
-        # which is the block design this replaces.
-        pair = [label_a, label_b]
-        rng.shuffle(pair)
-
-        for label in pair:
-            state = (
-                ProcessState.FRESH
-                if fresh_process_per_sample or position == 0
-                else ProcessState.REUSED
-            )
-            seconds = _time_one(variants[label], label, round_index, n)
-            samples[label].append(Sample(index=position, seconds=seconds, process_state=state))
-            order.append(label)
-            position += 1
+    for position, label in enumerate(drawn.order):
+        state = (
+            ProcessState.FRESH if fresh_process_per_sample or position == 0 else ProcessState.REUSED
+        )
+        seconds = _time_one(variants[label], label, position // 2, n)
+        samples[label].append(Sample(index=position, seconds=seconds, process_state=state))
 
     run_a = TimingRun(samples=tuple(samples[label_a]))
     run_b = TimingRun(samples=tuple(samples[label_b]))
@@ -197,8 +225,8 @@ def compare(  # noqa: PLR0913
         run_a=run_a,
         run_b=run_b,
         rank=rank_test(run_a.durations, run_b.durations),
-        order=tuple(order),
-        seed=seed,
+        order=drawn.order,
+        seed=drawn.seed,
         rounds=n,
     )
 
