@@ -194,9 +194,19 @@ def test_a_patch_trading_queries_for_memory_is_flagged() -> None:
     assert "made something else worse" in report.explanation()
 
 
+@pytest.mark.timing
 def test_a_patch_that_buys_nothing_is_not_flagged() -> None:
     """The control. An envelope that flags every candidate is an envelope
-    somebody switches off, and then the unpredicted trades go through."""
+    somebody switches off, and then the unpredicted trades go through.
+
+    **The sixteenth member of the family, and the load harness is the only thing
+    that ever saw it.** Three months of chance sightings never produced it and
+    the first sweep missed it; five runs of the gate under twice the core count
+    failed it once. Running the same workload twice and asserting the envelope
+    finds no difference is an absence-of-effect assertion against a fixed
+    tolerance, which is exactly the shape S-0.9 AC 2 names — and a contended
+    scheduler supplies the difference.
+    """
     store = Store(pages=40, per_page=200)
 
     with envelope() as baseline:

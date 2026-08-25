@@ -113,6 +113,7 @@ def test_nothing_is_discarded_when_the_first_sample_is_an_outlier() -> None:
     assert max(run.durations[1:]) < 0.15
 
 
+@pytest.mark.timing
 def test_samples_are_returned_in_the_order_they_were_taken() -> None:
     """Sorting would be the other way to lose the shape of a run.
 

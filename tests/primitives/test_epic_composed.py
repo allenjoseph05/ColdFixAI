@@ -454,6 +454,7 @@ def test_the_field_floor_clears_the_projected_control(query_counter: None) -> No
 # ------------------------------- the metric that works where the timer cannot
 
 
+@pytest.mark.timing
 def test_two_complexities_are_separated_below_the_timing_floor(query_counter: None) -> None:
     """The last instrument in the chain, on the fixture built to need it.
 
