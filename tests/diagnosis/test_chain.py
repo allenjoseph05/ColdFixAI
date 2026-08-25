@@ -491,3 +491,46 @@ def test_the_report_names_what_the_schema_cannot_check() -> None:
     only the first — so the artifact says which one it is."""
     assert RESIDUE in a_chain().render()
     assert "does not check that the mechanism follows" in RESIDUE
+
+
+# =============== S-16.1: the two criteria nothing had asserted
+
+
+def test_the_report_carries_the_growth_table_and_the_causal_site() -> None:
+    """**S-16.1 AC 2**, and it was already true — this asserts it.
+
+    The growth is rendered as S-1.5's vocabulary rather than as raw numbers,
+    which is what lets a reader take the shape without re-deriving it from a
+    table of measurements.
+    """
+    rendered = a_chain().render()
+
+    assert "COMPLEXITY" in rendered
+    assert "rows: linear" in rendered, "the axis and its growth class, not raw numbers"
+    assert "SITE" in rendered
+    assert "shop/serializers.py:41-52" in rendered, "a path and a line range"
+
+
+def test_every_section_a_reader_needs_is_in_the_report() -> None:
+    """**S-16.1 AC 3**, in the only form a test can hold it: *readable in under
+    two minutes without re-deriving the reasoning* means every question a reader
+    would otherwise have to go and answer is answered here.
+
+    Seven sections, and the one that would be easiest to leave out is the last —
+    a confidence with no account of what it is counting invites a reader to treat
+    it as a probability, which is the one thing it is not.
+    """
+    rendered = a_chain().render()
+
+    for section in (
+        "SYMPTOM",
+        "MECHANISM",
+        "LOCALIZATION",
+        "COMPLEXITY",
+        "SITE",
+        "IMPLICATED FILES",
+        "RULED OUT",
+        "CONFIDENCE",
+    ):
+        assert section in rendered, section
+    assert "not a probability" in rendered
