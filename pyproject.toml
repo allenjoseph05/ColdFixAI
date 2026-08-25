@@ -177,7 +177,7 @@ addopts = "--strict-markers --strict-config"
 # named `conftest` collides with `tests/sandbox/conftest.py` under mypy.
 pythonpath = ["tests"]
 markers = [
-    "slow: takes long enough to exclude from the fast subset (`-m 'not slow'`)",
+    "slow: takes long enough to exclude from the fast subset",
     # Kept distinct from `slow` because the reason for skipping is different: a
     # slow test is one you choose not to wait for, a docker test is one this
     # machine cannot run at all. Conflating them would let an absent daemon read
@@ -192,4 +192,14 @@ markers = [
     # HEAD, and nothing but a real package index can show that. A fake resolver
     # would return whichever answer the test wrote into it.
     "index: needs a reachable package index; skipped when PyPI cannot be read",
+    # Separate for the fourth time, and for the sharpest reason yet: what these
+    # need is a **quiet** machine. They are not slow, a daemon would not help,
+    # and they pass perfectly well on their own — they are real-timing
+    # demonstrations that a primitive measures what it claims, and a contended
+    # scheduler changes the answer. S-0.9 found thirteen of them by running the
+    # suite under deliberate load; three months of chance sightings had found
+    # four. Excluded from the fast subset because a gate that is green most of
+    # the time weakens every claim made against it, in exactly the direction
+    # that hides a regression.
+    "timing: real-clock measurement; needs a quiet machine, so it is run deliberately",
 ]

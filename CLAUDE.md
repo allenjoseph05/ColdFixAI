@@ -34,7 +34,8 @@ Read on demand, not every session:
 ```bash
 uv sync                      # install
 uv run pytest                # all tests
-uv run pytest -m "not slow"  # fast subset
+uv run pytest -m "not slow and not timing"   # fast subset — the gate
+uv run pytest -m "timing"                    # real-clock tests; run on a quiet machine
 uv run ruff check --fix .    # lint
 uv run ruff format .         # format
 uv run mypy .                # types, strict

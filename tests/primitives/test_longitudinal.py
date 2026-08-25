@@ -89,6 +89,7 @@ def series(costs: list[float]) -> Soak:
 # ------------------------------ AC 1 and 2: fixed size, fitted against time
 
 
+@pytest.mark.timing
 def test_a_leak_shows_as_growth_against_elapsed_time() -> None:
     """AC 1 and 2. The input never changes size; what changes is how long the
     process has been running, which is the axis §5 fits against."""
