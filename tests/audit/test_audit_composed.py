@@ -26,8 +26,10 @@ Measurements here are real; model calls are replayed. Same split as S-8.7.
 
 from __future__ import annotations
 
+import inspect
 import json
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 
@@ -67,13 +69,15 @@ from coldfix.diagnosis.design import ExperimentSpec
 from coldfix.diagnosis.exclusions import Conditions, Exclusion
 from coldfix.diagnosis.log import Experiment, ExperimentLog
 from coldfix.diagnosis.log import Verdict as LogVerdict
-from coldfix.diagnosis.loop import Investigation, run_investigation
+from coldfix.diagnosis.loop import Investigation, LoopError, Measured, run_investigation
 from coldfix.diagnosis.progress import PartialChain, Stopped, partial_chain
 from coldfix.llm.client import Recording, ReplayingClient
+from coldfix.orchestrator.adapters import _log_of, _stored
 from coldfix.primitives.measurement import MetricKind, metric_kind
 from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetStrategy
 from coldfix.screening.workload import FixtureRecipe, Observation, Workload
+from coldfix.state.checkpoint import CheckpointedState
 from fixtures.thesis import (  # the subject and its harness, not a second copy
     CONDITIONS,
     SCALES,
@@ -157,7 +161,7 @@ def a_well_swept_workload() -> Workload:
 def run_the_diagnosis(subject: Subject) -> Investigation:
     """Epic 8's whole loop, driven the way a caller would. Ends confirmed."""
 
-    def execute(spec: ExperimentSpec) -> Mapping[str, float]:
+    def execute(spec: ExperimentSpec) -> Measured:
         if spec.primitive == "scaling.volume":
             return sweep_queries(subject)
         return ablate_renderer(subject)[0]
@@ -402,11 +406,16 @@ def test_the_diagnosticians_session_is_refused_by_the_composed_audit(
 # ======== defect 2: the log cannot say which metrics are counts
 
 
-def test_the_experiment_log_does_not_record_metric_kinds() -> None:
-    """The gap itself, asserted on the artifact. `Executor` returns a bare
-    mapping of numbers, so everything the primitive knew *about* them — which
-    Epic 3 records as `kinds` on every result — is dropped at the loop boundary."""
-    assert "kinds" not in Experiment.model_fields
+def test_the_experiment_log_records_metric_kinds() -> None:
+    """**The gap, closed. S-8.12.**
+
+    This test used to assert the opposite, and its previous docstring was the
+    specification for the story that inverted it: *`Executor` returns a bare
+    mapping of numbers, so everything the primitive knew about them — which Epic
+    3 records as `kinds` on every result — is dropped at the loop boundary.* The
+    boundary now carries them.
+    """
+    assert "kinds" in Experiment.model_fields
 
 
 def test_deriving_kinds_from_the_metric_name_misclassifies_a_real_measurement() -> None:
@@ -451,13 +460,27 @@ def test_supplying_kinds_and_a_rerun_makes_the_attack_actually_run() -> None:
 # ============ defect 3: the fit does not survive into the log either
 
 
-def test_a_growth_fit_does_not_survive_into_the_experiment_log(query_counter: None) -> None:
-    """`measurement` is `Mapping[str, float]` and a `Fit` is not a float, so the
-    curve S-3.2 fitted is gone by the time an auditor reads the log."""
+def test_a_growth_fit_survives_into_the_experiment_log(query_counter: None) -> None:
+    """**The other half of the gap, closed. S-8.12.**
+
+    Its previous docstring was the specification too: *`measurement` is
+    `Mapping[str, float]` and a `Fit` is not a float, so the curve S-3.2 fitted
+    is gone by the time an auditor reads the log.* It travels beside the
+    measurement now rather than inside it — the numbers are still numbers, which
+    is what keeps them comparable between experiments.
+
+    **The ablation still fits nothing, and that is the point of the pair.** A
+    sweep records its curve; a primitive that drew none records `None`, and
+    S-9.2 refuses to judge a curve nobody drew.
+    """
     investigation = run_the_diagnosis(Subject())
     for experiment in investigation.log.experiments:
         assert all(isinstance(value, float) for value in experiment.measurement.values())
-    assert "fit" not in Experiment.model_fields
+    assert "fit" in Experiment.model_fields
+
+    by_primitive = {item.primitive: item for item in investigation.log.experiments}
+    assert by_primitive["scaling.volume"].fit is not None, "the sweep fitted a curve"
+    assert by_primitive["ablation.stub"].fit is None, "and the ablation drew none"
 
 
 def test_an_unfitted_sweep_is_not_run_and_a_finding_with_no_sweep_is_inapplicable() -> None:
@@ -504,6 +527,13 @@ def test_the_thesis_diagnosis_does_not_survive_its_own_audit(query_counter: None
     Worth asserting rather than working around: the audit objecting to the run
     the project uses as its showcase is the first evidence that it objects to
     anything real.
+
+    **S-8.12 added a third objector without changing the verdict.** The scale
+    attack used to answer `NOT_RUN` here, because the log could not carry the
+    `Fit` the sweep produced and nothing supplied one by hand. It runs now, and
+    it objects: the thesis sweep is deliberately small, and a span that narrow
+    cannot separate linear growth from superlinear. An attack that had been
+    silently absent from this result is the exact thing that story exists to fix.
     """
     subject = Subject()
     investigation = run_the_diagnosis(subject)
@@ -525,7 +555,11 @@ def test_the_thesis_diagnosis_does_not_survive_its_own_audit(query_counter: None
     assert routing.verdict.verdict is Verdict.UNSOUND
     assert routing.route is Route.INVESTIGATE
     objected = {item.attack for item in routing.verdict.results if item.objected}
-    assert objected == {Attack.EXCLUSION_VALIDITY, Attack.FIXTURE_ADEQUACY}
+    assert objected == {
+        Attack.EXCLUSION_VALIDITY,
+        Attack.FIXTURE_ADEQUACY,
+        Attack.SCALE_ADEQUACY,
+    }
 
 
 def test_the_audit_reads_the_conditions_in_force_not_the_original_recipe(
@@ -544,17 +578,17 @@ def test_the_audit_reads_the_conditions_in_force_not_the_original_recipe(
     """
     subject = Subject()
     investigation = run_the_diagnosis(subject)
-    workload = a_workload()
+    workload = a_well_swept_workload()
     session = an_audit_session()
 
     routing, _ = audit_finding(
         session,
         audit_client(session, investigation.log, workload),
         workload=workload,
-        conditions=WIDENED,
+        conditions=WELL_SWEPT,
         log=investigation.log,
         exclusions=[
-            Exclusion(experiment=item.experiment, conditions=WIDENED)
+            Exclusion(experiment=item.experiment, conditions=WELL_SWEPT)
             for item in investigation.exclusions.exclusions
         ],
         measured_prefix_tokens=100,
@@ -566,26 +600,34 @@ def test_the_audit_reads_the_conditions_in_force_not_the_original_recipe(
     assert workload.fixture.distribution is Distribution.UNIFORM
 
 
-def test_an_audit_missing_two_attacks_is_inconclusive_and_escalates(
+def test_an_audit_missing_the_one_input_the_log_cannot_carry_is_inconclusive(
     query_counter: None,
 ) -> None:
-    """**The honest answer when the log cannot supply what an attack needs.**
-    Without a fit and without kinds, two of the six attacks did not run — so
-    `sound` would mean *nothing objected among the ones we tried*, and
-    `inconclusive` says what is missing instead."""
+    """**The honest answer when an attack cannot run, and S-8.12 left exactly one.**
+
+    This test used to be about *two* missing attacks: without a fit and without
+    kinds, neither the scale attack nor the reproducibility check ran, so `sound`
+    would have meant *nothing objected among the ones we tried*. The log carries
+    both now.
+
+    What it cannot carry is a **re-run** — re-running an experiment is the
+    harness's and not the record's — so that is the one input still supplied, and
+    withholding it is the way this state is now reached. `inconclusive` still
+    says what is missing rather than passing what was never asked.
+    """
     subject = Subject()
     investigation = run_the_diagnosis(subject)
-    workload = a_workload()
+    workload = a_well_swept_workload()
     session = an_audit_session()
 
     routing, _ = audit_finding(
         session,
         audit_client(session, investigation.log, workload),
         workload=workload,
-        conditions=WIDENED,
+        conditions=WELL_SWEPT,
         log=investigation.log,
         exclusions=[
-            Exclusion(experiment=item.experiment, conditions=WIDENED)
+            Exclusion(experiment=item.experiment, conditions=WELL_SWEPT)
             for item in investigation.exclusions.exclusions
         ],
         measured_prefix_tokens=100,
@@ -596,7 +638,7 @@ def test_an_audit_missing_two_attacks_is_inconclusive_and_escalates(
     assert routing.verdict.verdict is Verdict.INCONCLUSIVE
     assert routing.route is Route.ESCALATE
     unanswered = {item.attack for item in routing.verdict.unanswered}
-    assert unanswered == {Attack.SCALE_ADEQUACY, Attack.REPRODUCIBILITY}
+    assert unanswered == {Attack.REPRODUCIBILITY}, "the scale attack runs off the log now"
 
 
 def test_the_thesis_sweep_is_too_narrow_to_support_a_growth_claim(
@@ -635,7 +677,6 @@ def test_the_thesis_sweep_is_too_narrow_to_support_a_growth_claim(
         ],
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
-        fits={item.index: a_fit() for item in investigation.log.experiments},
         finding_id=FINDING,
     )
 
@@ -676,8 +717,6 @@ def test_a_fully_supplied_audit_over_a_proper_sweep_reaches_sound(
         ],
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
-        fits={item.index: a_fit() for item in investigation.log.experiments},
-        kinds=dict.fromkeys(key.measurement, MetricKind.COUNT),
         rerun=a_rerun(dict(key.measurement)),
         finding_id=FINDING,
     )
@@ -865,3 +904,66 @@ def _an_experiment() -> Experiment:
 
 def _exclusion(experiment: Experiment) -> Exclusion:
     return Exclusion(experiment=experiment, conditions=CONDITIONS)
+
+
+# ==================================================== S-8.12 — what the boundary carries
+
+
+def test_the_loop_carries_what_the_primitive_knew_and_computes_none_of_it() -> None:
+    """**AC 4.** What widened is what the boundary *carries*, not what the loop
+    works out. A loop that could produce a fit would be the one place
+    `CLAUDE.md`'s rule about measurement is unenforceable — so the module holds no
+    way to make one, asserted by inspection rather than by hoping."""
+    source = Path(inspect.getfile(run_investigation)).read_text(encoding="utf-8")
+
+    assert "fit_growth" not in source
+    assert "metric_kind" not in source
+
+
+def test_a_kind_for_a_number_nobody_measured_is_refused() -> None:
+    """A kind describes a number. One describing a number this experiment did not
+    take is a claim about a measurement that does not exist."""
+    with pytest.raises(LoopError, match="a claim about a measurement that does not exist"):
+        Measured(
+            measurement={"db.query": 2.0},
+            kinds={"seconds": MetricKind.DURATION},
+        )
+
+
+def test_an_executor_that_knows_nothing_extra_still_works() -> None:
+    """The ordinary case, and the reason both fields default. A primitive that
+    fitted nothing and reports no kinds leaves the attacks that need them
+    `NOT_RUN`, which is the answer `audit/compose.py` chose when they had to be
+    passed by hand."""
+    measured = Measured(measurement={"db.query": 2.0})
+
+    assert measured.kinds == {}
+    assert measured.fit is None
+
+
+def test_the_kinds_and_the_fit_survive_a_checkpoint(query_counter: None) -> None:
+    """**AC 3, and the reason it is an AC.** Three of Epic 9's attacks read these
+    off the log, so a resumed run that dropped them would audit weaker than the
+    run that wrote them — and an attack that did not run is not one that passed.
+    """
+    investigation = run_the_diagnosis(Subject())
+    stored = [_stored(item) for item in investigation.log.experiments]
+
+    assert json.loads(json.dumps(stored)) == stored, "a checkpoint cannot hold what will not encode"
+
+    restored = _log_of(CheckpointedState(experiments=stored))
+    before = {item.index: (dict(item.kinds), item.fit) for item in investigation.log.experiments}
+    after = {item.index: (dict(item.kinds), item.fit) for item in restored.experiments}
+
+    assert after == before
+
+
+def test_a_stored_experiment_still_fits_the_checkpoint_budget(query_counter: None) -> None:
+    """S-6.3 budgets ~1 KiB per experiment so forty fit in one checkpoint. A `Fit`
+    is eight numbers and a kinds mapping is one entry per metric; neither is the
+    megabytes-per-node write F13 exists to prevent, but the budget is what says
+    so rather than the intuition."""
+    investigation = run_the_diagnosis(Subject())
+
+    for item in investigation.log.experiments:
+        assert len(json.dumps(_stored(item))) < 1024

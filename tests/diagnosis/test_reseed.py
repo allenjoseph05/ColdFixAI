@@ -30,7 +30,7 @@ from coldfix.cost.budget import (
 from coldfix.cost.session import Session
 from coldfix.diagnosis.exclusions import Conditions, ExclusionRegister
 from coldfix.diagnosis.log import ExperimentLog, Verdict
-from coldfix.diagnosis.loop import Investigation
+from coldfix.diagnosis.loop import Investigation, Measured
 from coldfix.diagnosis.reseed import (
     PointlessReseedError,
     ReseedError,
@@ -465,7 +465,7 @@ def test_reseeding_makes_a_settled_instrument_proposable_again() -> None:
         instruments=Selection(profile=ProjectProfile(), available=(), withheld=()),
         source="shop/views.py",
         conditions=UNIFORM,
-        execute=lambda spec: {"db.query": 2.0},
+        execute=lambda spec: Measured(measurement={"db.query": 2.0}),
     )
     investigation.exclusions = register_with_a_uniform_exclusion()
 
@@ -498,7 +498,7 @@ def test_a_failed_reseed_leaves_the_investigation_where_it_was() -> None:
         instruments=Selection(profile=ProjectProfile(), available=(), withheld=()),
         source="shop/views.py",
         conditions=UNIFORM,
-        execute=lambda spec: {"db.query": 2.0},
+        execute=lambda spec: Measured(measurement={"db.query": 2.0}),
     )
     investigation.exclusions = register_with_a_uniform_exclusion()
 
