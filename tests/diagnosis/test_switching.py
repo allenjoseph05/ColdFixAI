@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import inspect
 import json
-from collections.abc import Mapping
 
 import pytest
 
@@ -42,6 +41,7 @@ from coldfix.diagnosis.loop import (
     Investigation as Loop,
 )
 from coldfix.diagnosis.loop import (
+    Measured,
     NoNewInstrumentError,
     confirming_links,
     run_investigation,
@@ -74,7 +74,7 @@ def test_the_query_count_is_flat_across_the_sweep(query_counter: None) -> None:
     database is genuinely not the answer, and this is the evidence for it: two
     queries at every scale, so a volume sweep concludes *not the database* and is
     right to."""
-    counts = sweep_queries(Subject())
+    counts = sweep_queries(Subject()).measurement
 
     assert set(counts.values()) == {2.0}, counts
 
@@ -82,7 +82,8 @@ def test_the_query_count_is_flat_across_the_sweep(query_counter: None) -> None:
 def test_ablating_the_renderer_removes_almost_all_of_the_cost(query_counter: None) -> None:
     """The other half of the premise: the cost the query counter cannot see is
     real, large, and attributable to one component."""
-    measurement, _ = ablate_renderer(Subject())
+    measured, _ = ablate_renderer(Subject())
+    measurement = measured.measurement
 
     assert measurement["seconds.share_removed"] >= 0.9
     assert measurement["render.calls_baseline"] == 80.0
@@ -93,7 +94,8 @@ def test_the_control_subject_has_nothing_for_an_ablation_to_find(query_counter: 
     """**The load-bearing control.** A loop that always switched instruments and
     always confirmed would pass the demo while being useless. With the cheap
     renderer the same ablation removes nothing worth reporting."""
-    measurement, _ = ablate_renderer(Subject(expensive=False))
+    measured, _ = ablate_renderer(Subject(expensive=False))
+    measurement = measured.measurement
 
     assert measurement["seconds.share_removed"] < 0.9
 
@@ -332,13 +334,13 @@ def test_the_thesis_run(query_counter: None) -> None:
     subject = Subject()
     detail: dict[str, str] = {}
 
-    def execute(spec: object) -> Mapping[str, float]:
+    def execute(spec: object) -> Measured:
         primitive = spec.primitive  # type: ignore[attr-defined]
         if primitive == "scaling.volume":
             return sweep_queries(subject)
-        measurement, note = ablate_renderer(subject)
+        measured, note = ablate_renderer(subject)
         detail["ablation"] = note
-        return measurement
+        return measured
 
     investigation = an_investigation(ReplayingClient([]), execute)
     investigation.client = _thesis_recordings(investigation, subject)
@@ -383,7 +385,7 @@ def test_the_loop_records_the_rationale_the_agent_actually_gave(query_counter: N
     """
     subject = Subject()
 
-    def execute(spec: ExperimentSpec) -> Mapping[str, float]:
+    def execute(spec: ExperimentSpec) -> Measured:
         if spec.primitive == "scaling.volume":
             return sweep_queries(subject)
         return ablate_renderer(subject)[0]
@@ -426,7 +428,7 @@ def test_a_narrowed_verdict_does_not_end_the_investigation() -> None:
         instruments=investigation.instruments,
         source=investigation.source,
         conditions=CONDITIONS,
-        execute=lambda spec: {"db.query": 2.0},
+        execute=lambda spec: Measured(measurement={"db.query": 2.0}),
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
     )
@@ -456,7 +458,7 @@ def test_the_loop_is_bounded_by_the_experiment_cap_and_stops_with_a_result() -> 
         instruments=investigation.instruments,
         source=investigation.source,
         conditions=CONDITIONS,
-        execute=lambda spec: {"db.query": 2.0},
+        execute=lambda spec: Measured(measurement={"db.query": 2.0}),
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
     )
@@ -514,7 +516,7 @@ def test_running_out_of_instruments_is_reported_as_such_and_not_as_the_cap() -> 
         instruments=investigation.instruments,
         source=investigation.source,
         conditions=CONDITIONS,
-        execute=lambda spec: {"db.query": 2.0},
+        execute=lambda spec: Measured(measurement={"db.query": 2.0}),
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
     )
@@ -538,7 +540,7 @@ def test_a_stopped_investigation_hands_over_the_exclusions_it_bought() -> None:
         instruments=investigation.instruments,
         source=investigation.source,
         conditions=CONDITIONS,
-        execute=lambda spec: {"db.query": 2.0},
+        execute=lambda spec: Measured(measurement={"db.query": 2.0}),
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
     )

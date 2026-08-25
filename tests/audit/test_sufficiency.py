@@ -39,7 +39,7 @@ from coldfix.diagnosis.chain import Symptom
 from coldfix.diagnosis.exclusions import Conditions, Exclusion
 from coldfix.diagnosis.log import Experiment, ExperimentLog
 from coldfix.diagnosis.log import Verdict as LogVerdict
-from coldfix.diagnosis.loop import Investigation, run_investigation
+from coldfix.diagnosis.loop import Investigation, Measured, run_investigation
 from coldfix.diagnosis.progress import PartialChain, Stopped, partial_chain
 from coldfix.llm.client import ReplayingClient
 from coldfix.primitives.scaling import Distribution
@@ -446,7 +446,7 @@ def a_run_the_agent_would_have_continued() -> tuple[Investigation, Budget]:
         instruments=investigation.instruments,
         source=investigation.source,
         conditions=THESIS_CONDITIONS,
-        execute=lambda spec: {"db.query": 2.0},
+        execute=lambda spec: Measured(measurement={"db.query": 2.0}),
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
         finding_id=FINDING,

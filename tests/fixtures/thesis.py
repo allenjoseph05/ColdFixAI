@@ -33,7 +33,7 @@ from coldfix.diagnosis.design import ExperimentSpec, JSONValue
 from coldfix.diagnosis.exclusions import Conditions, Exclusion, ExclusionRegister
 from coldfix.diagnosis.hypothesis import Hypothesis
 from coldfix.diagnosis.log import ExperimentLog, Verdict
-from coldfix.diagnosis.loop import Investigation
+from coldfix.diagnosis.loop import Investigation, Measured
 from coldfix.diagnosis.progress import INVESTIGATION_STALL_AFTER
 from coldfix.diagnosis.schema import schema_of
 from coldfix.llm.client import Recording, ReplayingClient
@@ -144,8 +144,18 @@ def verified(subject: Subject) -> VerifiedReset:
     )
 
 
-def sweep_queries(subject: Subject) -> Mapping[str, float]:
-    """A real volume sweep, reported as the counts it produced."""
+def sweep_queries(subject: Subject) -> Measured:
+    """A real volume sweep, with what the primitive knew about it. **S-8.12.**
+
+    The counts used to be all that survived. `scale_volume` returns a `kinds`
+    mapping and a `Fit` per metric, and both were dropped here because
+    `Executor` had nowhere to put them — which left S-9.4 with no curve to judge
+    and S-9.6 with no way to know a count from a duration.
+
+    The kind is taken from the result rather than from the key. These are counts
+    because the primitive says the counter is a count, not because the string
+    starts with `db.query`.
+    """
     result = scale_volume(
         seed=subject.seed,
         invoke=subject.invoke,
@@ -155,14 +165,19 @@ def sweep_queries(subject: Subject) -> Mapping[str, float]:
         counters=[QUERIES],
         process_identity=subject.process_identity,
     )
-    return {
+    measurement = {
         f"db.query.n{point.scale}": float(point.raw[QUERIES])
         for point in result.points
         if point.scale in SCALES
     }
+    return Measured(
+        measurement=measurement,
+        kinds=dict.fromkeys(measurement, result.kinds[QUERIES]),
+        fit=result.fits[QUERIES],
+    )
 
 
-def ablate_renderer(subject: Subject) -> tuple[Mapping[str, float], str]:
+def ablate_renderer(subject: Subject) -> tuple[Measured, str]:
     """A real ablation of the renderer, reported as counts and a rounded share.
 
     The share is rounded because the prompt it lands in is hashed to find a
@@ -188,12 +203,29 @@ def ablate_renderer(subject: Subject) -> tuple[Mapping[str, float], str]:
     # itself is a finding with no localization and nothing saying why.
     name, measured = result.reported("seconds")
     share = round(measured, 2)
+    measurement = {
+        name: share,
+        "render.calls_baseline": float(result.calls_baseline),
+        "render.calls_ablated": float(result.calls_ablated),
+    }
     return (
-        {
-            name: share,
-            "render.calls_baseline": float(result.calls_baseline),
-            "render.calls_ablated": float(result.calls_ablated),
-        },
+        Measured(
+            measurement=measurement,
+            # **`seconds.share_removed` is a share of a duration, and this is the
+            # case `audit/compose.py` names.** `metric_kind` reads it off the
+            # spelling and calls it a count; S-9.6 holds that a count moving at
+            # all is material, so a re-run would diverge every time and every
+            # finding would come back `unsound`. The primitive knows it came from
+            # `seconds`, so the kind travels from there.
+            kinds={
+                name: result.kinds["seconds"],
+                "render.calls_baseline": result.kinds[QUERIES],
+                "render.calls_ablated": result.kinds[QUERIES],
+            },
+            # An ablation fits no curve, and saying so is what keeps S-9.4
+            # `NOT_RUN` here rather than judging one nobody drew.
+            fit=None,
+        ),
         f"baseline {result.baseline} against ablated {result.ablated}",
     )
 
@@ -296,8 +328,8 @@ def _thesis_recordings(investigation: Investigation, subject: Subject) -> Replay
     The measurements come from actually running the primitives, which is what
     makes the recorded questions the ones the real run will ask.
     """
-    sweep = sweep_queries(subject)
-    ablation, _ = ablate_renderer(subject)
+    sweep = sweep_queries(subject).measurement
+    ablation = ablate_renderer(subject)[0].measurement
 
     plan = [
         Turn(
