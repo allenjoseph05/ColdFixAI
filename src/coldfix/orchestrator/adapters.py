@@ -836,6 +836,14 @@ def _log_of(state: CheckpointedState) -> ExperimentLog:
             measurement=record.measurement,
             verdict=record.verdict,
             outcome=record.outcome,
+            # **S-8.12: replayed with what the primitive knew, or the audit on
+            # the far side of a checkpoint runs weaker than the one before it.**
+            # Three of Epic 9's attacks read these off the log, so dropping them
+            # here would make a resumed run report `NOT_RUN` where the original
+            # reported a verdict — and an attack that did not run is not one that
+            # passed.
+            kinds=record.kinds,
+            fit=record.fit,
         )
     return log
 

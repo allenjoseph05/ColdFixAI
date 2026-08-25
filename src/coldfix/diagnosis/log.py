@@ -47,7 +47,9 @@ from itertools import pairwise
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from coldfix.bench.stats import Fit
 from coldfix.cost.pruning import ExperimentRecord, PrunedLog, PruningError
+from coldfix.primitives.measurement import MetricKind
 
 _STRICT = ConfigDict(frozen=True, extra="forbid")
 
@@ -142,6 +144,32 @@ class Experiment(BaseModel):
     always and rendered never: S-5.8 defers it and `read_experiment` retrieves
     it, because writing it into the log would invalidate the cached prefix."""
 
+    kinds: Mapping[str, MetricKind] = Field(default_factory=dict)
+    """What each measured number is made of, **as the primitive that produced it
+    said** — never derived from the metric's name.
+
+    S-8.12. `metric_kind` is a pure function of spelling whose default is
+    `COUNT`, and the thesis ablation reports `seconds.share_removed` — a *share
+    of a duration* it would classify as a count. S-9.6's rule is that a count
+    moving at all is material, so a reproducibility check reading kinds off the
+    spelling would report divergence on every re-run, mark every finding
+    `unsound`, and route every investigation back for more experiments for ever.
+
+    Empty means the executor did not say. That leaves S-9.6 `NOT_RUN`, which is
+    the honest answer and the one `audit/compose.py` chose when this had to be
+    passed in by hand."""
+
+    fit: Fit | None = None
+    """The growth fit behind this experiment, where the primitive produced one.
+
+    S-8.12, and `None` is a real answer rather than a gap: an ablation fits
+    nothing, and S-9.2 already refuses to judge a rejection that came from no
+    sweep — *inventing a fit to judge would be auditing a curve nobody drew.*
+
+    A stdlib dataclass held in a pydantic model, which round-trips through JSON
+    unchanged. S-6.1 requires that: a checkpoint that cannot serialize is a run
+    that cannot resume."""
+
     @field_validator("measurement")
     @classmethod
     def _measured(cls, measurement: Mapping[str, float]) -> Mapping[str, float]:
@@ -196,6 +224,8 @@ class ExperimentLog:
         verdict: Verdict,
         outcome: str,
         detail: str = "",
+        kinds: Mapping[str, MetricKind] | None = None,
+        fit: Fit | None = None,
     ) -> Experiment:
         """Record one experiment. The only way anything enters this log.
 
@@ -226,6 +256,8 @@ class ExperimentLog:
                 measurement=measurement,
                 verdict=verdict,
                 outcome=outcome,
+                kinds=dict(kinds or {}),
+                fit=fit,
                 detail=detail,
             )
         except ValueError as error:
