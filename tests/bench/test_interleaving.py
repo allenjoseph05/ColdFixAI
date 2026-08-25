@@ -167,6 +167,7 @@ def test_nothing_is_discarded() -> None:
 # --------------------------------------------- the property the story exists for
 
 
+@pytest.mark.timing
 def test_interleaving_cancels_a_drifting_machine() -> None:
     """A known-equal pair on a machine that slows down must still read as equal.
 
@@ -184,6 +185,7 @@ def test_interleaving_cancels_a_drifting_machine() -> None:
         )
 
 
+@pytest.mark.timing
 def test_a_block_design_manufactures_a_difference_on_the_same_work() -> None:
     """The adversarial half: run the same workload the way this module refuses to.
 

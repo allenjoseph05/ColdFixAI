@@ -100,6 +100,7 @@ def test_a_sleep_reports_blocked_time_rather_than_cpu_time() -> None:
     assert profile.boundedness is Boundedness.BLOCKED
 
 
+@pytest.mark.timing
 def test_a_busy_loop_reports_cpu_time_rather_than_blocked_time() -> None:
     """The control, and the reason the test above says anything.
 
@@ -114,6 +115,7 @@ def test_a_busy_loop_reports_cpu_time_rather_than_blocked_time() -> None:
     assert profile.boundedness is Boundedness.COMPUTE_BOUND
 
 
+@pytest.mark.timing
 def test_the_two_are_the_same_wall_clock_and_different_findings() -> None:
     """Stated as one assertion because it is the story in one line."""
     with off_cpu() as waited:
@@ -128,7 +130,35 @@ def test_the_two_are_the_same_wall_clock_and_different_findings() -> None:
 def test_a_run_that_does_both_is_reported_as_mixed() -> None:
     """Rather than rounded to whichever side is larger. A fix aimed at one half
     of a mixed run addresses one half of the cost, and saying so is more useful
-    than picking a winner."""
+    than picking a winner.
+
+    **Constructed rather than provoked, which is the argument two tests down
+    applied to this one.** That test declines to make four threads race because
+    *a test that sometimes lands between two classifications tests the machine's
+    scheduler rather than the classification*. This one provoked its condition
+    with a real half-and-half block, and S-0.9 measured what that costs: under
+    twice the core count in spinners it reported the wrong class **five times out
+    of five**, because the scheduler stops giving the busy half a core and
+    wall-clock time inflates while CPU time does not.
+
+    What is under test here is the boundary arithmetic. That the instrument can
+    measure a real busy loop and a real sleep is a different claim, tested above
+    against the clock and marked `timing` for the same reason.
+    """
+    profile = OffCpuProfile(wall_seconds=SLEEP, cpu_seconds=SLEEP / 2)
+
+    assert profile.boundedness is Boundedness.MIXED
+
+
+@pytest.mark.timing
+def test_a_real_half_and_half_run_is_measured_as_mixed() -> None:
+    """The empirical half, kept and quarantined rather than deleted.
+
+    The classification above is arithmetic over two numbers; this is the claim
+    that the two numbers come back right off a real block that computes for half
+    its life and waits for the other half. Both are worth having and only one of
+    them belongs in a gate that has to be trusted.
+    """
     with off_cpu() as profile:
         busy_for(SLEEP / 2)
         time.sleep(SLEEP / 2)
@@ -328,6 +358,7 @@ def test_blocked_time_totals_are_durations_not_counts() -> None:
 # ------------------------------------------- AC 2: in the experiment result
 
 
+@pytest.mark.timing
 def test_every_measurement_carries_the_distinction() -> None:
     """AC 2. Recorded on every run rather than only when off-CPU time is already
     the hypothesis, because it costs two clock reads and because a delta that
