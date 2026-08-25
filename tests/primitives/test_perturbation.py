@@ -94,6 +94,7 @@ def curve_from(slope: float) -> Sensitivity:
 # ------------------------------------------- AC 1: a known fractional slowdown
 
 
+@pytest.mark.timing
 def test_the_target_is_slowed_by_the_fraction_asked_for() -> None:
     """AC 1. Proportional to what the call took, not a constant: a fixed delay
     perturbs a fast call out of all proportion, and the slope of that would be a
@@ -173,6 +174,7 @@ def test_the_result_is_a_curve_of_several_points() -> None:
     assert result.r_squared > 0.9
 
 
+@pytest.mark.timing
 def test_a_component_the_whole_workload_waits_on_has_a_slope_near_one() -> None:
     """The serial case, which is also F7's point: every millisecond added to it
     is a millisecond added to the total, so the sensitivity is its share of
@@ -187,6 +189,7 @@ def test_a_component_the_whole_workload_waits_on_has_a_slope_near_one() -> None:
     assert result.sensitive
 
 
+@pytest.mark.timing
 def test_a_component_whose_delay_is_absorbed_is_reported_as_insensitive() -> None:
     """§8's worked example, where optimizing one of two similarly-weighted
     functions yields **exactly zero**.
@@ -215,6 +218,7 @@ def test_a_component_whose_delay_is_absorbed_is_reported_as_insensitive() -> Non
     assert "would gain nothing measurable" in result.explanation()
 
 
+@pytest.mark.timing
 def test_in_serial_code_the_sensitivity_is_just_the_share_of_runtime() -> None:
     """F7's finding, measured rather than asserted.
 
@@ -235,6 +239,7 @@ def test_in_serial_code_the_sensitivity_is_just_the_share_of_runtime() -> None:
     assert result.slope == pytest.approx(share_of_runtime, abs=0.03)
 
 
+@pytest.mark.timing
 def test_a_cheap_component_can_be_more_worth_optimizing_than_an_expensive_one() -> None:
     """§8's decisive datum, in the smallest form that is really it.
 

@@ -260,6 +260,7 @@ def jittery(base: float, cv: float, rng: random.Random) -> Callable[[], None]:
     return work
 
 
+@pytest.mark.timing
 def test_the_certified_floor_predicts_what_compare_finds() -> None:
     """End to end: certify a workload, then hold `compare()` to the promise.
 

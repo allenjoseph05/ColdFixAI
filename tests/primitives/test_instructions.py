@@ -281,6 +281,7 @@ def test_the_separation_records_the_metric_the_conclusion_rests_on() -> None:
     assert "rests on instructions" in counted.explanation()
 
 
+@pytest.mark.timing
 def test_the_separation_says_it_is_a_search_result_and_not_a_verified_one() -> None:
     """§12's workflow in full: search against instruction count, *then* validate
     the single winner with interleaved statistical timing. A count that read as a

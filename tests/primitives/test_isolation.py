@@ -92,6 +92,7 @@ def interference_from(alone: tuple[float, ...], together: tuple[float, ...]) -> 
 # ------------------------------------------- AC 1: alone, in context, the gap
 
 
+@pytest.mark.timing
 def test_a_component_sharing_a_lock_is_slower_among_its_neighbours() -> None:
     """AC 1. The gap exists only because something else is running, which is the
     whole definition of interference."""
@@ -111,6 +112,7 @@ def test_a_component_sharing_a_lock_is_slower_among_its_neighbours() -> None:
     assert result.alone_cost >= HOLD
 
 
+@pytest.mark.timing
 def test_a_component_sharing_nothing_shows_no_interference() -> None:
     """The control, and the more important test of the two.
 
@@ -172,6 +174,7 @@ def test_the_isolated_condition_needs_enough_runs_to_have_a_spread() -> None:
 # --------------------------------- which neighbour: the middle step of §17
 
 
+@pytest.mark.timing
 def test_the_neighbour_actually_contended_with_is_named() -> None:
     """`01-primitives.md` §17's composition — *Load → Isolation → Substitution* —
     needs the middle step to say **which**. A gap against the whole context says

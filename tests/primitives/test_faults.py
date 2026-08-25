@@ -256,6 +256,7 @@ def test_the_guard_releases_when_the_target_cannot_be_wrapped() -> None:
 # ------------------------------------- AC 4: retry amplification
 
 
+@pytest.mark.timing
 def test_a_retrying_client_amplifies_load_as_the_dependency_slows() -> None:
     """AC 4, and the shape that sustains a metastable failure: the slower the
     dependency gets, the more work the subject sends it."""
@@ -275,6 +276,7 @@ def test_a_retrying_client_amplifies_load_as_the_dependency_slows() -> None:
     assert "needs human review" in result.explanation()
 
 
+@pytest.mark.timing
 def test_a_retry_limit_makes_the_curve_a_step_and_it_is_still_amplification() -> None:
     """Why the criterion is a multiple and not a fitted exponent — ADR 045.
 
