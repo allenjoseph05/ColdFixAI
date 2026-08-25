@@ -213,9 +213,10 @@ def key_experiment(log: ExperimentLog) -> Experiment | None:
 
 def audit_finding(  # noqa: PLR0913 - the workload, the log, the conditions and
     # the exclusions are what the investigation produced; the session, client and
-    # token counts are S-9.1's; and `fits`, `kinds` and `rerun` are the three
-    # inputs the log cannot carry. None is derivable from the others — that is
-    # the finding.
+    # token counts are S-9.1's; and `rerun` is the one input the log cannot
+    # carry, because re-running is the harness's and not the record's. `fits` and
+    # `kinds` used to sit beside it and no longer do — S-8.12 widened the loop
+    # boundary so the log carries both.
     session: Session,
     client: ModelClient,
     *,
@@ -225,8 +226,6 @@ def audit_finding(  # noqa: PLR0913 - the workload, the log, the conditions and
     exclusions: Sequence[Exclusion],
     measured_prefix_tokens: int,
     measured_prompt_tokens: int,
-    fits: dict[int, Fit] | None = None,
-    kinds: Mapping[str, MetricKind] | None = None,
     rerun: Rerun | None = None,
     relative_noise: float | None = None,
     finding_id: str | None = None,
@@ -297,6 +296,15 @@ def audit_finding(  # noqa: PLR0913 - the workload, the log, the conditions and
     calls.extend(representativeness.calls)
     refuse_overspend(calls)
 
+    # **Read off the log rather than taken from the caller. S-8.12.** Both used to
+    # be arguments, because `Executor` returned a bare mapping of numbers and the
+    # log could not hold what the primitive knew about them. A caller that had to
+    # supply them was a caller that could forget to, and forgetting read as
+    # `NOT_RUN` — an attack that did not run, indistinguishable at a glance from
+    # one that passed.
+    fits = fits_from(log)
+    kinds = kinds_from(log)
+
     results = [
         from_exclusions(audit_all(exclusions, fits=fits, relative_noise=relative_noise)),
         from_fixture(assess_fixture(conditions, workload.fixture)),
@@ -311,12 +319,34 @@ def audit_finding(  # noqa: PLR0913 - the workload, the log, the conditions and
     return route(verdict, session.budget, finding_id), tuple(calls)
 
 
-def _fit_for(log: ExperimentLog, fits: dict[int, Fit] | None) -> Fit | None:
-    """The fit behind the finding's growth claim, if the caller supplied one.
+def fits_from(log: ExperimentLog) -> dict[int, Fit]:
+    """Every growth fit the log carries, keyed by experiment index. **S-8.12.**
 
-    Keyed by experiment index, the same way S-9.2 takes them, so a caller holding
-    one mapping does not have to hold two.
+    Keyed by index because that is how S-9.2 reads them: an exclusion names the
+    experiment that produced it, and the fit to judge is that experiment's.
+    Experiments that fitted nothing are absent rather than present-and-empty —
+    an ablation draws no curve, and S-9.2 refuses to judge one nobody drew.
     """
+    return {item.index: item.fit for item in log.experiments if item.fit is not None}
+
+
+def kinds_from(log: ExperimentLog) -> Mapping[str, MetricKind]:
+    """What every measured metric is made of, as the primitives said. **S-8.12.**
+
+    Merged across the log, latest wins. A metric measured by two primitives is
+    the same quantity — `db.query` is a count wherever it came from — so a
+    disagreement would be a defect in a primitive rather than a thing to
+    reconcile here, and taking the most recent keeps this a fold rather than a
+    judgement.
+    """
+    merged: dict[str, MetricKind] = {}
+    for item in log.experiments:
+        merged.update(item.kinds)
+    return merged
+
+
+def _fit_for(log: ExperimentLog, fits: Mapping[int, Fit]) -> Fit | None:
+    """The fit behind the finding's growth claim: the most recent one recorded."""
     if not fits:
         return None
     for experiment in reversed(log.experiments):

@@ -30,8 +30,6 @@ the same reason.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-
 import pytest
 
 from coldfix.bench.stats import Growth
@@ -41,7 +39,7 @@ from coldfix.diagnosis.design import ExperimentSpec
 from coldfix.diagnosis.emit import chain_from, conditions_for, symptom_for
 from coldfix.diagnosis.exclusions import Dimension
 from coldfix.diagnosis.explain import parse, shares_from
-from coldfix.diagnosis.loop import confirming_links, run_investigation
+from coldfix.diagnosis.loop import Measured, confirming_links, run_investigation
 from coldfix.diagnosis.progress import ProgressError, Stopped
 from coldfix.llm.client import ReplayingClient
 from coldfix.primitives.scaling import Distribution
@@ -89,7 +87,7 @@ def a_workload() -> Workload:
 def run_the_epic(subject: Subject) -> object:
     """The whole loop, driven the way a caller would."""
 
-    def execute(spec: ExperimentSpec) -> Mapping[str, float]:
+    def execute(spec: ExperimentSpec) -> Measured:
         if spec.primitive == "scaling.volume":
             return sweep_queries(subject)
         return ablate_renderer(subject)[0]

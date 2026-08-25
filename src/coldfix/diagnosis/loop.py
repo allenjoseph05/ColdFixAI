@@ -45,6 +45,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
+from coldfix.bench.stats import Fit
 from coldfix.cost.accounting import Phase
 from coldfix.cost.budget import BudgetExhaustedError, Disposition, ProgressStalledError
 from coldfix.cost.session import Session
@@ -64,6 +65,7 @@ from coldfix.diagnosis.progress import (
 )
 from coldfix.diagnosis.reseed import Reseeding, Seeder, reseed
 from coldfix.llm.client import ModelClient
+from coldfix.primitives.measurement import MetricKind
 from coldfix.primitives.registry import Selection
 from coldfix.screening.workload import FixtureRecipe
 
@@ -99,11 +101,50 @@ class NoNewInstrumentError(LoopError):
         )
 
 
+@dataclass(frozen=True)
+class Measured:
+    """What one experiment produced, and what the primitive knew about it.
+
+    **S-8.12 widened this boundary and it was one line that narrowed it.**
+    `Executor` returned `Mapping[str, float]`, so everything an Epic 3 result
+    carried *about* its numbers was discarded here: `scale_volume` produces a
+    `kinds` mapping and a `Fit` per metric, and an `Experiment` could hold
+    neither. Three of Epic 9's six attacks answered `NOT_RUN` for want of them,
+    and `audit/compose.py` had to take them as arguments from a caller that might
+    not have them either.
+
+    **The loop still measures nothing.** Every field here is filled by the
+    harness that ran the primitive; there is no code in this module that computes
+    a fit, a kind, or a number, and `CLAUDE.md` puts the measuring in the harness
+    for exactly that reason.
+
+    **Both extras default to absent, and absence is a statement.** A primitive
+    that fitted nothing — an ablation, a fault injection — says so by leaving
+    `fit` unset, and S-9.2 already refuses to judge a rejection that came from no
+    sweep. What is *not* allowed is inferring either from the metric's name; see
+    `Experiment.kinds`.
+    """
+
+    measurement: Mapping[str, float]
+    kinds: Mapping[str, MetricKind] = field(default_factory=dict)
+    fit: Fit | None = None
+
+    def __post_init__(self) -> None:
+        unmeasured = set(self.kinds) - set(self.measurement)
+        if unmeasured:
+            message = (
+                f"kinds were reported for {sorted(unmeasured)}, which this experiment did not "
+                "measure. A kind describes a number, and one describing a number nobody took is "
+                "a claim about a measurement that does not exist"
+            )
+            raise LoopError(message)
+
+
 # What the harness does with a specification: run the primitive and hand back what
 # it measured. **The loop never measures anything itself** — `CLAUDE.md` puts the
 # measuring in the harness and the reasoning in the agent, and a loop that could
 # produce a number would be the one place that rule is unenforceable.
-type Executor = Callable[[ExperimentSpec], Mapping[str, float]]
+type Executor = Callable[[ExperimentSpec], Measured]
 
 
 @dataclass(frozen=True)
@@ -255,14 +296,14 @@ class Investigation:
             measured_prompt_tokens=measured_prompt_tokens,
         ).value
 
-        measurement = self.execute(spec)
+        measured = self.execute(spec)
 
         reading = interpret(
             self.session,
             self.client,
             hypothesis=hypothesis,
             spec=spec,
-            measurement=measurement,
+            measurement=measured.measurement,
             log=self.log,
             measured_prefix_tokens=measured_prefix_tokens,
             measured_prompt_tokens=measured_prompt_tokens,
@@ -277,6 +318,12 @@ class Investigation:
             measurement=reading.measurement,
             verdict=reading.verdict,
             outcome=reading.outcome,
+            # **Carried, not computed.** What the primitive knew about its own
+            # numbers travels with them into the log, which is the whole of
+            # S-8.12; the verdict and the measurement remain the interpreter's
+            # and the harness's respectively.
+            kinds=measured.kinds,
+            fit=measured.fit,
         )
 
         if reading.verdict is Verdict.REJECTED:
