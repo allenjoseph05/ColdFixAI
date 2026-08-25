@@ -40,6 +40,7 @@ from coldfix.orchestrator.adapters import MissingInputError
 from coldfix.orchestrator.checkpointing import thread
 from coldfix.repair.patch import Patch
 from coldfix.repair.slack import LABEL
+from coldfix.report.pullrequest import deltas
 from coldfix.state.checkpoint import CheckpointedState
 from coldfix.state.trust import Level
 
@@ -124,19 +125,13 @@ class Approval:
     def _deltas(self) -> Sequence[str]:
         """Every metric measured on both sides, with the ones only one side has.
 
-        A metric present before and absent after is not an improvement to zero —
-        it is a measurement that was not taken, and rendering it as a delta would
-        invent the most flattering number available.
+        **Rendered through `report.pullrequest.deltas` since S-16.2**, because the
+        pull request shows the same numbers and two renderings of one table is how
+        a gate report and a pull request come to disagree about what improved. The
+        rule the table encodes is unchanged: a metric present before and absent
+        after is a measurement nobody took, not an improvement to zero.
         """
-        names = sorted(set(self.before) | set(self.after))
-        rows: list[str] = []
-        for name in names:
-            was, now = self.before.get(name), self.after.get(name)
-            if was is None or now is None:
-                rows.append(f"  {name}: measured on only one side, so no delta")
-                continue
-            rows.append(f"  {name}: {was:g} -> {now:g} ({_change(was, now)})")
-        return rows or ["  nothing was measured on either side"]
+        return deltas(self.before, self.after)
 
 
 @dataclass(frozen=True)
@@ -312,18 +307,6 @@ def _numbers(value: object) -> Mapping[str, float]:
     if not isinstance(value, Mapping):
         return {}
     return {str(name): float(str(number)) for name, number in value.items()}
-
-
-def _change(was: float, now: float) -> str:
-    """How much better or worse, said the way a reader checks it.
-
-    A percentage against a zero baseline is undefined rather than infinite, and
-    saying so is more useful than printing a number nobody can verify.
-    """
-    if was == 0:
-        return "was zero, so no ratio"
-    share = (was - now) / was
-    return f"{abs(share):.0%} {'better' if share > 0 else 'worse'}" if share else "unchanged"
 
 
 # ============================================================ S-13.6: what the level opens
