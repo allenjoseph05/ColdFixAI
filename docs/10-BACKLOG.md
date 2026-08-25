@@ -1678,11 +1678,33 @@ AC:
 # EPIC 17 — Hardening and release
 
 ### S-17.1 — End-to-end run on the holdout repo
-Depends: E12
+Depends: E12, **S-17.4**, and see below
 AC:
 - Full pipeline runs on the repo reserved in S-0.6, never used in development
 - Produces either a finding with a merged-quality PR, or an honest null result
 - No manual intervention beyond approvals
+
+**BLOCKED (2026-08-25) — nothing was built for the run, and there are three reasons of very different kinds.**
+
+**1. There is no API key and the run costs real money.** `ANTHROPIC_API_KEY` is unset, and a full pipeline run makes live frontier calls at every phase — `04-cost.md` §12.1 costs the worst case at **~$291 per run** with five findings. This is not a thing to spend on somebody's behalf without being asked, and it is the only AC blocker that no amount of building removes.
+
+**2. AC 2's PR half needs S-16.2, which is open.** `adapters.ship` says so itself: *it does not emit a pull request, and the omission is deliberate rather than pending — S-16.2 owns the PR body … a stub here would be a second, worse answer to a question two epics away.* The stated dependency `E12` is incomplete. **But the holdout makes this survivable**: `targets.toml` records that its list endpoint is *already correctly prefetched and no defect was found*, and it was chosen precisely because **the correct answer on it is "nothing found"**. So the expected path is AC 2's *null result* branch, which needs no PR — and S-16.2 becomes a blocker only if the run finds something.
+
+**3. The wiring did not exist**, which is the part that was buildable and is now **S-17.4**. There has never been a `Sessions` implementation anywhere in `src/`, and `gates_for` has been written, tested and uncalled since S-13.6. A run could not have started.
+
+**The holdout discipline test is the other thing to remember, and it caught this note being written.** `tests/test_holdout_discipline.py` fails if the holdout's name, URL, commit or settings module appears outside a six-entry allow-list — and the first draft of this entry named two of them, exactly as S-0.6 warned (*it is easy to reach for the holdout as a convenient second example, and nothing about doing so feels like a violation at the time*). The fix was to stop naming it rather than to widen the list, which is what its own comment asks: *adding one should be a deliberate act with a reason, not a way to make this test pass.* S-17.1 is the story that earns those entries. Nothing has been added for it yet.
+
+### S-17.4 — The campaign entry point
+Depends: E12, S-13.6
+Why: `Sessions` is a protocol with no implementation and `gates_for` has no caller, so nothing can start a run — and both gaps are invisible from inside a node.
+AC:
+- A `Sessions` implementation under `src/` gives each agent step a budget its phase will accept
+- Every session bills into one ledger, so the euro ceiling sees the whole run
+- The graph compiles with the gates `standing(...)` says the project has earned
+- A test proves a session is reused rather than rebuilt per call
+
+**DONE (2026-08-25)** — `src/coldfix/orchestrator/campaign.py`, ADR 143, 19 tests in `tests/orchestrator/test_campaign.py`. All four AC met. **`Sessions` HAS BEEN A PROTOCOL WITH NO IMPLEMENTATION SINCE S-12.7**, and every caller in the tree was `lambda system: object()` in a test — a gap nothing could see from inside a node, because a node asks for a session by prompt and uses it, and any plausible factory satisfies every test in the suite. **THREE PHASES WANT THREE DIFFERENT PROGRESS CHECKS AND TWO OF THEM REFUSE TO RUN AGAINST THE WRONG ONE**: `GroundingRun` will not be constructed unless its budget stalls after **15**, `run_investigation` refuses anything but **8**, and everything else takes S-5.4's default of **3**. One budget cannot satisfy the first two at once, which is *why* the decision is per prompt — and `Session` is the only thing that builds a `Budget`, so the prompt is where it has to be made. **ONE LEDGER UNDERNEATH ALL OF THEM, OR THE CEILING IS PER-PHASE**: `Budget.spent_eur` reads its own ledger's total, so sessions with separate ledgers each see a fraction of the spend and a run could pass six ceilings on the way to breaching one. **THE FACTORY MEMOIZES AND THAT IS LOAD-BEARING RATHER THAN AN OPTIMISATION** — `adapters.investigate` asks for its session on *every* node execution, so a fresh `Session` per call is a fresh `Budget` per call, and S-5.4's per-phase caps would reset every time a node ran: **enforcement counting to one.** It would also discard the prompt cache `04-cost.md` §4 is built on. **A PROMPT NO ROLE OWNS IS REFUSED, BY ASKING THE INDEX RATHER THAN MIRRORING IT** — `owner_of` had no production caller either, and a second list of prompts here would disagree with `roles.py` the first time a step was added. **`gates_for` FINALLY HAS ITS CALLER**: `gated_graph` reads the level through `standing`, which reads the append-only ledger, and **there is no argument through which a caller could ask for fewer gates** — ADR 130's refusal, still standing now that a level is earned rather than passed. A gated graph with no checkpointer is refused in the campaign's own words, because an interrupt parks the run *in* the checkpoint and an approval given on Thursday needs somewhere to return to. **Sabotage: 2 properties, both caught** — a fresh session per call fails two tests, and one progress check for every phase fails five.
+
 
 ### S-17.2 — Documentation
 Depends: S-17.1
