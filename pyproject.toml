@@ -159,6 +159,20 @@ plugins = ["pydantic.mypy"]
 # is out of scope for strict checking by intent, not just by convenience.
 exclude = ["^spikes/"]
 
+# Django ships no `py.typed` and no bundled stubs, so `from django.db import
+# connections` is an `import-untyped` error under strict. Silenced for Django
+# alone rather than globally: `ignore_missing_imports` applied to everything
+# would also swallow a typo in one of our own module paths, which is the error
+# this setting exists to keep loud.
+#
+# The scope is one import in one function. S-14.2's adapter imports Django
+# lazily, inside `query_hook`, because a wheel installed without Django must
+# still import `coldfix` — so this override covers the framework boundary and
+# nothing above it.
+[[tool.mypy.overrides]]
+module = ["django.*"]
+ignore_missing_imports = true
+
 [tool.pydantic-mypy]
 init_typed = true
 warn_required_dynamic_aliases = true

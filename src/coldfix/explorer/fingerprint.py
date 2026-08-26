@@ -361,8 +361,26 @@ def _identify_database(
     return None
 
 
+def declared_test_runner(root: Path, *, framework: Framework) -> Detected[TestRunner] | None:
+    """Which runner this repository declares, without needing a full fingerprint.
+
+    Split out at S-14.2, because an adapter already knows its framework — that is
+    what an adapter *is* — and needs the runner for repositories whose manifests
+    do not name the framework at all. A project holding a `pyproject.toml` with
+    `[tool.pytest.ini_options]` and no dependency list is `Unsupported` to
+    `fingerprint`, and an adapter asking through it would fall back to Django's
+    runner on a project that had said pytest in writing.
+
+    Not named `test_runner`: pytest collects on the `test_` prefix, and a name
+    imported into a test module would be collected as a test. `TestRunner`
+    carries `__test__ = False` for the same reason, one line above.
+    """
+    root = Path(root)
+    return _identify_test_runner(root, framework, _declared_requirements(root))
+
+
 def _identify_test_runner(
-    root: Path, framework: Detected[Framework], requirements: Sequence[tuple[str, str]]
+    root: Path, framework: Framework, requirements: Sequence[tuple[str, str]]
 ) -> Detected[TestRunner] | None:
     for name in ("pytest.ini", "tox.ini", "setup.cfg"):
         path = root / name
@@ -379,7 +397,7 @@ def _identify_test_runner(
     if found is not None:
         return Detected(TestRunner.PYTEST, f"{found[1]}: {found[0]}")
 
-    if framework.value is Framework.DJANGO and (root / "manage.py").is_file():
+    if framework is Framework.DJANGO and (root / "manage.py").is_file():
         return Detected(TestRunner.DJANGO, "manage.py (Django's own runner is always available)")
     return None
 
@@ -405,7 +423,7 @@ def fingerprint(root: Path) -> Identification:
         declared_version=_declared_version(identified.value, requirements),
         orm=_identify_orm(identified, requirements),
         database=_identify_database(root, requirements),
-        test_runner=_identify_test_runner(root, identified, requirements),
+        test_runner=_identify_test_runner(root, identified.value, requirements),
     )
 
 
