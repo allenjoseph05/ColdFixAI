@@ -29,6 +29,7 @@ import pytest
 from coldfix.adapters import (
     ADAPTER_CAPABILITIES,
     HARNESS_CAPABILITIES,
+    ROW_COUNTING_VENDORS,
     Declarations,
     FrameworkAdapter,
     Subject,
@@ -398,6 +399,15 @@ class TestCapabilities:
         assert Capability.INPUT_MUTATION in HARNESS_CAPABILITIES
         assert Capability.LOAD_GENERATION in HARNESS_CAPABILITIES
         assert Capability.OFF_CPU_TIMING in HARNESS_CAPABILITIES
+
+    def test_the_measured_row_counting_vendors_are_short_and_are_evidence(self) -> None:
+        """Shared by both adapters, because it is a fact about the database.
+
+        SQLAlchemy over Postgres and the Django ORM over Postgres ask the same
+        driver the same question. The list is what has been measured (ADR 147),
+        and a vendor absent from it is refused rather than assumed either way.
+        """
+        assert frozenset({"postgresql"}) == ROW_COUNTING_VENDORS
 
     def test_the_adapter_keeps_the_ones_only_a_framework_can_answer(self) -> None:
         assert Capability.EVENT_COUNTERS in ADAPTER_CAPABILITIES
