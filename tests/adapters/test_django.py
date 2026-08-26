@@ -36,7 +36,6 @@ from coldfix.adapters import (
 from coldfix.adapters.django import (
     DJANGO_INTERNAL_FRAMES,
     DJANGO_PROTECTED_PATHS,
-    ROW_COUNTING_VENDORS,
     DjangoAdapter,
     query_hook,
 )
@@ -120,24 +119,62 @@ def test_importing_the_adapter_does_not_import_django() -> None:
 # =================================================================== the query hook
 
 
-@pytest.fixture(scope="module")
-def _sqlite_django() -> Iterator[None]:
-    """Django configured against SQLite, for the refusal path.
+IMAGE = "postgres:16-alpine"
+USER = "coldfix_test"
+PASSWORD = "coldfix_test"
+DATABASE = "coldfix_django_hook"
 
-    Settings are process-global and configuring them twice raises, so this is
-    module-scoped and guarded. Nothing else in the suite configures Django
-    in-process — every other Django test runs it in a subject's own interpreter.
+# Not 5432, and not a port another test module pinned. A hook pointed at the
+# wrong database would count somebody else's queries and look like it worked.
+PORT = 55461
+
+SQLITE = "default"
+"""Django requires an alias by this name, so the SQLite one takes it."""
+
+POSTGRES = "postgres"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _django_configured() -> Iterator[None]:
+    """One settings configuration for this module, holding **two** aliases.
+
+    **Django settings are process-global and `override_settings` does not swap a
+    connection** — it warns that overriding `DATABASES` leads to unexpected
+    behaviour, and the connection handler goes on returning the original vendor.
+    Measured, after two fixtures in this file tried to configure different
+    databases and the second silently got the first one's.
+
+    So both backends are configured at once under names of their own, and each
+    test says which alias it is measuring. That is why `query_hook` takes
+    `aliases` at all: ADR 008's *each connection under measurement* is a decision
+    the caller states, and this file is the first caller with a reason to state
+    it.
     """
     if not settings.configured:
         settings.configure(
-            DATABASES={"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}},
+            DATABASES={
+                SQLITE: {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"},
+                POSTGRES: {
+                    "ENGINE": "django.db.backends.postgresql",
+                    "NAME": DATABASE,
+                    "USER": USER,
+                    "PASSWORD": PASSWORD,
+                    "HOST": "localhost",
+                    "PORT": str(PORT),
+                },
+            },
+            DATABASE_ROUTERS=[],
             INSTALLED_APPS=[],
             USE_TZ=True,
         )
+        # Without this Django warns that the database is being reached before the
+        # app registry is ready, which is true and is an artifact of a
+        # settings-only configuration rather than anything about the hook.
+        django.setup()
     yield
 
 
-def test_the_hook_refuses_a_backend_that_cannot_report_rows(_sqlite_django: None) -> None:
+def test_the_hook_refuses_a_backend_that_cannot_report_rows() -> None:
     """The safety property, measured rather than assumed.
 
     SQLite reports `rowcount = -1` for every `SELECT`, so the amount recorded
@@ -146,49 +183,64 @@ def test_the_hook_refuses_a_backend_that_cannot_report_rows(_sqlite_django: None
     own non-negotiables, so the hook refuses to install rather than counting
     something that is not what the catalogue says it is.
     """
-    with pytest.raises(HookError) as raised, query_hook()(lambda amount=1.0: None):
+    with (
+        pytest.raises(HookError) as raised,
+        query_hook(aliases=[SQLITE])(lambda amount=1.0: None),
+    ):
         pytest.fail("a backend with no row count should not have been instrumented")
 
     assert "sqlite" in str(raised.value)
     assert "rows per statement" in str(raised.value)
-    assert connections["default"].execute_wrappers == []
+    assert connections[SQLITE].execute_wrappers == []
 
 
-def test_the_refusal_names_what_was_measured(_sqlite_django: None) -> None:
+def test_the_refusal_names_what_was_measured() -> None:
     """A refusal that does not say which backends do work is not actionable."""
-    with pytest.raises(HookError) as raised, query_hook()(lambda amount=1.0: None):
+    with (
+        pytest.raises(HookError) as raised,
+        query_hook(aliases=[SQLITE])(lambda amount=1.0: None),
+    ):
         pass
     assert "postgresql" in str(raised.value)
 
 
-def test_postgresql_is_the_measured_vendor() -> None:
-    """`ROW_COUNTING_VENDORS` is short on purpose and its contents are evidence."""
-    assert frozenset({"postgresql"}) == ROW_COUNTING_VENDORS
+def test_one_unreportable_alias_refuses_the_whole_installation() -> None:
+    """The default instruments every alias, and one that cannot answer refuses all.
+
+    An adapter that instrumented the aliases it could and skipped the rest would
+    report a tally missing whatever the skipped connection did — an undercount,
+    silent, and indistinguishable from a workload that made fewer queries.
+    """
+    with pytest.raises(HookError), query_hook()(lambda amount=1.0: None):
+        pytest.fail("a configuration holding an unreportable backend should be refused")
 
 
-# ------------------------------------------------------- the counting half, on Postgres
+def test_an_alias_django_does_not_have_is_refused() -> None:
+    """Naming a connection that does not exist is a typo, and typos are loud here.
 
-IMAGE = "postgres:16-alpine"
-USER = "coldfix_test"
-PASSWORD = "coldfix_test"
+    Counting the aliases that do exist would make `db.query` a measurement of
+    fewer connections than the caller asked for, which is ADR 013's rule about
+    `db.queries` for `db.query` one level up.
+    """
+    with pytest.raises(HookError) as raised, query_hook(aliases=["replica"])(lambda a=1.0: None):
+        pytest.fail("an unknown alias should be refused")
 
-# Not 5432, and not a port another test module pinned. A hook pointed at the
-# wrong database would count somebody else's queries and look like it worked.
-PORT = 55461
+    assert "replica" in str(raised.value)
 
 
 @pytest.fixture(scope="module")
 def _postgres_django() -> Iterator[str]:
-    """A Postgres container, and Django configured to talk to it.
+    """A Postgres container the `postgres` alias already points at.
 
     Module-scoped for the same reason `test_reset.py`'s is: starting Postgres is
-    seconds and the tests here do not cross a database boundary.
+    seconds and the tests here do not cross a database boundary. The database
+    name and port are fixed rather than random, because the settings above are
+    written before this fixture runs and the two have to agree.
     """
     if not docker_available():
         pytest.skip("no Docker daemon is listening")
     require_image(IMAGE)
 
-    name = f"coldfix_subject_{uuid.uuid4().hex[:8]}"
     container = f"coldfix-django-hook-{uuid.uuid4().hex[:8]}"
     subprocess.run(
         [
@@ -196,43 +248,31 @@ def _postgres_django() -> Iterator[str]:
             "--publish", f"{PORT}:5432",
             "--env", f"POSTGRES_USER={USER}",
             "--env", f"POSTGRES_PASSWORD={PASSWORD}",
-            "--env", f"POSTGRES_DB={name}",
+            "--env", f"POSTGRES_DB={DATABASE}",
             "--", IMAGE,
         ],
         capture_output=True,
         check=True,
         timeout=180,
     )  # fmt: skip
-    url = f"postgresql://{USER}:{PASSWORD}@localhost:{PORT}/{name}"
+    url = f"postgresql://{USER}:{PASSWORD}@localhost:{PORT}/{DATABASE}"
     try:
         wait_until_ready(VerifiedDatabase(url))
-        if not settings.configured:
-            settings.configure(
-                DATABASES={
-                    "default": {
-                        "ENGINE": "django.db.backends.postgresql",
-                        "NAME": name,
-                        "USER": USER,
-                        "PASSWORD": PASSWORD,
-                        "HOST": "localhost",
-                        "PORT": str(PORT),
-                    }
-                },
-                INSTALLED_APPS=[],
-                USE_TZ=True,
-            )
-        # Without this Django warns that the database is being reached before
-        # the app registry is ready, which is true and is an artifact of a
-        # settings-only configuration rather than anything about the hook.
-        django.setup()
         yield url
     finally:
-        subprocess.run(
-            ["docker", "rm", "--force", "--volumes", container],
-            capture_output=True,
-            check=False,
-            timeout=180,
-        )
+        try:
+            # Closing before the server goes away avoids a dangling socket, and
+            # it must not be able to keep the container alive: this ran once in a
+            # `finally` ahead of the removal, raised, and leaked a container that
+            # then held the port against every later run.
+            connections[POSTGRES].close()
+        finally:
+            subprocess.run(
+                ["docker", "rm", "--force", "--volumes", container],
+                capture_output=True,
+                check=False,
+                timeout=180,
+            )
 
 
 @pytest.mark.postgres
@@ -250,13 +290,13 @@ def test_it_counts_one_event_per_statement_and_records_rows(_postgres_django: st
     Both numbers come from one attachment, which is what the guard-counter rule
     needs: the events are the statements and the total is the rows they returned.
     """
-    connection = connections["default"]
+    connection = connections[POSTGRES]
     with connection.cursor() as cursor:
         cursor.execute("DROP TABLE IF EXISTS ticket")
         cursor.execute("CREATE TABLE ticket (id serial PRIMARY KEY, title text)")
         cursor.execute("INSERT INTO ticket (title) VALUES ('a'), ('b'), ('c')")
 
-    with installed(DjangoAdapter().declarations):
+    with installed(DjangoAdapter(aliases=(POSTGRES,)).declarations):
         assert DB_QUERY in registered_hooks()
         with count(DB_QUERY) as tally, connection.cursor() as cursor:
             cursor.execute("SELECT * FROM ticket")
@@ -282,10 +322,10 @@ def test_the_wrapper_is_removed_when_the_workload_raises(_postgres_django: str) 
     directly here rather than through the registry, because what is under test is
     the hook's own `finally` and not the registration around it.
     """
-    connection = connections["default"]
+    connection = connections[POSTGRES]
     before = list(connection.execute_wrappers)
 
-    with pytest.raises(ZeroDivisionError), query_hook()(lambda amount=1.0: None):
+    with pytest.raises(ZeroDivisionError), query_hook(aliases=[POSTGRES])(lambda a=1.0: None):
         raise ZeroDivisionError
 
     assert connection.execute_wrappers == before
@@ -302,10 +342,10 @@ def test_it_counts_a_statement_that_returns_no_rows_as_an_event(
     but not inventing rows for it is the honest reading, and dropping the event
     would undercount the queries a workload made.
     """
-    connection = connections["default"]
+    connection = connections[POSTGRES]
 
     with (
-        installed(DjangoAdapter().declarations),
+        installed(DjangoAdapter(aliases=(POSTGRES,)).declarations),
         count(DB_QUERY) as tally,
         connection.cursor() as cursor,
     ):

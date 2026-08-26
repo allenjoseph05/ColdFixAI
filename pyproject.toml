@@ -57,6 +57,14 @@ dev = [
     # imports it, the exercising program is source text, and the alternative is a
     # fake factory that seeds exactly what this project expects a factory to seed.
     "factory-boy>=3.3.3",
+    # S-14.3's second adapter, and the whole point of it: *core code unchanged*
+    # is a claim that can only be checked by running a real second framework
+    # through the same interface. Both on the same terms as the three above —
+    # nothing under `src/` imports either, the drive program is source text run
+    # in the subject's own interpreter, and a fake Flask app with a fake engine
+    # would demonstrate that the interface fits a fake.
+    "flask>=3.0",
+    "sqlalchemy>=2.0",
     "mypy>=1.13",
     "pytest>=8.3",
     "ruff>=0.8",
