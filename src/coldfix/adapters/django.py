@@ -75,7 +75,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from coldfix.adapters.interface import Declarations, Subject
+from coldfix.adapters.interface import ROW_COUNTING_VENDORS, Declarations, Subject
 from coldfix.bench.counting import Hook, HookError, Record
 from coldfix.bench.execute import ExecutionResult
 from coldfix.explorer.entrypoints import Enumeration, enumerate_entry_points
@@ -89,18 +89,6 @@ from coldfix.sandbox.modes import CandidateSession, Session
 from coldfix.sandbox.production import VerifiedDatabase
 from coldfix.sandbox.reset import ResetMechanism, RollbackReset, SnapshotRestoreReset
 from coldfix.screening.workload import FixtureRecipe
-
-ROW_COUNTING_VENDORS: frozenset[str] = frozenset({"postgresql"})
-"""Backends measured to report `cursor.rowcount` for a `SELECT`.
-
-Measured, not assumed, and short on purpose. PostgreSQL through psycopg reports
-the row count for a `SELECT` and distinguishes a real zero from an unknown;
-SQLite reports `-1` for every `SELECT`, so a row amount taken from it would be
-zero on every read. MySQL and Oracle are absent because nobody has measured them
-here, and a vendor nobody measured is refused rather than guessed in either
-direction — see this module's docstring for why the guessing direction that
-looks safe is the dangerous one.
-"""
 
 DJANGO_INTERNAL_FRAMES: tuple[str, ...] = (
     # The framework itself, and the two paths a stack through the ORM spends most
@@ -158,18 +146,26 @@ settings would refuse the class of fix most likely to be correct.
 """
 
 
-def query_hook() -> Hook:
+def query_hook(*, aliases: Sequence[str] | None = None) -> Hook:
     """Count statements through Django's own `execute_wrapper`.
 
     One event per statement, and the amount is the rows that statement returned,
     so `db.query` and `db.rows` come from a single attachment.
 
-    **Every connection Django knows about is wrapped**, because ADR 008 records
-    that a target using more than one database alias needs the instrument on each
-    connection under measurement. Removal is Django's own context manager under
-    an `ExitStack`, so a workload that raises still leaves the connections as it
-    found them — ADR 008 asks for that property to be tested adversarially, and
-    it is.
+    **Every connection Django knows about is wrapped by default**, because
+    ADR 008 records that a target using more than one database alias needs the
+    instrument on *each connection under measurement* — and an alias left
+    uninstrumented is a silent undercount, which is a measurement that looks like
+    a finding. Removal is Django's own context manager under an `ExitStack`, so a
+    workload that raises still leaves the connections as it found them; ADR 008
+    asks for that property to be tested adversarially, and it is.
+
+    **`aliases` narrows that to the connections actually under measurement**,
+    which is ADR 008's own phrase and the case its consequences section describes.
+    A project with a read replica or an analytics database its workload never
+    touches would otherwise be un-instrumentable the moment one of them is on a
+    backend that cannot report rows. Narrowing is the caller's decision and is
+    stated, never inferred: an alias nobody names is one nobody decided about.
 
     **A connection opened after the block begins is not wrapped.** Django's
     connections are thread-local, so a request served on another thread gets a
@@ -181,7 +177,8 @@ def query_hook() -> Hook:
 
     Raises:
         HookError: a connection's backend does not report rows per statement, so
-            the amount would be a fiction. Raised before anything is installed.
+            the amount would be a fiction; or a named alias that Django has no
+            connection for. Both are raised before anything is installed.
     """
 
     @contextmanager
@@ -211,7 +208,21 @@ def query_hook() -> Hook:
             record(float(rows) if rows >= 0 else 0.0)
             return result
 
-        wrapped = list(connections.all())
+        if aliases is None:
+            wrapped = list(connections.all())
+        else:
+            known = set(connections)
+            missing = sorted(set(aliases) - known)
+            if missing:
+                message = (
+                    f"no database connection is configured under {missing}; Django knows "
+                    f"{sorted(known)}. Refusing rather than counting the connections that "
+                    "do exist, because a named alias that silently contributes nothing is "
+                    "an undercount wearing the shape of a measurement"
+                )
+                raise HookError(message)
+            wrapped = [connections[alias] for alias in aliases]
+
         for connection in wrapped:
             if connection.vendor not in ROW_COUNTING_VENDORS:
                 message = (
@@ -271,6 +282,16 @@ class DjangoAdapter:
     have to remember to look.
     """
 
+    aliases: tuple[str, ...] | None = None
+    """Which database connections the workload actually touches.
+
+    `None` instruments every alias Django has, which is the safe default: an
+    uninstrumented alias is a silent undercount. Naming them is for the project
+    whose settings hold a replica or an analytics database the workload never
+    reaches — ADR 008's *each connection under measurement*, made a decision
+    somebody states rather than one this module infers.
+    """
+
     interpreter: str = "python"
     """What runs a command inside a session's container.
 
@@ -294,7 +315,7 @@ class DjangoAdapter:
         """
         return Declarations(
             orm=Orm.DJANGO_ORM,
-            hooks={DB_QUERY: query_hook()},
+            hooks={DB_QUERY: query_hook(aliases=self.aliases)},
             internal_frames=DJANGO_INTERNAL_FRAMES,
             protected_paths=DJANGO_PROTECTED_PATHS,
         )

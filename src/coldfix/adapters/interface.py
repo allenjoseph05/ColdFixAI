@@ -93,6 +93,26 @@ from coldfix.sandbox.patching import DEFAULT_PROTECTED_PATTERNS, PatchPolicy
 from coldfix.sandbox.reset import ResetMechanism
 from coldfix.screening.workload import FixtureRecipe
 
+ROW_COUNTING_VENDORS: frozenset[str] = frozenset({"postgresql"})
+"""Database backends measured to report `cursor.rowcount` for a `SELECT`.
+
+Here rather than in one adapter because it is a fact about the *database*, and
+the second adapter needed the same answer for a different ORM — SQLAlchemy over
+Postgres and the Django ORM over Postgres ask the same driver the same question.
+
+Measured, not assumed, and short on purpose. PostgreSQL through psycopg reports
+the row count for a `SELECT` and distinguishes a real zero from an unknown;
+SQLite reports `-1` for every `SELECT`, so a row amount taken from it would be
+zero on every read. MySQL and Oracle are absent because nobody has measured them
+here, and a vendor nobody measured is refused rather than guessed either way.
+
+The counter catalogue defines `db.query`'s amount as *rows returned by that
+statement*, and `db.rows` is the same attachment read as a total. A hook that
+recorded zero where the backend cannot answer would make a **guard counter read
+flat while rows grew**, which is the failure `CLAUDE.md` names in its own words.
+ADR 147 has the measurements.
+"""
+
 ADAPTER_CAPABILITIES: frozenset[Capability] = frozenset(
     {
         # Its hooks are the counters. Nothing else can attach one.

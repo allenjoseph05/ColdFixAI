@@ -9,6 +9,7 @@ Epic 14.
 from coldfix.adapters.interface import (
     ADAPTER_CAPABILITIES,
     HARNESS_CAPABILITIES,
+    ROW_COUNTING_VENDORS,
     Declarations,
     FrameworkAdapter,
     Subject,
@@ -18,6 +19,7 @@ from coldfix.adapters.interface import (
 __all__ = [
     "ADAPTER_CAPABILITIES",
     "HARNESS_CAPABILITIES",
+    "ROW_COUNTING_VENDORS",
     "Declarations",
     "FrameworkAdapter",
     "Subject",
