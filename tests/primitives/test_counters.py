@@ -50,6 +50,8 @@ from coldfix.primitives.counters import (
     DB_ROWS,
     FILE_OPEN,
     HTTP_REQUEST,
+    OVERHEAD_BUDGET,
+    REFERENCE_OPERATION_SECONDS,
     CounterError,
     CounterOverhead,
     CounterShape,
@@ -331,18 +333,12 @@ def test_stack_capture_is_available_per_counter_and_off_by_default(
 # ------------------------------------------------- AC 4: measured overhead
 
 
-OVERHEAD_BUDGET = 0.05
 REPETITIONS = 50_000
 
-# **The budget is a ratio, so it needs a denominator, and stating it is not a
-# formality.** The counter's cost is fixed per event — measured below at about
-# half a microsecond — so the same instrument reads as 0.1% overhead on a real
-# database call and as most of the runtime on a function that does nothing. This
-# is the operation the five percent is five percent *of*: ADR 013 measured 366µs
-# for one instrumented database call on a real subject, and S-0.4's endpoint
-# averaged roughly 1.2ms per query across 1193 of them. The smaller is used,
-# because a budget should be stated against the cheapest thing it will observe.
-REFERENCE_OPERATION_SECONDS = 366e-6
+# The budget and its denominator moved into `primitives/counters.py` at S-14.4,
+# where the catalogue that claims `NEGLIGIBLE` can be checked against them and
+# where the adapter conformance suite reads the same two numbers. The reasoning
+# that put them here is now that module's docstring.
 
 
 def _busy(cursor: Cursor) -> None:
