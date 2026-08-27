@@ -36,6 +36,7 @@ from coldfix.orchestrator.campaign import (
     gated_graph,
     sessions_for,
 )
+from coldfix.primitives.counters import DB_QUERY
 from coldfix.repair import falsification
 from coldfix.state.trust import Level, standing
 
@@ -223,6 +224,7 @@ def resources_with(store: FakeStore) -> Any:
         source="shop/views.py",
         suite_command=["pytest"],
         metric="seconds",
+        counters=[DB_QUERY],
         tokens=Tokens(prefix=8000, prompt=900),
     )
 
