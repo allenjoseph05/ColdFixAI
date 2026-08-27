@@ -14,6 +14,7 @@ where a run silently degrades.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from collections.abc import Mapping, Sequence
@@ -42,11 +43,11 @@ from coldfix.orchestrator.adapters import (
     _repaired_from,
     _require,
     _stored,
-    _superlinear,
     _workload_named,
     bind,
 )
 from coldfix.orchestrator.graph import GraphError, Node, Wiring, assemble, order
+from coldfix.primitives.counters import DB_QUERY
 from coldfix.repair.compose import Repaired
 from coldfix.repair.falsification import Cheat, CostClaim, FalsificationTest, Guard
 from coldfix.repair.mustfail import Falsified
@@ -205,32 +206,54 @@ def test_a_workload_the_state_does_not_hold_is_named_rather_than_guessed() -> No
 # ==================================================== screening reads the fit
 
 
-def test_only_superlinear_growth_is_worth_investigating() -> None:
-    """S-1.5's vocabulary decides, not a threshold invented at this boundary."""
+def test_the_node_holds_no_opinion_about_what_is_worth_investigating() -> None:
+    """**This test used to assert the defect**, and its reasoning sounded right.
 
-    class _Fit:
-        def __init__(self, growth: object) -> None:
-            self.growth = growth
+    It drove a local `_superlinear` helper and asserted that a `LINEAR` metric is
+    not a finding, with the docstring *"S-1.5's vocabulary decides, not a
+    threshold invented at this boundary"*. The vocabulary does decide — against
+    each metric's own **expectation**, which is `screening/flagging.py`'s whole
+    subject. A round-trip count is expected to be constant, so a linear one is a
+    finding, and the helper cleared every N+1 this system exists to find.
 
-    class _Metric:
-        def __init__(self, growth: object) -> None:
-            self.fit = _Fit(growth)
+    What is asserted now is the absence: this module holds no threshold and no
+    suspicious-growth set. Epic 16's composition check drives the node itself and
+    compares what it writes against `flag`.
+    """
+    source = inspect.getsource(adapters)
+    body = source.replace("# `_SUSPICIOUS` lived here", "")
 
-    assert _superlinear({"seconds": _Metric(Growth.SUPERLINEAR)})
-    assert not _superlinear({"seconds": _Metric(Growth.LINEAR)})
-    assert not _superlinear({"seconds": _Metric(Growth.CONSTANT)})
-    assert not _superlinear({"seconds": _Metric(None)}), "an unfittable metric is not a finding"
+    assert "_SUSPICIOUS" not in body
+    assert "conclude(" in source, "the judgement comes from Epic 4's own entry point"
 
 
-def test_the_target_is_the_first_flagged_workload_in_a_stable_order() -> None:
-    """Sorted, because two runs of the same screen must investigate the same
-    workload first — `00-BRIEF.md` §6 makes agreement across runs the headline
-    metric, and an arbitrary dict order would vary it for free."""
+def test_the_target_is_the_first_flagged_workload_in_the_ranked_order() -> None:
+    """`order` is `Plan.investigate`'s position, and it is not the alphabet.
+
+    Two runs of the same screen must investigate the same workload first —
+    `00-BRIEF.md` §6 makes agreement across runs the headline metric — and the
+    old key was the name, which is stable and wrong: `rank` puts growth flags
+    ahead of flat-cost ones as a class, and reading the set back by name
+    discarded that.
+    """
+    state = CheckpointedState(
+        screening={
+            "z.workload": {"flagged": True, "growth": {}, "order": 0},
+            "a.workload": {"flagged": True, "growth": {}, "order": 1},
+            "m.workload": {"flagged": False, "growth": {}, "order": None},
+        }
+    )
+
+    assert _first_flagged(state) == "z.workload"
+
+
+def test_an_older_checkpoint_without_an_order_still_picks_stably() -> None:
+    """A resumed run must not crash on state written before this field existed,
+    and two runs of it must still agree — so the name is the fallback key."""
     state = CheckpointedState(
         screening={
             "z.workload": {"flagged": True, "growth": {}},
             "a.workload": {"flagged": True, "growth": {}},
-            "m.workload": {"flagged": False, "growth": {}},
         }
     )
 
@@ -314,6 +337,7 @@ def test_the_bound_steps_are_what_the_graph_will_accept() -> None:
             source="shop/views.py::ListView.list_books",
             suite_command=["pytest"],
             metric="seconds",
+            counters=[DB_QUERY],
             tokens=Tokens(prefix=8000, prompt=900),
         )
     )
@@ -454,6 +478,7 @@ def repair_resources(store: FakeStore) -> Resources:
         source="shop/views.py",
         suite_command=["pytest"],
         metric="seconds",
+        counters=[DB_QUERY],
         tokens=Tokens(prefix=8000, prompt=900),
     )
 
@@ -527,6 +552,7 @@ def shipping_resources(store: LedgerStore) -> Resources:
         source="shop/views.py",
         suite_command=["pytest"],
         metric="seconds",
+        counters=[DB_QUERY],
         tokens=Tokens(prefix=8000, prompt=900),
     )
 
@@ -608,6 +634,7 @@ def grounding_resources() -> Resources:
         source="shop/views.py",
         suite_command=["pytest"],
         metric="seconds",
+        counters=[DB_QUERY],
         tokens=Tokens(prefix=8000, prompt=900),
     )
 
