@@ -1720,7 +1720,22 @@ AC:
 - Produces either a finding with a merged-quality PR, or an honest null result
 - No manual intervention beyond approvals
 
-**BLOCKED (2026-08-25) — nothing was built for the run, and there are three reasons of very different kinds.**
+**STILL BLOCKED (re-verified 2026-08-27), and the reason is not the one recorded below.** Asked to run this, the first step was to assemble a `Resources` — and **nothing in `src/` constructs one**. That is not a wiring detail: six of its twenty-three fields are the layer that connects the pipeline to a live subject, and **every one of them is a protocol with no implementation anywhere outside a test fake**:
+
+| field | what it would do | state |
+|---|---|---|
+| `bind` (`Binder`) | turn a `Workload` artifact back into a runnable `BoundWorkload` | **nothing in `src/` constructs a `BoundWorkload` at all** |
+| `ground` (`Grounder`) | run S-7.13's sequence bound to a repository | `Protocol`, no implementation |
+| `measure` (`Measurer`) | measure a patch before and after | `Protocol`, no implementation |
+| `executor` (`Executor`) | run one experiment and return its metrics | type alias, no implementation |
+| `hands` (`Hands`) | run a command the Explorer proposes | type alias, no implementation |
+| `probe` (`Probe`) | drive the subject for output equivalence | dataclass, never built in `src/` |
+
+**S-17.4 is not under-delivered** — its four AC were about `Sessions`, one ledger, the gates and session reuse, and all four are met. The gap is *between* S-17.4 and this story and **no story's AC names it**, which is the shape every composition check in this project has found: each side is complete and the join has no owner.
+
+**So the money was never the last blocker.** A run cannot be started, let alone overspend, and the estimate below (~2–10 cents on the expected null path) is sound arithmetic about a run that has no assembly. **Do not treat "there is a balance" as unblocking this.** What it needs is the subject-facing layer above, which is buildable without spending and is a story — or several — rather than a step.
+
+**Superseded reasons, kept because they were true when written:**
 
 **1. There is no API key and the run costs real money.** `ANTHROPIC_API_KEY` is unset, and a full pipeline run makes live frontier calls at every phase — `04-cost.md` §12.1 costs the worst case at **~$291 per run** with five findings. This is not a thing to spend on somebody's behalf without being asked, and it is the only AC blocker that no amount of building removes.
 
