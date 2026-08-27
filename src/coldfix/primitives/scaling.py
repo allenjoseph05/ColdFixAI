@@ -69,13 +69,16 @@ from coldfix.bench.stats import Fit, fit_growth
 from coldfix.primitives.measurement import (
     BaselineError,
     CacheControl,
+    Counters,
     IdentityLedger,
     MeasurementError,
     MetricKind,
+    Vantage,
     check_same_metrics,
     measure_once,
     metric_kind,
     require_cache_control,
+    vantage_of,
 )
 from coldfix.primitives.registry import REGISTRY, Capability, CostClass, Primitive
 from coldfix.sandbox.reset import ResetStrategy
@@ -303,6 +306,21 @@ class ScalingResult:
     parent with three thousand.
     """
 
+    vantage: Vantage = Vantage.HARNESS
+    """Where the numbers were taken. **A condition, like the three above it.**
+
+    Declared by the caller for `distribution`'s reason: this function is handed
+    an invoking callable and cannot see which process ran it. S-17.5 measured
+    what the difference costs — a workload that is linear in time fits as
+    constant when the harness times an out-of-process subject — so a growth
+    result is only true of the vantage it was measured from, and an exclusion
+    that does not carry it is one nobody can check.
+
+    Last because it has a default and the three conditions above it do not.
+    `HARNESS` is right for every caller that exists: they all measure something
+    running here.
+    """
+
     @property
     def scales(self) -> tuple[int, ...]:
         return tuple(point.scale for point in self.points)
@@ -325,7 +343,7 @@ def scale_volume(  # noqa: PLR0913
     scales: Sequence[int],
     distribution: Distribution,
     counters: Sequence[str] = (),
-    extra_counters: Callable[[], Mapping[str, float]] | None = None,
+    extra_counters: Counters | None = None,
     clear_caches: Callable[[], object] | None = None,
     process_identity: Callable[[], object] | None = None,
 ) -> ScalingResult:
@@ -425,6 +443,7 @@ def scale_volume(  # noqa: PLR0913
         kinds={name: metric_kind(name) for name in sorted(baseline)},
         reset_strategy=reset.strategy,
         cache_control=control,
+        vantage=vantage_of(extra_counters),
         distribution=distribution,
     )
 
@@ -489,7 +508,7 @@ def compare_shapes(  # noqa: PLR0913 - see the note on scale_volume
     total: int,
     distributions: Sequence[Distribution] = tuple(Distribution),
     counters: Sequence[str] = (),
-    extra_counters: Callable[[], Mapping[str, float]] | None = None,
+    extra_counters: Counters | None = None,
     clear_caches: Callable[[], object] | None = None,
     process_identity: Callable[[], object] | None = None,
 ) -> ShapeComparison:

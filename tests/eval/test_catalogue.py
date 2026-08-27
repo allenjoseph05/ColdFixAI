@@ -58,6 +58,7 @@ def a_null_result(*, covers_everything: bool = True) -> NullResult:
                 distribution="uniform",
                 reset_strategy="snapshot_restore",
                 cache_control="a fresh process",
+                vantage="timed in this process, around the callable",
             ),
         ),
         thresholds={"flat cost (queries)": 120.0},

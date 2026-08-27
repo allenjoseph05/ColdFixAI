@@ -58,7 +58,7 @@ from datetime import date
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from coldfix.primitives.counters import DB_QUERY
-from coldfix.primitives.measurement import BLOCKED_SECONDS, SECONDS
+from coldfix.primitives.measurement import BLOCKED_SECONDS, SECONDS, Counters
 from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetStrategy
 from coldfix.sandbox.verification import VerifiedReset
@@ -474,7 +474,7 @@ class BoundWorkload:
         reset: VerifiedReset,
         clear_caches: Callable[[], object] | None = None,
         process_identity: Callable[[], object] | None = None,
-        extra_counters: Callable[[], Mapping[str, float]] | None = None,
+        extra_counters: Counters | None = None,
     ) -> None:
         # Widened to `object` for S-1.6's reason: the annotations say both are
         # callable, so a guard written against them is typed out of existence,
