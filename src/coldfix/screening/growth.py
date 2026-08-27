@@ -36,7 +36,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from coldfix.bench.stats import Fit, Growth
-from coldfix.primitives.measurement import CacheControl, MetricKind
+from coldfix.primitives.measurement import CacheControl, MetricKind, Vantage
 from coldfix.primitives.scaling import Distribution, ScalingResult, scale_volume
 from coldfix.sandbox.reset import ResetStrategy
 from coldfix.screening.workload import BoundWorkload, Observation, Workload
@@ -116,6 +116,11 @@ class ScreenedWorkload:
     @property
     def cache_control(self) -> CacheControl:
         return self.result.cache_control
+
+    @property
+    def vantage(self) -> Vantage:
+        """Where these numbers were taken. Carried for `cache_control`'s reason."""
+        return self.result.vantage
 
     def metric(self, name: str) -> MetricGrowth:
         """One metric's growth, refusing a name that was not measured.
