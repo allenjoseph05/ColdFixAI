@@ -71,6 +71,15 @@ class Conditions(BaseModel):
     distribution: str
     reset_strategy: str
     cache_control: str
+    vantage: str
+    """Where the numbers were taken. **S-17.5 made this a precondition.**
+
+    A duration timed from outside an out-of-process subject fits a linear
+    workload as constant, so *seconds flat across a sixteenfold increase* means
+    one thing measured inside the subject and nothing at all measured from
+    outside it. This result publishes exclusions, and `CLAUDE.md` requires an
+    exclusion to carry what it is true of.
+    """
 
 
 class Unverified(BaseModel):
@@ -192,7 +201,7 @@ class NullResult(BaseModel):
         applied = ", ".join(f"{name} {value:g}" for name, value in sorted(self.thresholds.items()))
         shapes = ", ".join(
             f"{item.workload_id} at {item.scales} under {item.distribution} fixtures, "
-            f"reset by {item.reset_strategy}, {item.cache_control}"
+            f"reset by {item.reset_strategy}, {item.cache_control}, {item.vantage}"
             for item in self.conditions
         )
         basis = f"Thresholds applied: {applied}. Measured: {shapes}."
@@ -312,6 +321,7 @@ def null_result(screened: Sequence[ScreenedWorkload], ranking: Ranking) -> NullR
                 distribution=result.distribution.value,
                 reset_strategy=result.reset_strategy.value,
                 cache_control=result.cache_control.value,
+                vantage=result.vantage.value,
             )
             for result in screened
         ),

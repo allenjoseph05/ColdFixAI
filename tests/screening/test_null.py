@@ -26,7 +26,7 @@ import pytest
 
 from coldfix.bench.counting import calls_to, register_hook, unregister_hook
 from coldfix.primitives.counters import DB_QUERY, DB_ROWS
-from coldfix.primitives.measurement import MATERIALIZED, SECONDS
+from coldfix.primitives.measurement import MATERIALIZED, SECONDS, Reported, Vantage
 from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetMechanism, ResetNotPreparedError, ResetStrategy
 from coldfix.sandbox.verification import VerificationReport, VerifiedReset
@@ -102,9 +102,8 @@ class Subject:
         }
 
 
-def screened(name: str, call: Any) -> Any:
-    subject = Subject(call)
-    descriptor = Workload(
+def descriptor_for(name: str, call: Any) -> Workload:
+    return Workload(
         id=name,
         description=f"the planted {name} workload",
         entry_point=f"fixtures.planted.queries.{call.__name__}",
@@ -117,8 +116,12 @@ def screened(name: str, call: Any) -> Any:
         ),
         reset_method=ResetStrategy.SNAPSHOT_RESTORE,
     )
+
+
+def screened(name: str, call: Any) -> Any:
+    subject = Subject(call)
     bound = BoundWorkload(
-        descriptor,
+        descriptor_for(name, call),
         invoke=subject.invoke,
         scale=subject.scale,
         reset=VerifiedReset(
@@ -494,3 +497,79 @@ def test_a_metric_that_could_not_be_fitted_is_not_called_measured(
 
     measured = {(item.workload_id, item.metric) for item in outcome.unflagged}
     assert not measured & set(outcome.unclassified)
+
+
+# ============================== S-17.6: the vantage travels with the conditions
+
+
+def screened_from_the_subject(name: str, call: Any) -> Any:
+    """The same screen, with the timings measured inside the subject.
+
+    Not a mock of one: `measure_once` genuinely records no clock of its own here,
+    so every `seconds` in the result is the number this callable returned.
+    """
+    subject = Subject(call)
+
+    def reported() -> Mapping[str, float]:
+        # Standing in for what `drive` already returns from inside the subject's
+        # own interpreter: a duration it timed around the request, plus the guard
+        # counters. The value is arbitrary; that the harness keeps it is not.
+        return {SECONDS: 0.004 * subject.store.cells_returned, **subject.payload()}
+
+    bound = BoundWorkload(
+        descriptor_for(name, call),
+        invoke=subject.invoke,
+        scale=subject.scale,
+        reset=VerifiedReset(
+            mechanism=StoreReset(subject),
+            report=VerificationReport(strategy=ResetStrategy.SNAPSHOT_RESTORE, cycles=10),
+        ),
+        process_identity=subject.process_identity,
+        extra_counters=Reported(reported),
+    )
+    return screen_growth(bound, counters=[DB_QUERY])
+
+
+def test_the_two_vantages_reach_the_report_as_different_sentences(
+    query_counter: None,
+) -> None:
+    """AC 4, and `CLAUDE.md`'s rule that an exclusion carries its preconditions.
+
+    Two screens of the same workload measured from the two places, asserted as a
+    pair so that neither half can pass by being the default. S-17.5 measured why
+    the difference has to reach the artifact a human reads: *seconds flat across
+    a sixteenfold increase* means one thing timed inside the subject and nothing
+    at all timed from outside it, where 99.25% of the number is interpreter
+    startup. A reader who cannot tell which one produced the exclusion cannot use
+    the exclusion.
+    """
+    inside = [screened_from_the_subject("batched", list_books_batched)]
+    outside = [screened("batched", list_books_batched)]
+
+    assert inside[0].vantage is Vantage.SUBJECT
+    assert outside[0].vantage is Vantage.HARNESS
+
+    published = null_result(inside, rank(inside)).report()
+    assert "timed inside the subject and reported back" in published
+    assert "timed in this process" not in published
+
+    assert (
+        "timed in this process, around the callable" in null_result(outside, rank(outside)).report()
+    )
+
+
+def test_the_subject_vantage_keeps_the_subject_duration_through_the_screen(
+    query_counter: None,
+) -> None:
+    """The number that reaches the fit is the one the subject reported.
+
+    The chain this story exists to make true: reported by the subject, kept by
+    `measure_once`, carried by `ScalingResult`, fitted by the screen. If the
+    harness's own clock leaked in anywhere along it, this equality is what breaks
+    — a wall-clock reading of these in-process calls would be microseconds, not
+    the milliseconds the callable claims.
+    """
+    result = screened_from_the_subject("batched", list_books_batched)
+
+    for observation in result.workload.observations:
+        assert observation.metrics[SECONDS] == pytest.approx(0.004 * observation.metrics[CELLS])
