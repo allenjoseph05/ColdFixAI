@@ -265,6 +265,55 @@ def rank(screened: Sequence[ScreenedWorkload]) -> Ranking:
     )
 
 
+class WithheldReason(StrEnum):
+    """Why a fitted metric raised no flag. Two reasons, and they are not the same.
+
+    The first is a statement about the code: it did what this metric is allowed
+    to do. The second is a statement about the *instrument*: it did more than it
+    is allowed to, and the measurement is not good enough to act on. A null
+    result that reported them identically would be claiming the second case was
+    clean when what happened is that nothing could be resolved.
+    """
+
+    WITHIN_EXPECTATION = "did no more than this metric may"
+    BELOW_THE_NOISE_FLOOR = (
+        "grew beyond its expectation, but by less than a single sample per scale point can "
+        "resolve — S-0.4 measured wall-clock timings drifting 12% between runs, so this is a "
+        "fit to noise rather than a finding withheld"
+    )
+
+
+def withheld_reason(
+    metric: str, measured: MetricGrowth, screened: ScreenedWorkload
+) -> WithheldReason | None:
+    """Why this metric raised no flag, or `None` because it raised one.
+
+    **The negative half of `flag`'s decision, and it exists because S-16.3 needed
+    a reason rather than an inference.** The first draft of the null result
+    guessed the reason from the shapes and produced *"superlinear, within the
+    linear it may be"* — false, and false in the direction that reassures. A
+    duration that grew 9.6x and was held back by S-0.4's floor was being reported
+    as a metric that behaved.
+
+    It consults the same two predicates `flag` does rather than restating their
+    logic, and `test_flagging.py` asserts the two functions partition every
+    fitted metric: exactly one of *flagged* and *withheld* is true of each.
+
+    A metric that could not be fitted returns `None` here as well, because that
+    is `Ranking.unclassified`'s answer and *could not tell* is not *nothing
+    there*.
+    """
+    if measured.growth is None:
+        return None
+    if _is_high_and_flat(measured, screened):
+        return None
+    if _SEVERITY[measured.growth] > _SEVERITY[expected_growth(metric)]:
+        if _above_the_noise(metric, measured, screened):
+            return None
+        return WithheldReason.BELOW_THE_NOISE_FLOOR
+    return WithheldReason.WITHIN_EXPECTATION
+
+
 def expected_growth(metric: str) -> Growth:
     """What this metric may do as data grows without that being a defect.
 
