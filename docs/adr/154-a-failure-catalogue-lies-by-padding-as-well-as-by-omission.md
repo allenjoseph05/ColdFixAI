@@ -72,8 +72,8 @@ harnesses; what none of them has is data, which costs investigations. The
 no-spending rule has produced the same shape everywhere: the instrument is
 buildable now and the number is for later.
 
-**The holdout discipline test caught this story.** A fixture repository was named
-`healthchecks-like`, which contains the holdout's name, and
+**The holdout discipline test caught this story.** A fixture repository was named after
+the holdout, and
 `tests/test_holdout_discipline.py` failed the gate on it. The fix was to rename
 the fixture — **never to widen the allow-list**, which is that test's own
 instruction and the second time it has fired on a name that was not even a use.

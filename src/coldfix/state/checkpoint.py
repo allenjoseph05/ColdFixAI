@@ -203,6 +203,28 @@ class CheckpointedState(BaseModel):
     assuming a patch is small.
     """
 
+    audited: JsonValue | None = None
+    """What `audit_patch` concluded and `ship` publishes. Added by Epic 16's check.
+
+    **A rendered string was already in `flags` and could not be used.**
+    `audit_patch` wrote `verdict.describe()` there, which a person can read and
+    nothing can rebuild — so `pull_request` had no caller: S-16.2 takes a live
+    `PatchVerdict`, and `ship` could reach only its own description of one. The
+    composition check named that as the reason the finding branch produced no
+    document.
+
+    Holds the verdict and the two measurement sets, because `PullRequest`'s
+    before/after table needs the same numbers the audit reasoned over. Measuring
+    again at `ship` would put two different sets of figures under one patch, and
+    a human comparing the report against the verdict would be right to distrust
+    both.
+
+    Replaces rather than appends, like `repaired` and for the same reason: there
+    is one audit under consideration at a time. **Cleared when `ship` publishes**,
+    so a resumed run cannot publish the same audit twice — and cleared alongside
+    `repaired`, which is the channel it is about.
+    """
+
     verdict: str | None = None
     """E9's finding-audit outcome. Left a string because E9 names the values."""
 

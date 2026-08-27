@@ -18,14 +18,20 @@ import inspect
 import json
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 from pydantic import JsonValue
 
 from coldfix.agents.roles import owner_of
+from coldfix.audit.patchcompose import Subject
+from coldfix.audit.patchverdict import Attack, AttackResult, PatchVerdict, Route, Routing
+from coldfix.audit.patchverdict import Outcome as AttackOutcome
+from coldfix.audit.patchverdict import Verdict as AuditVerdict
 from coldfix.bench.stats import Growth
 from coldfix.cost.accounting import Agent
 from coldfix.diagnosis.log import Experiment, ExperimentLog, Verdict
@@ -568,8 +574,25 @@ def parked_patch(*, slack_reducing: bool) -> CheckpointedState:
     return CheckpointedState(
         target="shop.books.list",
         repaired=cast(Any, handover),
+        # What `audit_patch` concluded, as it writes it. `ship` publishes the
+        # pull request from this, and could not before the channel existed.
+        audited=cast(
+            Any,
+            {
+                "verdict": PatchVerdict(
+                    verdict=AuditVerdict.CLEAN, results=(a_clean_attack(),)
+                ).model_dump(mode="json"),
+                "before": {"db.query": 1193.0, "db.rows": 586.0},
+                "after": {"db.query": 7.0, "db.rows": 586.0},
+            },
+        ),
+        chain=cast(Any, an_evidence_chain().model_dump(mode="json")),
         screening={"shop.books.list": {"flagged": True}},
     )
+
+
+def a_clean_attack() -> AttackResult:
+    return AttackResult(attack=Attack.EQUIVALENCE, outcome=AttackOutcome.PASSED)
 
 
 def test_a_slack_reducing_patch_is_withheld_even_when_the_gate_is_open(
@@ -607,6 +630,160 @@ def test_a_patch_that_ships_records_a_clean_outcome(monkeypatch: pytest.MonkeyPa
     assert update["repaired"] is None
     assert [item["project"] for item in recorded] == ["shop"]
     assert [item["outcome"].name for item in recorded] == ["ACCEPTED"]
+
+
+def test_shipping_publishes_the_pull_request_a_reviewer_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**The join Epic 16's composition check found missing.**
+
+    `pull_request` had no caller. It takes a live `PatchVerdict` and this node
+    could reach only `verdict.describe()`, a rendered string in `flags` that
+    nothing can rebuild — so S-16.2's body existed and no run produced one.
+
+    What the gate showed before was `patch.describe()`: the change, with none of
+    the evidence for it. A reviewer approving a patch needs the chain that proved
+    the finding and the numbers that show it moved.
+    """
+    store = LedgerStore()
+    monkeypatch.setattr(adapters, "record_outcome", lambda *a, **k: None)
+
+    update = adapters.ship(shipping_resources(store), parked_patch(slack_reducing=False))
+
+    published = str(update["flags"])
+
+    assert "pull_request" in published
+    assert "1193" in published and "7" in published, "the before and after the audit measured"
+    assert "shop.books.list" in published
+    # **Which attacks ran, not only that the verdict was clean.** A sabotage that
+    # serialized the verdict without its `results` passed every other assertion
+    # here: the body still said *clean*, and said nothing about what was checked.
+    # `PatchVerdict.results` exists because a reader weighing a patch needs to see
+    # the attacks behind the word.
+    assert Attack.EQUIVALENCE.value in published
+
+
+def test_the_audit_is_cleared_once_it_has_been_published(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale audit is one a resumed run would publish a second time.
+
+    Cleared alongside `repaired`, which is the channel it is about — the two are
+    one handover and leaving either behind leaves half of it.
+    """
+    store = LedgerStore()
+    monkeypatch.setattr(adapters, "record_outcome", lambda *a, **k: None)
+
+    update = adapters.ship(shipping_resources(store), parked_patch(slack_reducing=False))
+
+    assert update["audited"] is None
+    assert update["repaired"] is None
+
+
+def test_shipping_without_an_audit_refuses_rather_than_publishing() -> None:
+    """A pull request assembled from a patch nobody audited is the document
+    saying *five attacks ran* over an audit that never happened."""
+    store = LedgerStore()
+    unaudited = parked_patch(slack_reducing=False).model_copy(update={"audited": None})
+
+    with pytest.raises(adapters.MissingInputError, match="audited"):
+        adapters.ship(shipping_resources(store), unaudited)
+
+
+def test_a_patch_that_cannot_be_published_leaves_the_ledger_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**A defect this story introduced and its own test found.**
+
+    The first version assembled the pull request *after* `record_outcome`, so a
+    run missing its audit refused with a clean acceptance already written. The
+    ledger is append-only — S-6.2's whole point — so the correction would be a
+    second entry rather than an edit, and the trust level would have moved on a
+    patch that never shipped.
+
+    The slack-reducing branch returns before recording for the same reason, which
+    is what made the ordering visible once both paths were read together.
+    """
+    store = LedgerStore()
+    recorded: list[Any] = []
+    monkeypatch.setattr(adapters, "record_outcome", lambda *a, **k: recorded.append(k))
+    unaudited = parked_patch(slack_reducing=False).model_copy(update={"audited": None})
+
+    with pytest.raises(adapters.MissingInputError):
+        adapters.ship(shipping_resources(store), unaudited)
+
+    assert recorded == [], "nothing shipped, so nothing was accepted"
+
+
+class _Audited:
+    """What `compose_audit_patch` hands back, with the expensive halves recorded.
+
+    Epic 11's composition already tests the audit; what is under test here is the
+    node's translation of it into a channel.
+    """
+
+    def __init__(self, verdict: PatchVerdict) -> None:
+        self.verdict = verdict
+        self.routing = Routing(route=Route.SHIP, verdict=verdict, because="none landed")
+
+
+def test_the_patch_audit_node_writes_the_attacks_with_the_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**The join, driven — and a surviving sabotage is what asked for it.**
+
+    Serializing the verdict without its `results` changed no test outcome:
+    `test_shipping_publishes_...` builds the `audited` channel by hand and
+    `_audited_from` was tested against a hand-built dict, so **neither test held
+    both ends**. Nothing drove this node at all, which is the same shape Epic
+    16's composition check found at `screen`.
+
+    `PatchVerdict.results` matters because it is what a reviewer reads: a body
+    saying *clean* without naming the attacks that ran asks for a merge on the
+    strength of one word.
+    """
+    verdict = PatchVerdict(verdict=AuditVerdict.CLEAN, results=(a_clean_attack(),))
+    measured = cast(
+        Any,
+        SimpleNamespace(domain_before={"db.query": 1193.0}, domain_after={"db.query": 7.0}),
+    )
+    monkeypatch.setattr(adapters, "compose_audit_patch", lambda *a, **k: _Audited(verdict))
+    # The subject reads the candidate worktree, which Epic 11 tests. Here it is a
+    # value passed straight through to the stub above, so it is recorded rather
+    # than built — the node's own work is the translation either side of it.
+    monkeypatch.setattr(Subject, "of", classmethod(lambda cls, *a, **k: cast(Any, "the subject")))
+
+    resources = repair_resources(FakeStore())
+    update = adapters.audit_patch(
+        replace(resources, measure=lambda *a, **k: measured),
+        parked_patch(slack_reducing=False),
+    )
+
+    written = cast(Any, update["audited"])
+    assert [entry["attack"] for entry in written["verdict"]["results"]] == [Attack.EQUIVALENCE]
+    assert written["before"] == {"db.query": 1193.0}
+
+
+def test_the_patch_audit_writes_the_verdict_as_an_artifact() -> None:
+    """The other end of the same join.
+
+    `audit_patch` wrote only a description; the node that needed the object had
+    nowhere to read one from. A test asserting the flag text alone would pass for
+    that version, which is why this reads the channel.
+    """
+    audited = {
+        "verdict": PatchVerdict(verdict=AuditVerdict.CLEAN, results=(a_clean_attack(),)).model_dump(
+            mode="json"
+        ),
+        "before": {"db.query": 1193.0},
+        "after": {"db.query": 7.0},
+    }
+
+    rebuilt, before, after = adapters._audited_from(cast(Any, audited))
+
+    assert rebuilt.verdict is AuditVerdict.CLEAN
+    assert before == {"db.query": 1193.0}
+    assert after == {"db.query": 7.0}
 
 
 # ==================================================== S-7.14 — the ground node drives the loop

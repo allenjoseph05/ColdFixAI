@@ -52,6 +52,7 @@ from coldfix.audit.compose import audit_finding as compose_audit_finding
 from coldfix.audit.equivalence import Probe
 from coldfix.audit.patchcompose import Measurements, Subject
 from coldfix.audit.patchcompose import audit_patch as compose_audit_patch
+from coldfix.audit.patchverdict import PatchVerdict
 from coldfix.audit.verdict import Route as FindingRoute
 from coldfix.bench.stats import Growth
 from coldfix.cost.budget import Budget
@@ -84,6 +85,7 @@ from coldfix.repair.memory import recall, record_all
 from coldfix.repair.mustfail import Falsified
 from coldfix.repair.patch import Patch
 from coldfix.repair.slack import REVIEWED_AT_EVERY_LEVEL
+from coldfix.report.pullrequest import pull_request
 from coldfix.sandbox.modes import CandidateSession, DiagnosticSession, ExecutionMode, Workbench
 from coldfix.sandbox.patching import touched_paths
 from coldfix.screening.assess import conclude
@@ -689,6 +691,17 @@ def audit_patch(resources: Resources, state: CheckpointedState) -> Mapping[str, 
         )
 
     return {
+        # **The verdict travels as an artifact, not only as its description.**
+        # This node wrote `verdict.describe()` into `flags` and nothing else, so
+        # `ship` could read what the audit said and not what it decided —
+        # `pull_request` takes a live `PatchVerdict` and a rendered string cannot
+        # be rebuilt into one. Epic 16's composition check found that as the
+        # reason the finding branch produced no document.
+        "audited": {
+            "verdict": audited.verdict.model_dump(mode="json"),
+            "before": dict(measured.domain_before),
+            "after": dict(measured.domain_after),
+        },
         "flags": [
             {
                 "patch_audit": audited.routing.describe(),
@@ -710,13 +723,21 @@ def ship(resources: Resources, state: CheckpointedState) -> Mapping[str, object]
     decides that per workload and this applies it, so `after_ship` sees exactly
     the workloads that still need looking at.
 
-    **It does not emit a pull request**, and the omission is deliberate rather
-    than pending: S-16.2 owns the PR body — before and after on every varied axis,
-    the evidence chain, the guard metrics, the Adversary verdict — and a stub here
-    would be a second, worse answer to a question two epics away.
+    **It emits the pull request, which it could not do until Epic 16's check.**
+    S-16.2 built the body — before and after on every varied axis, the evidence
+    chain, the guard metrics, the Adversary verdict — and `pull_request` had no
+    caller because it takes a live `PatchVerdict` while `audit_patch` wrote only
+    `verdict.describe()` into `flags`. A rendered string cannot be rebuilt into
+    the object the report takes, so the seam was named rather than stubbed until
+    the `audited` channel carried the artifact.
+
+    **The body is what the ship gate shows a person.** S-12.4 parks here for
+    human review, and what was in `flags` was `patch.describe()` — the change,
+    with none of the evidence for it. A reviewer asked to approve a patch needs
+    the chain that proved the finding and the numbers that show it moved.
     """
     handover = _require(state.repaired, "repaired", "ship a patch")
-    patch, _falsified = _repaired_from(handover)
+    patch, falsified = _repaired_from(handover)
     finding = str(_require(state.target, "target", "ship a patch"))
 
     # **§4 holds at any trust level, and this is where that is true rather than
@@ -742,6 +763,27 @@ def ship(resources: Resources, state: CheckpointedState) -> Mapping[str, object]
         if plan.get(name, ScreeningAction.SCREEN_AGAIN) is ScreeningAction.KEEP
     }
 
+    # **Assembled before the ledger is written**, because a patch that cannot be
+    # published has not shipped. Recording the acceptance first would leave the
+    # trust ledger holding a clean outcome for a run that then refused — and the
+    # ledger is append-only, so the correction is a second entry rather than an
+    # edit. The slack-reducing branch above returns before recording for the same
+    # reason.
+    verdict, before, after = _audited_from(_require(state.audited, "audited", "ship a patch"))
+    request = pull_request(
+        finding=finding,
+        chain=_chain_of_state(state),
+        patch=patch,
+        falsified=falsified,
+        verdict=verdict,
+        before=before,
+        after=after,
+        # **Not read from the handover a second time.** The slack-reducing patch
+        # escalated above and never reaches here, so a `True` at this point would
+        # be a patch that passed a gate it cannot pass.
+        slack_reducing=False,
+    )
+
     # **A shipped patch is a clean outcome, and the ledger learns from it.**
     # S-13.4 built the levels and nothing moved them; without this the gate at
     # `gates_for` can only ever read `GATED`, which is a ledger that exists and
@@ -753,9 +795,48 @@ def ship(resources: Resources, state: CheckpointedState) -> Mapping[str, object]
     return {
         "screening": surviving,
         "repaired": None,
+        "audited": None,
         "target": None,
-        "flags": [{"shipped": patch.describe(), "awaiting": "human review"}],
+        "flags": [
+            {
+                "shipped": request.title(),
+                "pull_request": request.body(),
+                "awaiting": "human review",
+            }
+        ],
     }
+
+
+def _audited_from(
+    payload: JsonValue,
+) -> tuple[PatchVerdict, Mapping[str, float], Mapping[str, float]]:
+    """Rebuild the patch audit's artifact, or say which part of it is missing.
+
+    **`earlier_rounds` is deliberately not recovered here, and the reason is the
+    channel.** `audited` replaces, so a second round overwrites the first and the
+    reproduction that caught the earlier patch is gone by the time this runs.
+    Carrying them would need an append-only channel of reproductions, which is a
+    decision about what a checkpoint holds rather than a detail of this node.
+    `PullRequest` renders an empty one as nothing rather than as a heading with
+    nothing under it, so the omission is invisible rather than misleading — and
+    it is recorded in ADR 155 so it is not mistaken for an oversight.
+    """
+    if not isinstance(payload, Mapping):
+        message = f"the {'audited'!r} channel holds {type(payload).__name__}, not a patch audit"
+        raise MissingInputError(message)
+    return (
+        PatchVerdict.model_validate(payload["verdict"]),
+        {str(name): float(str(value)) for name, value in _mapping(payload, "before").items()},
+        {str(name): float(str(value)) for name, value in _mapping(payload, "after").items()},
+    )
+
+
+def _mapping(payload: Mapping[str, JsonValue], key: str) -> Mapping[str, JsonValue]:
+    found = payload.get(key)
+    if not isinstance(found, Mapping):  # pragma: no cover - written by `audit_patch` only
+        message = f"the patch audit carries no {key!r} measurements"
+        raise MissingInputError(message)
+    return found
 
 
 def bind(resources: Resources) -> Wiring:
