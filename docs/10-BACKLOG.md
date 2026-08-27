@@ -56,6 +56,8 @@ AC:
 
 Notes: Python is the right choice — the first adapter targets Django, and the instrumentation hooks are Python-native. Cross-language support arrives via MCP in E14, not by writing the core twice.
 
+**DONE (marked 2026-08-27; the work predates it).** All four AC verified against the tree rather than from memory: `pyproject.toml` at `requires-python = ">=3.12"` with `uv.lock` beside it; all six packages the AC names present under `src/coldfix/` (`bench`, `primitives`, `agents`, `orchestrator`, `adapters`, `eval`); `ruff` and `mypy --strict` configured in `pyproject.toml` and passing over the whole tree; `pytest` running. `README.md` opens with `00-BRIEF.md` §1's one-line claim verbatim. **The layout held**: every one of the six directories is a real package today rather than a placeholder, `adapters/` last of them at Epic 14 — so the scaffold predicted the shape correctly and nothing had to move.
+
 ### S-0.2 — Architecture decision records
 Depends: S-0.1
 Why: seven decisions are currently implicit and will be re-litigated otherwise.
@@ -71,6 +73,8 @@ AC:
 
 Notes: ADR-002 must record that Surgeon and Adversary should run on different model vendors where possible. If that is deferred, record it as a known limitation rather than dropping it.
 
+**DONE (marked 2026-08-27; the work predates it).** `docs/adr/001`–`007` exist, one file per decision, each on the subject the AC names: language, LLM SDK and provider strategy, persistence, sandboxing, first target framework, how the tool tests itself, the refusal list. **The note's condition was met the way it asked**: ADR-002 §"Different-vendor requirement for the Adversary" records it as **deferred and a known limitation**, with the argument — a second SDK and a second price book against a boundary (`03-agents.md` §7) that is a fresh message list and a fresh prompt, which is structural and does not depend on vendor at all — and states plainly that any claim about catching a model's own blind spot is not available while both sides run on one vendor. **S-5.9 is the story that would falsify it and is PARTIAL for want of a second vendor account**, so the limitation is still live and still recorded. The directory has grown to 156 ADRs, which is the AC's *one file per decision* holding rather than being abandoned.
+
 ### S-0.3 — SPIKE: can we ground real repositories?
 Depends: S-0.1
 Why: **this is the highest-risk assumption in the entire design.**
@@ -81,6 +85,8 @@ AC:
 - Write a findings note: which obstacles recurred, which were unique
 
 Notes: if this is hard by hand it is much harder for an agent. If two of three fail, reconsider the target framework or the workload-discovery approach before building E7.
+
+**DONE (marked 2026-08-27; run 2026-08-02, `spikes/S-0.3-grounding/FINDINGS.md`, 753 lines).** Three Django projects none of which the runner knew beforehand, all three grounded, **42 minutes of wall clock in total** — 5, 8 and 19 minutes, with 4, 4 and 8 distinct obstacles. The risk this spike existed to test did not materialise, and E7 was built on that. **The recurrent obstacle was measured, not guessed**: the Postgres driver was never simply installable, 3 of 3. **The most valuable finding contradicted the backlog that commissioned it.** *The fixture question was the wrong question* — three repositories gave four different answers and none was the binary S-7.5/S-7.6 split assumed here: a valid object graph came once from a **test suite's `setUp` read as a recipe**, once from a **shipped `loaddata` fixture**, once from a **separate version-matched repository**, and never from synthesis alone. Two consequences reached the design: **discovery and synthesis compose rather than compete** (the expensive part is learning the *shape* of a valid graph; producing volume afterwards is trivial), so S-7.5 was reframed to *find any authoritative example of a valid object graph*; and **fixture presence does not predict fixture usefulness** — the only repository with real Django fixtures was the only one whose grounded database was too small to measure anything, at 3 tickets, while the one with no fixtures produced the only realistic scale. **Volume and validity are separate problems.** The same spike produced the target and the reserve pins for S-0.6 and the query-counting failure ADR 008 records; **one of the three is the holdout and is named only in the files `tests/test_holdout_discipline.py` allows**.
 
 ### S-0.4 — SPIKE: does ablation produce clean deltas?
 Depends: S-0.3
