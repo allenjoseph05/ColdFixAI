@@ -43,8 +43,10 @@ from coldfix.screening.flagging import (
     FLAT_COST_THRESHOLD,
     TIMING_FLOOR_SECONDS,
     Ranking,
+    expected_growth,
+    withheld_reason,
 )
-from coldfix.screening.growth import ScreenedWorkload
+from coldfix.screening.growth import MetricGrowth, ScreenedWorkload
 from coldfix.screening.workload import MINIMUM_SCALE_RATIO
 
 _STRICT = ConfigDict(frozen=True, extra="forbid")
@@ -90,6 +92,67 @@ class Unverified(BaseModel):
     """
 
 
+class Unflagged(BaseModel):
+    """One metric that was measured, fitted, and found to be within expectations.
+
+    **The evidence for a negative, which S-16.3 added because the artifact had
+    the conclusion and not the numbers.** A `Flag` carries what a metric did and
+    what it may do; a healthy workload carried its name and nothing else, so a
+    reader asking *why was this not flagged* got a claim where the flagged case
+    gets a measurement. `CLAUDE.md`'s rule that an exclusion carries its
+    preconditions applies most to the largest exclusion this system produces.
+
+    Only ever built for a workload in `healthy`. Publishing a growth basis for a
+    workload nothing showed does real work would be the collapse this whole
+    module is arranged to prevent — a measurement of an empty endpoint reads
+    exactly like a measurement of a fast one.
+    """
+
+    model_config = _STRICT
+
+    workload_id: str
+    metric: str
+    observed: str
+    """What the metric did, as `Growth`. Never `None` here — a metric that could
+    not be fitted is `unclassified`, which is a different answer."""
+
+    expected: str
+    """What this metric may do as data grows without that being a defect."""
+
+    ratio: float | None
+    """Largest over smallest, before the framework baseline is subtracted.
+
+    `None` where the smallest measurement was zero, which `MetricGrowth` is
+    careful to distinguish from a large number: nothing grew *by a factor* when
+    it started at nothing.
+    """
+
+    largest: float | None
+    """The value at the biggest scale point.
+
+    Carried because *within expectations* is two conditions for a flat metric,
+    not one: it has to fit its expectation **and** sit under the flat-cost
+    threshold. Reporting only the shape would explain half of why a flat metric
+    at 7 was left alone and none of why a flat metric at 119 was.
+    """
+
+    reason: str
+    """`WithheldReason`, taken from `flagging` rather than inferred here.
+
+    **The first draft inferred it from the shapes and was wrong.** A duration
+    that grew 9.6x and was held back by S-0.4's noise floor came out as
+    *"superlinear, within the linear it may be"*, which is false and false in the
+    direction that reassures a reader. The module that decides what is worth
+    flagging is the only one that can say why something was not.
+    """
+
+    def describe(self) -> str:
+        """The measurement. The reason is grouped by the caller, not repeated."""
+        level = f" at {self.largest:g}" if self.largest is not None else ""
+        span = f" ({self.ratio:.1f}x)" if self.ratio is not None else ""
+        return f"{self.metric} {self.observed}{level}{span}, where {self.expected} is expected"
+
+
 class NullResult(BaseModel):
     """Screened, and nothing to investigate. A successful terminal state.
 
@@ -107,6 +170,12 @@ class NullResult(BaseModel):
     unverified: tuple[Unverified, ...]
     unclassified: tuple[tuple[str, str], ...]
     """`(workload, metric)` pairs whose growth could not be fitted at all."""
+
+    unflagged: tuple[Unflagged, ...]
+    """Every metric this result *does* cover, and what it measured.
+
+    The answer to *why was nothing flagged*, per metric rather than per report.
+    """
 
     conditions: tuple[Conditions, ...]
     thresholds: Mapping[str, float]
@@ -127,14 +196,38 @@ class NullResult(BaseModel):
             for item in self.conditions
         )
         basis = f"Thresholds applied: {applied}. Measured: {shapes}."
+        closing = (
+            "Every workload here was shown to do real work, and nothing measured qualified as a "
+            "finding. **That is the answer, not a failure to find one.**"
+            if self.covers_everything_screened
+            else self._caveats()
+        )
+        return "\n".join(
+            part for part in [f"{head} {basis}", self._why_nothing_was_flagged(), closing] if part
+        )
 
-        if self.covers_everything_screened:
-            return (
-                f"{head} {basis} Every workload here was shown to do real work and none of them "
-                "grew beyond what its metrics may. **That is the answer, not a failure to find "
-                "one.**"
-            )
-        return " ".join(part for part in [head, basis, self._caveats()] if part)
+    def _why_nothing_was_flagged(self) -> str:
+        """AC 1's third clause, and the one the artifact could not answer before.
+
+        **Grouped by workload and then by reason**, because the two reasons are
+        not the same kind of statement: one says the code did what it may, the
+        other says the instrument could not resolve what it did. Listing them
+        together would bury the second, and the second is the one a reader needs
+        to see, because it is growth that was measured and not acted on.
+        """
+        if not self.unflagged:
+            return ""
+
+        grouped: dict[tuple[str, str], list[str]] = {}
+        for item in self.unflagged:
+            grouped.setdefault((item.workload_id, item.reason), []).append(item.describe())
+
+        lines = [
+            f"  {workload} [{reason}]: " + "; ".join(items)
+            for (workload, reason), items in grouped.items()
+        ]
+        heading = "Nothing was flagged, and this is what was measured:"
+        return "\n".join([heading, *lines])
 
     def _caveats(self) -> str:
         parts: list[str] = []
@@ -205,6 +298,13 @@ def null_result(screened: Sequence[ScreenedWorkload], ranking: Ranking) -> NullR
         ),
         unverified=unverified,
         unclassified=ranking.unclassified,
+        unflagged=tuple(
+            entry
+            for result in screened
+            if result.workload.id not in unshown
+            for metric, measured in sorted(result.growth.items())
+            if (entry := _unflagged(result, metric, measured)) is not None
+        ),
         conditions=tuple(
             Conditions(
                 workload_id=result.workload.id,
@@ -220,6 +320,35 @@ def null_result(screened: Sequence[ScreenedWorkload], ranking: Ranking) -> NullR
             "timing floor (seconds)": TIMING_FLOOR_SECONDS,
             "minimum scale ratio": MINIMUM_SCALE_RATIO,
         },
+    )
+
+
+def _unflagged(result: ScreenedWorkload, metric: str, measured: MetricGrowth) -> Unflagged | None:
+    """One metric's basis for not being flagged, or `None` because it was flagged.
+
+    Both judgements come from `flagging`: `expected_growth` is the function
+    `flag` tested against, and `withheld_reason` is the negative half of `flag`'s
+    own decision. A table written here would be a second opinion about a thing
+    that has already been decided once.
+    """
+    # A metric with no fitted growth is refused inside `withheld_reason`, which
+    # is why there is no second filter against `ranking.unclassified` here. The
+    # first draft had one and a sabotage proved it dead: every pair in that list
+    # has `growth is None`, so the guard below already covers it, and two guards
+    # for one condition is a place they can come to disagree.
+    reason = withheld_reason(metric, measured, result)
+    if reason is None or measured.growth is None:
+        return None
+
+    largest = result.workload.observations[-1] if result.workload.observations else None
+    return Unflagged(
+        workload_id=result.workload.id,
+        metric=metric,
+        observed=str(measured.growth),
+        expected=str(expected_growth(metric)),
+        ratio=measured.ratio,
+        largest=largest.metrics.get(metric) if largest is not None else None,
+        reason=str(reason),
     )
 
 

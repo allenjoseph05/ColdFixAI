@@ -38,9 +38,11 @@ from coldfix.screening.flagging import (
     FREQUENCY_UNKNOWN,
     FlaggingError,
     FlagKind,
+    WithheldReason,
     expected_growth,
     flag,
     rank,
+    withheld_reason,
 )
 from coldfix.screening.growth import MetricGrowth, screen_growth
 from coldfix.screening.workload import (
@@ -497,3 +499,66 @@ def _with_fit(result: Any, metric: str, growth: Growth) -> Any:
 def _unfittable(measured: MetricGrowth) -> Any:
     """A fit with no exponent, which is what a zero at any scale point produces."""
     return replace(measured.fit, exponent=None, power_r_squared=None, growth=None)
+
+
+# ========================== S-16.3: the negative half of the same decision
+
+
+@pytest.mark.parametrize(
+    "call",
+    [list_books_n_plus_one, list_books_batched, summarize_with_fixed_floor],
+)
+def test_every_fitted_metric_is_either_flagged_or_withheld_with_a_reason(
+    query_counter: None, call: Any
+) -> None:
+    """The property that stops the two decisions drifting apart.
+
+    S-16.3 needed to say *why* a metric raised no flag, and the first attempt
+    inferred it from the shapes and got it wrong. `withheld_reason` is the
+    negative half of `flag`'s own decision, which is only worth anything if the
+    two partition the metrics: **exactly one of them is true of every metric that
+    could be fitted.**
+
+    Without this, a change to `_above_the_noise` moves one and not the other, and
+    the null result starts explaining flags that were raised or staying silent
+    about metrics that were not.
+    """
+    result = screened("subject", call)
+    flagged = {item.metric for item in flag(result)}
+
+    for metric, measured in result.growth.items():
+        if measured.growth is None:
+            continue
+        reason = withheld_reason(metric, measured, result)
+        assert (metric in flagged) != (reason is not None), (
+            f"{metric} is {'flagged' if metric in flagged else 'not flagged'} "
+            f"and withheld_reason said {reason!r}"
+        )
+
+
+def test_the_two_reasons_are_different_statements(query_counter: None) -> None:
+    """One is about the code, the other about the instrument.
+
+    A metric that did what it may and a metric that did more than it may but by
+    less than the harness can resolve are both unflagged, and reporting them
+    identically would call the second one clean.
+    """
+    assert "fit to noise" in WithheldReason.BELOW_THE_NOISE_FLOOR.value
+    assert "fit to noise" not in WithheldReason.WITHIN_EXPECTATION.value
+
+
+def test_an_unfittable_metric_is_withheld_by_neither(query_counter: None) -> None:
+    """`unclassified` is a third answer, and it belongs to `rank`.
+
+    Returning a reason here would put *could not tell* into the measured basis,
+    which is the collapse S-4.5's own docstring is arranged around.
+    """
+    result = screened("subject", list_books_batched)
+    unfittable = MetricGrowth(
+        metric=SECONDS,
+        kind=result.growth[SECONDS].kind,
+        fit=replace(result.growth[SECONDS].fit, growth=None),
+        ratio=None,
+    )
+
+    assert withheld_reason(SECONDS, unfittable, result) is None

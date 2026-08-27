@@ -375,7 +375,122 @@ def test_a_hallucinated_field_is_refused(query_counter: None) -> None:
             healthy=("one",),
             unverified=(),
             unclassified=(),
+            unflagged=(),
             conditions=(),
             thresholds={},
             nothing_found=True,
         )
+
+
+# ============================================ S-16.3: why nothing was flagged
+
+
+def test_the_result_carries_what_each_covered_metric_measured(
+    query_counter: None,
+) -> None:
+    """AC 1's third clause. **The artifact had the conclusion and not the numbers.**
+
+    A `Flag` carries what a metric did and what it may do. A healthy workload
+    carried its name, so a reader asking *why was this not flagged* got a claim
+    where the flagged case gets a measurement.
+    """
+    results = [screened("batched", list_books_batched)]
+
+    outcome = null_result(results, rank(results))
+
+    queries = next(item for item in outcome.unflagged if item.metric == DB_QUERY)
+    assert queries.workload_id == "batched"
+    assert queries.observed == "constant"
+    assert queries.expected == "constant"
+    assert queries.largest is not None
+    assert queries.ratio == pytest.approx(1.0)
+
+
+def test_the_measured_basis_reaches_the_report(query_counter: None) -> None:
+    """Carried on the artifact and rendered, not one or the other."""
+    results = [screened("batched", list_books_batched)]
+
+    report = null_result(results, rank(results)).report()
+
+    assert "Nothing was flagged, and this is what was measured:" in report
+    assert f"{DB_QUERY} constant" in report
+    assert "where constant is expected" in report
+
+
+def test_a_metric_held_back_by_the_noise_floor_says_so(query_counter: None) -> None:
+    """**The bug the first draft shipped**, and the reason `withheld_reason` exists.
+
+    A duration that grew beyond its expectation and was held back by S-0.4's
+    floor was rendered as *"superlinear, within the linear it may be"* — a
+    sentence that is false, and false in the direction that reassures. The two
+    reasons are different statements: one is about the code, the other is about
+    the instrument.
+    """
+    results = [screened("narrow", list_titles_narrow)]
+
+    outcome = null_result(results, rank(results))
+
+    withheld = {item.metric: item.reason for item in outcome.unflagged}
+    noisy = [
+        metric
+        for metric, reason in withheld.items()
+        if reason.startswith("grew beyond its expectation")
+    ]
+    for metric in noisy:
+        entry = next(item for item in outcome.unflagged if item.metric == metric)
+        assert entry.observed == "superlinear"
+        assert entry.expected == "linear"
+
+    assert all("within the linear it may be" not in reason for reason in withheld.values())
+
+
+def test_the_closing_sentence_does_not_contradict_the_evidence(
+    query_counter: None,
+) -> None:
+    """It used to say *none of them grew beyond what its metrics may*.
+
+    Which is false whenever a duration was held back by the noise floor rather
+    than by behaving — the same error as the one above, one layer out, and the
+    reason the sentence now says *nothing measured qualified as a finding*.
+    """
+    results = [screened("narrow", list_titles_narrow)]
+
+    report = null_result(results, rank(results)).report()
+
+    assert "That is the answer, not a failure to find one" in report
+    assert "none of them grew beyond what its metrics may" not in report
+
+
+def test_an_unverified_workload_contributes_no_measured_basis(
+    query_counter: None,
+) -> None:
+    """The collapse this module exists to prevent, in the new field.
+
+    A growth basis published for a workload nothing showed does real work would
+    read exactly like one for a workload that is fine — a measurement of an empty
+    endpoint and a measurement of a fast one are the same numbers.
+    """
+    empty = screened("empty", lambda store: [])
+    covered = screened("batched", list_books_batched)
+
+    outcome = null_result([empty, covered], rank([empty, covered]))
+
+    assert "empty" in {item.workload_id for item in outcome.unverified}
+    assert "empty" not in {item.workload_id for item in outcome.unflagged}
+    assert "batched" in {item.workload_id for item in outcome.unflagged}
+
+
+def test_a_metric_that_could_not_be_fitted_is_not_called_measured(
+    query_counter: None,
+) -> None:
+    """`unclassified` and `unflagged` are different answers and stay separate.
+
+    *Could not tell* has no observed growth to report, so putting it in the
+    measured basis would publish a shape nobody fitted.
+    """
+    results = [screened("batched", list_books_batched)]
+
+    outcome = null_result(results, rank(results))
+
+    measured = {(item.workload_id, item.metric) for item in outcome.unflagged}
+    assert not measured & set(outcome.unclassified)
