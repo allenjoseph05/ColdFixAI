@@ -1,0 +1,3 @@
+# The seeded database is an artifact of a run, not a record of one.
+subject/subject.db
+__pycache__/
