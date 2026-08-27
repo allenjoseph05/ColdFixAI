@@ -39,6 +39,7 @@ from coldfix.cost.accounting import (
     Ledger,
     ModelCall,
     Phase,
+    ProjectReport,
     RunReport,
     StepClass,
     TokenUsage,
@@ -564,3 +565,122 @@ def test_the_accounting_layer_cannot_reach_a_model_sdk() -> None:
 
     roots = {name.split(".")[0] for name in loaded}
     assert not (roots & {"anthropic", "openai", "httpx", "requests"})
+
+
+# ==================================== S-15.3: the model cut and the project cut
+
+
+def test_cost_is_queryable_by_model() -> None:
+    """The layer under the tier cut. A ledger knows models, not price bands.
+
+    `cost.routing` imports this module, so a `by_tier` here would be a cycle —
+    `Session.by_tier` maps these through the router that chose them.
+    """
+    ledger = Ledger()
+    for model in ("claude-opus-5", "claude-opus-5", "claude-haiku-4-5"):
+        ledger.record(call(model=model, usage=TokenUsage(input_tokens=MILLION, output_tokens=0)))
+
+    by_model = ledger.by_model()
+
+    assert by_model["claude-opus-5"] == Decimal("10.00")
+    assert by_model["claude-haiku-4-5"] == Decimal("1.00")
+    assert sum(by_model.values(), Decimal(0)) == ledger.total_usd
+
+
+def _run(*, spent_mtok: int, confirmed: int, rate: ExchangeRate = RATE) -> RunReport:
+    ledger = Ledger()
+    for _ in range(spent_mtok):
+        ledger.record(
+            call(model="claude-opus-5", usage=TokenUsage(input_tokens=MILLION, output_tokens=0))
+        )
+    return RunReport(ledger=ledger, confirmed_findings=confirmed, rate=rate)
+
+
+def test_a_project_costs_what_all_of_its_runs_cost() -> None:
+    """AC 1's third cut. `04-cost.md` §11's unit: grounding is per repository."""
+    report = ProjectReport(
+        project="shop",
+        runs=[_run(spent_mtok=1, confirmed=1), _run(spent_mtok=2, confirmed=1)],
+        rate=RATE,
+    )
+
+    assert report.total_usd == Decimal("15.00")
+    assert report.confirmed_findings == 2
+    assert report.total_eur == Decimal("15.00") * Decimal("0.92")
+
+
+def test_the_project_figure_is_not_the_mean_of_the_runs_ratios() -> None:
+    """**The arithmetic that hides the null runs**, and it is the obvious one.
+
+    Averaging each run's euros-per-finding weights a cheap run that found three
+    equally with an expensive one that found one — and a run that found nothing
+    has no ratio to average in, so it disappears from the answer entirely. The
+    project figure is total euros over total findings.
+    """
+    cheap_and_productive = _run(spent_mtok=1, confirmed=3)
+    dear_and_empty = _run(spent_mtok=9, confirmed=0)
+
+    report = ProjectReport(project="shop", runs=[cheap_and_productive, dear_and_empty], rate=RATE)
+
+    mean_of_ratios = cheap_and_productive.eur_per_confirmed_finding
+    assert mean_of_ratios is not None
+    per_finding = report.eur_per_confirmed_finding
+    assert per_finding is not None
+    assert per_finding > mean_of_ratios, "the empty run's spend is in the numerator"
+    assert per_finding == report.total_eur / 3
+
+
+def test_a_run_that_confirmed_nothing_is_counted_and_named() -> None:
+    """A null result is an answer and it is not a free one."""
+    report = ProjectReport(
+        project="shop",
+        runs=[_run(spent_mtok=1, confirmed=1), _run(spent_mtok=1, confirmed=0)],
+        rate=RATE,
+    )
+
+    assert report.runs_confirming_nothing == 1
+    assert "1 of 2 run(s) confirmed nothing" in report.render()
+    assert report.total_usd == Decimal("10.00")
+
+
+def test_a_project_that_has_confirmed_nothing_has_no_ratio() -> None:
+    """`None`, for `RunReport`'s reason: the spend is real, the ratio is not."""
+    report = ProjectReport(project="shop", runs=[_run(spent_mtok=1, confirmed=0)], rate=RATE)
+
+    assert report.eur_per_confirmed_finding is None
+    assert "not applicable" in report.render()
+    assert report.total_usd > 0
+
+
+def test_a_project_with_no_runs_is_refused() -> None:
+    """Never run and found nothing are different answers, as everywhere else."""
+    with pytest.raises(AccountingError, match="no runs"):
+        ProjectReport(project="shop", runs=[], rate=RATE)
+
+
+def test_the_total_converts_once_and_says_when_the_runs_did_not() -> None:
+    """Euros are a presentation; the vendor bills dollars.
+
+    Summing each run's euro figure adds numbers taken at several rates into a
+    total nobody can reproduce, so the project converts the dollar sum once at
+    its own rate — and says so when a run was reported at a different one, rather
+    than quietly restating it.
+    """
+    older = ExchangeRate(euros_per_dollar=Decimal("0.80"), as_of=date(2026, 1, 1))
+    report = ProjectReport(
+        project="shop",
+        runs=[_run(spent_mtok=1, confirmed=1, rate=older), _run(spent_mtok=1, confirmed=1)],
+        rate=RATE,
+    )
+
+    assert report.total_eur == Decimal("10.00") * Decimal("0.92")
+    rendered = report.render()
+    assert "each reported at their own rate" in rendered
+    assert "0.80" in rendered
+
+
+def test_runs_at_one_rate_say_nothing_about_rates() -> None:
+    """The note is for the case that needs it; a control so it is not always on."""
+    report = ProjectReport(project="shop", runs=[_run(spent_mtok=1, confirmed=1)], rate=RATE)
+
+    assert "each reported at their own rate" not in report.render()
