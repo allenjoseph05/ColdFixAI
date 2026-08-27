@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack
+from dataclasses import dataclass
 from enum import StrEnum
 from time import perf_counter
 
@@ -61,6 +62,19 @@ BLOCKED_SECONDS = "blocked_seconds"
 INSTRUCTIONS = "instructions"
 
 RESERVED_METRICS = frozenset({SECONDS, MATERIALIZED, CPU_SECONDS, BLOCKED_SECONDS, INSTRUCTIONS})
+
+# **Not every reserved metric means the same thing off-process, and S-17.5 is why
+# that distinction had to exist.** These three describe *this interpreter*:
+# `materialized` counts what `materialize` drained here, and the two rusage
+# figures come from `off_cpu` reading this process. A subject reporting them
+# would be reporting numbers about the wrong process, which is worse than not
+# reporting them — it is the harness's own idleness recorded as the subject's.
+#
+# `seconds` and `instructions` are absent from this set deliberately. A subject
+# can time its own request and count its own instructions, and `explorer.work
+# .drive` already does the first: median of samples, warm-up discarded, taken
+# inside the process that served it.
+HARNESS_ONLY_METRICS = frozenset({MATERIALIZED, CPU_SECONDS, BLOCKED_SECONDS})
 
 # Every counter contributes two metrics: how many events, and the sum of their
 # amounts. The second is named by suffixing the first.
@@ -109,6 +123,64 @@ class MetricKind(StrEnum):
 
     COUNT = "count"
     DURATION = "duration"
+
+
+class Vantage(StrEnum):
+    """Where the numbers in one measurement were taken. **S-17.5's answer.**
+
+    A condition of the measurement rather than a property of any one number,
+    which is why it sits beside `CacheControl` and travels the same way: onto
+    `ScalingResult`, onto the screen, and into the preconditions a null result
+    publishes. `CLAUDE.md` requires an exclusion to carry them, and *seconds flat
+    across a sixteenfold increase* means one thing timed inside the subject and
+    nothing at all timed from outside it.
+
+    **Never passed as a parameter of its own.** It is read off `Reported`, so
+    the declaration and the numbers it describes are one object: a caller cannot
+    claim the subject measured this and then fail to hand over what it measured,
+    and no call site can forget to forward it. `S-17.6`'s sabotage pass found the
+    parameter version silently ignorable — and `diagnosis.schema` found something
+    worse, that an enum-annotated parameter reads as a *design* choice, offering
+    a model the decision of whether the harness should trust its own clock.
+    """
+
+    HARNESS = "timed in this process, around the callable"
+    SUBJECT = "timed inside the subject and reported back"
+
+
+@dataclass(frozen=True)
+class Reported:
+    """Counters a subject measured about itself, and the fact that it did.
+
+    **The vantage travels with the numbers rather than beside them**, which is
+    S-8.12's `Measured` again: widen the boundary with a type instead of adding a
+    flag that the value it qualifies can be separated from. Two consequences, and
+    both are the reason for the type:
+
+    - a subject-vantage run with nothing reported is unrepresentable, rather than
+      refused at runtime;
+    - `scale_volume` forwards `extra_counters` already, so nothing has to
+      remember to forward the vantage as well.
+
+    `counters` is read once, after the workload, exactly as a plain supplier is.
+    """
+
+    counters: Callable[[], Mapping[str, float]]
+
+
+Counters = Callable[[], Mapping[str, float]] | Reported
+"""Deterministic counters read after a workload, and where they were taken.
+
+A plain callable is the harness's own vantage and stays the ordinary case. This
+union is deliberately not describable by `diagnosis.schema` — both arms bottom
+out in a callable — so a design cannot name it and the vantage stays the
+harness's fact to supply.
+"""
+
+
+def vantage_of(extra_counters: Counters | None) -> Vantage:
+    """Where a run's numbers were taken, read off what supplies them."""
+    return Vantage.SUBJECT if isinstance(extra_counters, Reported) else Vantage.HARNESS
 
 
 class CacheControl(StrEnum):
@@ -180,7 +252,7 @@ class IdentityLedger:
 def measure_once(
     invoke: Callable[[], object],
     counters: Sequence[str] = (),
-    extra_counters: Callable[[], Mapping[str, float]] | None = None,
+    extra_counters: Counters | None = None,
 ) -> Mapping[str, float]:
     """One measured run, with the window closed only after the result is drained.
 
@@ -192,9 +264,32 @@ def measure_once(
     workload — guard counters such as rows or bytes returned, which are sums
     rather than call counts and so cannot come from a hook.
 
+    **A `Reported` decides whether this function's own clock means anything**, and
+    S-17.5 measured what happens when it does not. Driving an out-of-process
+    subject and timing the call from here recorded 1266 ms for a 9.6 ms endpoint
+    — 99.25% of it interpreter startup — and the same workload at three scales
+    fitted `LINEAR` inside the subject and `CONSTANT` outside it. Screening fits
+    growth on a duration, so that is not a large number: it is the wrong shape,
+    published as an exclusion.
+
+    Given one, this function therefore **takes no measurement of its own**.
+    It still runs `invoke` — something has to drive the subject — and it still
+    installs `counters`, because a hook that fires in this process is measuring
+    this process either way. What it does not do is time the call, drain the
+    result, or read its own rusage: every number comes from `extra_counters`,
+    which is the only party that saw the subject.
+
+    A plain callable is the harness's own vantage and stays the default. Every
+    existing call site measures something running here and is correct as written.
+
     Raises:
-        MetricSetError: an extra counter collides with one produced here.
+        MetricSetError: an extra counter collides with one produced here, or — from
+            a `Reported` — reports a metric that describes the harness's own
+            process, or omits the duration nobody else can supply.
     """
+    if isinstance(extra_counters, Reported):
+        return _reported(invoke, counters, extra_counters.counters)
+
     with ExitStack() as stack:
         tallies = {name: stack.enter_context(count(name)) for name in counters}
         profile = stack.enter_context(off_cpu())
@@ -229,6 +324,62 @@ def measure_once(
             raise MetricSetError(message)
         metrics.update({name: float(value) for name, value in extra.items()})
 
+    return metrics
+
+
+def _reported(
+    invoke: Callable[[], object],
+    counters: Sequence[str],
+    extra_counters: Callable[[], Mapping[str, float]],
+) -> Mapping[str, float]:
+    """The subject vantage: drive it, count what fires here, take the rest as given.
+
+    Split out rather than branched inline because the two halves share almost
+    nothing — this one has no clock, no `off_cpu`, and no `materialize` — and a
+    single function holding both would be one where the reserved-metric rule
+    reads differently depending on a flag several lines above it.
+
+    There is no *nothing was reported* case to refuse: `Reported` holds the
+    supplier, so a run with no numbers cannot be constructed.
+    """
+    with ExitStack() as stack:
+        tallies = {name: stack.enter_context(count(name)) for name in counters}
+        invoke()
+
+    metrics: dict[str, float] = {}
+    for name, tally in tallies.items():
+        metrics[name] = float(tally.events)
+        metrics[f"{name}{TOTAL_SUFFIX}"] = tally.total
+
+    reported = extra_counters()
+    borrowed = sorted(set(reported) & HARNESS_ONLY_METRICS)
+    if borrowed:
+        message = (
+            f"{borrowed} were reported from inside the subject, and they describe *this* "
+            "process: `materialized` counts what was drained here, and the two rusage figures "
+            "come from reading this interpreter. A subject supplying them is supplying numbers "
+            "about the wrong process, which is worse than supplying none"
+        )
+        raise MetricSetError(message)
+
+    collisions = sorted(set(reported) & set(metrics))
+    if collisions:
+        message = (
+            f"extra counters {collisions} would overwrite counters this run took from its own "
+            "hooks; name them differently"
+        )
+        raise MetricSetError(message)
+
+    metrics.update({name: float(value) for name, value in reported.items()})
+
+    if SECONDS not in metrics:
+        message = (
+            "no duration was reported. Under this vantage the harness does not time the call — "
+            "S-17.5 measured that doing so fits a linear workload as constant, because 99% of "
+            f"what it would time is interpreter startup — so {SECONDS!r} has to come from the "
+            "subject, which is the only party that saw the request"
+        )
+        raise MetricSetError(message)
     return metrics
 
 

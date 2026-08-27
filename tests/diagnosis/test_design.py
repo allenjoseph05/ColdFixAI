@@ -785,3 +785,27 @@ def test_a_parameter_knows_whether_it_is_the_designs_to_set() -> None:
 
     assert chosen.specifiable
     assert not supplied.specifiable
+
+
+def test_a_design_cannot_choose_where_a_measurement_was_taken() -> None:
+    """S-17.6, and this test is the reason the vantage is not a parameter.
+
+    It was one first. `scale_volume(vantage=Vantage.HARNESS)` type-checked, read
+    correctly, and moved `vantage` into `schema.specifiable` — because `Vantage`
+    is an enum, and the enum branch of `_describe` is what makes `distribution`
+    and `label` answerable. So the design half silently acquired the question
+    *should the harness trust its own clock*, which S-17.5 measured the wrong
+    answer to as a linear workload fitted `CONSTANT`.
+
+    A model may design an experiment. It may not declare the conditions the
+    experiment was run under — that is the harness's own report of itself.
+    """
+    schema = volume_schema()
+
+    assert "vantage" not in {parameter.name for parameter in schema.parameters}
+
+    supplier = next(p for p in schema.bound if p.name == "extra_counters")
+    assert supplier.describes is None, (
+        "the vantage rides on `extra_counters`, so that parameter must stay "
+        "unspecifiable — a describable union would offer the vantage back"
+    )
