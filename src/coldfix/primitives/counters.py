@@ -137,6 +137,28 @@ class CounterOverhead(StrEnum):
     """Costs enough to distort what it measures. Attach deliberately, never by default."""
 
 
+OVERHEAD_BUDGET = 0.05
+"""What a counter may cost the thing it observes. S-1.3's five percent."""
+
+REFERENCE_OPERATION_SECONDS = 366e-6
+"""The operation the budget is five percent *of*, and stating it is not a formality.
+
+A counter's cost is fixed per event — measured at about half a microsecond — so
+the same instrument reads as 0.1% overhead on a real database call and as most of
+the runtime on a function that does nothing. A budget expressed as a bare
+percentage is therefore a budget against an unnamed denominator.
+
+ADR 013 measured 366µs for one instrumented database call on a real subject, and
+S-0.4's endpoint averaged roughly 1.2ms per query across 1193 of them. The
+smaller is used, because a budget should be stated against the cheapest thing it
+will observe.
+
+Here rather than in S-1.3's test since S-14.4, because the adapter conformance
+suite checks a third party's hook against the same bar and two spellings of one
+budget drift — with the copy nobody runs being the one that stays generous.
+"""
+
+
 @dataclass(frozen=True)
 class Counter:
     """One named counter: what an event is, what the amount means, what guards it."""
