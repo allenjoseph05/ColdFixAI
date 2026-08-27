@@ -425,6 +425,62 @@ class Session:
         on_frontier = sum(1 for call in self.ledger.calls if call.model == frontier_model)
         return Decimal(on_frontier) / Decimal(len(self.ledger.calls))
 
+    def by_tier(self) -> Mapping[Tier, Decimal]:
+        """What each price band cost. S-15.3's AC 2, the half `by_phase` is not.
+
+        **Here rather than on the ledger, because a tier is the router's idea.**
+        `cost.routing` imports `cost.accounting`, so a `by_tier` down there would
+        be a cycle; the ledger reports `by_model` and this maps models to bands
+        through the router that chose them.
+
+        A model the router does not name is counted under the tier it was routed
+        to only if the router names it — anything else lands in `unrouted`,
+        because a call billed against a model no tier claims is exactly the drift
+        this cut exists to show, and folding it into the cheapest band would hide
+        it.
+        """
+        of_model = {model: tier for tier, model in self.router.tier_models.items()}
+        totals: dict[Tier, Decimal] = {}
+        for model, spent in self.ledger.by_model().items():
+            tier = of_model.get(model)
+            if tier is not None:
+                totals[tier] = totals.get(tier, Decimal(0)) + spent
+        return totals
+
+    def unrouted_usd(self) -> Decimal:
+        """Spend on models no tier in this router names.
+
+        Reported rather than absorbed. A call against a model the router never
+        chose is either an escalation target that has since been reconfigured or
+        a caller going around the router, and both are worth seeing — a tier
+        table that quietly summed to less than the run would be the same defect
+        `Ledger.reconciles` exists to catch one level up.
+        """
+        named = set(self.router.tier_models.values())
+        return sum(
+            (spent for model, spent in self.ledger.by_model().items() if model not in named),
+            Decimal(0),
+        )
+
+    def tier_report(self) -> str:
+        """The tier cut, with whatever escaped it stated rather than dropped."""
+        by_tier = self.by_tier()
+        if not by_tier and not self.ledger.calls:
+            return "Cost by tier: nothing was spent."
+
+        lines = ["Cost by tier:"]
+        for tier in sorted(by_tier, key=lambda item: item.rank):
+            model = self.router.tier_models[tier]
+            lines.append(f"  {tier.value} ({model}): €{self.rate.convert(by_tier[tier]):.2f}")
+        unrouted = self.unrouted_usd()
+        if unrouted:
+            lines.append(
+                f"  billed against a model no tier names: €{self.rate.convert(unrouted):.2f} — "
+                "either an escalation target this router no longer lists, or a caller that did "
+                "not route"
+            )
+        return "\n".join(lines)
+
     def cache_report(self) -> str:
         """Hit rates, one model at a time.
 
@@ -452,6 +508,7 @@ class Session:
         return "\n".join(
             [
                 run.render(),
+                self.tier_report(),
                 self.budget.report(),
                 f"Frontier share: {self.observed_frontier_share():.0%} of calls "
                 f"(escalations included)",
