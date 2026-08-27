@@ -27,11 +27,15 @@ the finding rather than a smell: `graph.py` records that the seven entry points
 want eleven kinds of argument between them, and this is that inventory written
 down once instead of threaded through the graph.
 
-**`ship` does F14 and nothing else.** The pull request is S-16.2, two epics away.
-What exists is the half the graph reads: `08-audit.md` F14's per-workload
+**`ship` does F14 and nothing else, and the reason changed at Epic 16.** What
+exists is the half the graph reads: `08-audit.md` F14's per-workload
 invalidation, computed by `state.staleness.screening_plan` and consumed by
-`graph.after_ship`. A stub PR here would be a second, worse answer to a question
-another epic owns.
+`graph.after_ship`. The pull request was *pending S-16.2*; S-16.2 has landed, so
+the omission is now a named seam rather than a wait. `pull_request` needs a live
+`PatchVerdict`, and `audit_patch` puts only `verdict.describe()` into `flags` —
+a rendered string cannot be rebuilt into the object the report takes. Closing it
+means making the verdict travel structurally, which is a state channel and a
+story of its own; ADR 151 records it rather than leaving a stub here.
 """
 
 from __future__ import annotations
@@ -82,7 +86,10 @@ from coldfix.repair.patch import Patch
 from coldfix.repair.slack import REVIEWED_AT_EVERY_LEVEL
 from coldfix.sandbox.modes import CandidateSession, DiagnosticSession, ExecutionMode, Workbench
 from coldfix.sandbox.patching import touched_paths
+from coldfix.screening.assess import conclude
+from coldfix.screening.flagging import flag
 from coldfix.screening.growth import screen as screen_workloads
+from coldfix.screening.null import NullResult
 from coldfix.screening.workload import BoundWorkload, Workload
 from coldfix.state.checkpoint import CheckpointedState
 from coldfix.state.persistent import PersistentStore
@@ -114,14 +121,12 @@ is what `04-cost.md` §4 caches, so one carrying a prompt no step uses would be
 paying for a cache nothing hits.
 """
 
-_SUSPICIOUS = frozenset({Growth.SUPERLINEAR})
-"""Growth worth an investigation.
-
-One member, because S-1.5's vocabulary has three classes and only one of them
-is a finding. **Written as a set rather than an equality** so that a fourth
-class — the sublinear one the docstring on `Growth` records as deliberately
-absent — has somewhere to go if it is ever added, without this line becoming
-the place that quietly decides it is uninteresting."""
+# `_SUSPICIOUS` lived here and was deleted by Epic 16's composition check. It
+# held `{Growth.SUPERLINEAR}` and decided, at this boundary, what was worth
+# investigating — a second opinion about a question `screening/flagging.py`
+# already answers against each metric's *expectation*. On the planted N+1 the two
+# disagreed: `flag()` said `db.query=GROWTH`, this said nothing. The judgement is
+# `conclude`'s now, and there is no threshold in this module to drift from it.
 
 
 class AdapterError(Exception):
@@ -292,6 +297,24 @@ class Resources:
     `symptom_for`'s reason: a symptom quoting a metric nobody measured is the
     first non-negotiable broken at the top of the report."""
 
+    counters: Sequence[str]
+    """Which counters screening attaches. **The node used to attach none.**
+
+    Epic 16's composition check drove `screen` for the first time and found it
+    calling `screen(bindings)` with `counters` left at its default of `()`. The
+    consequence is not subtle: `db.query` was never measured, so no query growth
+    could be fitted, no N+1 could be flagged — and `work_verified` came back
+    **False for every workload**, because F6's test is defined over the query
+    count, the payload and the duration. A production screen could only ever
+    report a null result that covered nothing, and the artifact said so in
+    `work_evidence`: *`['db.query']` were not measured*.
+
+    Supplied rather than defaulted, on S-7.2's convention. Which counters exist
+    is a fact about the environment — Epic 14 makes it exactly the set of names
+    an adapter declares in `Declarations.hooks` — and a default here would be
+    this module choosing an instrument on the adapter's behalf.
+    """
+
     tokens: Tokens
     coverages: Sequence[Coverage] = ()
     """Which files each workload ran, for F14. Empty means nothing is known, and
@@ -384,16 +407,41 @@ def screen(resources: Resources, state: CheckpointedState) -> Mapping[str, objec
     attributed to a workload gives `after_ship` a correct answer with nowhere to
     put it.
 
-    A workload flagged here is one whose growth is superlinear on some metric.
+    **What counts as flagged is Epic 4's to decide, and this node used to decide
+    it again.** Until Epic 16's composition check it called a local helper that
+    flagged a workload when some metric fitted `SUPERLINEAR` — and
+    `test_flagging.py`'s first line is that *the N+1 is linear, so "flag
+    superlinear growth" would walk past it*. Measured on this project's own
+    planted fixture: `flag()` returned `db.query=GROWTH` and the helper returned
+    `False`. The pipeline walked past the defect the project exists to find, and
+    the whole `FLAT_COST` class with it.
+
+    So the judgement comes from `conclude`, which is the module Epic 4's own
+    composition check built for exactly this: it ranks, caps, and returns a
+    `Plan` or a `NullResult` that are exclusive by construction.
+
     Nothing flagged ends the run as a null result, which `00-BRIEF.md` §9 makes an
-    answer rather than a failure.
+    answer rather than a failure — and the artifact's own report travels with it,
+    so the thresholds, the conditions and the measured basis for each covered
+    metric reach whoever reads the run rather than being re-derived from a
+    sentence.
     """
     workloads = _workloads(state)
     if not workloads:
         return null_result("grounding produced no workloads, so there was nothing to screen")
 
-    screened = screen_workloads(resources.bind(workloads))
-    return {
+    screened = screen_workloads(resources.bind(workloads), counters=resources.counters)
+    assessment = conclude(screened)
+    if isinstance(assessment, NullResult):
+        return null_result(assessment.report())
+
+    # **The order is the ranking's, not the alphabet's.** `rank` puts growth
+    # flags ahead of flat-cost ones as a class and orders by magnitude within
+    # each, because the two are measured in different units and there is no
+    # honest exchange rate. Reading the flagged set back in name order threw that
+    # away and investigated whichever workload sorted first.
+    order = {name: position for position, name in enumerate(assessment.investigate)}
+    result: dict[str, object] = {
         "screening": {
             item.workload.id: {
                 "growth": {
@@ -401,11 +449,24 @@ def screen(resources: Resources, state: CheckpointedState) -> Mapping[str, objec
                     for name, growth in item.growth.items()
                     if growth.fit.growth is not None
                 },
-                "flagged": _superlinear(item.growth),
+                "flagged": item.workload.id in order,
+                "order": order.get(item.workload.id),
+                # **Which metrics raised a flag, not just that one did.** A
+                # boolean says a workload is worth investigating and not what
+                # about it is, so a reader of the state — and a test — cannot
+                # tell a query count flagged against its expectation from a
+                # duration that fitted superlinear on noise. `flag` is the same
+                # function `rank` calls, so this cannot disagree with the plan.
+                "flagged_metrics": sorted(entry.metric for entry in flag(item)),
             }
             for item in screened
         }
     }
+    if not assessment.within_budget:
+        # A run deliberately not looking at things it found is a fact the reader
+        # needs before treating the result as complete.
+        result["flags"] = [{"deferred": assessment.report()}]
+    return result
 
 
 def investigate(resources: Resources, state: CheckpointedState) -> Mapping[str, object]:
@@ -763,27 +824,29 @@ def _workload_named(state: CheckpointedState, name: str) -> Workload:
     return found
 
 
-def _superlinear(growth: Mapping[str, object]) -> bool:
-    """Whether any metric grew faster than the volume did.
-
-    Read off the fit rather than judged here: S-1.5's vocabulary is what makes two
-    screens comparable, and a threshold invented at this boundary would be a
-    second opinion about what *suspicious* means.
-    """
-    return any(
-        getattr(getattr(item, "fit", None), "growth", None) in _SUSPICIOUS
-        for item in growth.values()
-    )
-
-
 def _first_flagged(state: CheckpointedState) -> str | None:
-    """The workload to investigate next, in the order `flagged` reports them."""
+    """The workload to investigate next, in the order the ranking put them.
+
+    `order` is `Plan.investigate`'s position, written by `screen`. Sorting by
+    name is the fallback for a checkpoint written before Epic 16's composition
+    check, and for entries a rewind rebuilt — never the primary key, because the
+    alphabet is not evidence.
+    """
     screening = state.screening or {}
-    for name in sorted(screening):
-        entry = screening[name]
-        if isinstance(entry, Mapping) and entry.get("flagged"):
-            return name
-    return None
+    flagged = [
+        (name, entry)
+        for name, entry in screening.items()
+        if isinstance(entry, Mapping) and entry.get("flagged")
+    ]
+    if not flagged:
+        return None
+
+    def position(item: tuple[str, Mapping[str, object]]) -> tuple[int, str]:
+        name, entry = item
+        rank_of = entry.get("order")
+        return (rank_of if isinstance(rank_of, int) else len(flagged), name)
+
+    return min(flagged, key=position)[0]
 
 
 def _complexity(state: CheckpointedState, target: str) -> Mapping[str, Growth]:
