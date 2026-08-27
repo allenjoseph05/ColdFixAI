@@ -359,6 +359,20 @@ class Ledger:
             totals[call.finding_id] = totals.get(call.finding_id, Decimal(0)) + call.cost_usd
         return totals
 
+    def by_model(self) -> Mapping[str, Decimal]:
+        """What each model cost. S-15.3's tier cut, one layer down.
+
+        **Models rather than tiers, and that is the layering rather than a
+        shortcut.** A tier is `cost.routing`'s idea and `routing` imports this
+        module, so a `by_tier` here would be a cycle. What a ledger knows is
+        which model was billed; grouping those into price bands needs the router,
+        which `Session.by_tier` has.
+        """
+        totals: dict[str, Decimal] = {}
+        for call in self.calls:
+            totals[call.model] = totals.get(call.model, Decimal(0)) + call.cost_usd
+        return totals
+
     @property
     def unattributed_usd(self) -> Decimal:
         """What was spent before any finding existed — grounding, mostly.
@@ -483,6 +497,112 @@ class RunReport:
             lines.append(
                 f"  not attributed to any finding: €{_cents(self.rate.convert(unattributed))} "
                 "(grounding is shared across a repository, not split between findings)"
+            )
+        return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class ProjectReport:
+    """What a repository has cost across every run against it. S-15.3's third cut.
+
+    **The unit `04-cost.md` §11 argues in.** Grounding happens once per
+    repository rather than once per finding, so the question *what does a finding
+    cost here* is only answerable over a project's whole history — a single run
+    that found two things looks cheap because an earlier run paid to stand the
+    repository up.
+
+    Converted **once, at this report's own rate**, from dollars. The vendor bills
+    dollars and euros are a presentation, so summing each run's euro figure would
+    be adding numbers taken at several rates into a total nobody can reproduce.
+    Where the runs were reported at a different rate, `render` says so rather
+    than quietly restating them.
+    """
+
+    project: str
+    runs: Sequence[RunReport]
+    rate: ExchangeRate
+
+    def __post_init__(self) -> None:
+        if not self.runs:
+            message = (
+                f"{self.project!r} has no runs to report on. A project that has never been run "
+                "costs nothing and has no cost per finding, which is not the same as a project "
+                "whose runs found nothing"
+            )
+            raise AccountingError(message)
+
+    @property
+    def total_usd(self) -> Decimal:
+        return sum((run.ledger.total_usd for run in self.runs), Decimal(0))
+
+    @property
+    def total_eur(self) -> Decimal:
+        return self.rate.convert(self.total_usd)
+
+    @property
+    def confirmed_findings(self) -> int:
+        return sum(run.confirmed_findings for run in self.runs)
+
+    @property
+    def runs_confirming_nothing(self) -> int:
+        """How many runs cost money and confirmed nothing.
+
+        Reported because they are the reason a project's cost per finding is
+        higher than any single successful run's, and because dropping them is the
+        obvious way to make this number look better. A null result is an answer
+        and it is not a free one.
+        """
+        return sum(1 for run in self.runs if run.confirmed_findings == 0)
+
+    @property
+    def eur_per_confirmed_finding(self) -> Decimal | None:
+        """Total euros over total findings. **Not the mean of the runs' ratios.**
+
+        Averaging ratios weights a cheap run that found three things equally with
+        an expensive one that found one, and the answer is neither the cost of a
+        finding nor anything else. It is also the arithmetic that makes the null
+        runs disappear, since a run with no ratio has nothing to average in.
+
+        `None` when the project has confirmed nothing — the same refusal
+        `RunReport` makes, for the same reason: the spend is real and the ratio
+        is undefined.
+        """
+        if self.confirmed_findings == 0:
+            return None
+        return self.total_eur / self.confirmed_findings
+
+    def render(self) -> str:
+        lines = [
+            f"Project cost: {self.project} over {len(self.runs)} run(s)",
+            f"  total: €{_cents(self.total_eur)} (${_cents(self.total_usd)})",
+            f"  rate: {self.rate.describe()}; prices read {PRICE_BOOK_AS_OF.isoformat()}",
+        ]
+
+        per_finding = self.eur_per_confirmed_finding
+        if per_finding is None:
+            lines.append(
+                "  euros per confirmed finding: not applicable — nothing has been confirmed "
+                "against this project yet. The runs still cost what they cost."
+            )
+        else:
+            lines.append(
+                f"  euros per confirmed finding: €{_cents(per_finding)} "
+                f"over {self.confirmed_findings} confirmed"
+            )
+
+        if self.runs_confirming_nothing:
+            lines.append(
+                f"  {self.runs_confirming_nothing} of {len(self.runs)} run(s) confirmed nothing "
+                "and are counted in the total above, because a null result is an answer that "
+                "was paid for"
+            )
+
+        differing = sorted({run.rate.describe() for run in self.runs} - {self.rate.describe()})
+        if differing:
+            lines.append(
+                "  the runs were each reported at their own rate ("
+                + "; ".join(differing)
+                + "), so a per-run euro figure will not add up to the total above. Dollars do."
             )
         return "\n".join(lines)
 

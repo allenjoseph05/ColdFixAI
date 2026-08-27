@@ -41,7 +41,12 @@ from coldfix.cost.budget import (
 from coldfix.cost.cascade import CHEAP_ATTEMPTS, NoValidatorError, cascade
 from coldfix.cost.context import Cacheability, ContextError, Investigation, is_append_only
 from coldfix.cost.pruning import RETRIEVAL_NOTICE, PrunedLog
-from coldfix.cost.routing import Router, StepType, frontier_share
+from coldfix.cost.routing import (
+    Router,
+    StepType,
+    Tier,
+    frontier_share,
+)
 from coldfix.cost.session import (
     Session,
     SessionError,
@@ -788,3 +793,79 @@ def test_forty_experiments_stay_within_the_shape_the_cost_model_assumes() -> Non
     assert session.log.meets_claim()
     # One block, not forty: a breakpoint looks back at most twenty.
     assert len(outcome.blocks) == 5
+
+
+# ============================================ S-15.3: the cut that needs a router
+
+
+def _billed(session: Session, model: str, millions: int = 1) -> None:
+    """Record a call against `model` as the API would have reported it."""
+    for _ in range(millions):
+        session.ledger.record(
+            ModelCall(
+                phase=Phase.INVESTIGATE,
+                agent=Agent.DIAGNOSTICIAN,
+                step_class=StepClass.MECHANICAL,
+                model=model,
+                usage=TokenUsage(input_tokens=1_000_000, output_tokens=0),
+                at=datetime(2026, 8, 10, 12, 0, tzinfo=UTC),
+            )
+        )
+
+
+def test_cost_is_broken_down_by_tier() -> None:
+    """AC 2's second half, and it needs the router rather than the ledger.
+
+    A tier is a price band, not a model. The ledger records what was billed; only
+    the router knows which band it was chosen from, which is why this cut lives
+    here and `by_model` lives there.
+    """
+    session = make_session()
+    frontier = session.router.tier_models[Tier.FRONTIER]
+    cheap = session.router.tier_models[Tier.CHEAP]
+    _billed(session, frontier, millions=2)
+    _billed(session, cheap)
+
+    by_tier = session.by_tier()
+
+    assert by_tier[Tier.FRONTIER] == Decimal("10.00")
+    assert by_tier[Tier.CHEAP] == Decimal("1.00")
+
+
+def test_spend_on_a_model_no_tier_names_is_reported_not_absorbed() -> None:
+    """**The number that would otherwise vanish into the cheapest band.**
+
+    A call billed against a model the router never chose is either an escalation
+    target that has since been reconfigured or a caller going around the router.
+    Folding it into a tier would make the table sum to the run while describing
+    a routing that did not happen; dropping it would make the table sum to less
+    than the run, which is `Ledger.reconciles`' defect one level up.
+    """
+    session = make_session()
+    _billed(session, "claude-fable-5")
+
+    assert session.by_tier() == {}
+    assert session.unrouted_usd() == Decimal("10.00")
+    assert "no tier names" in session.tier_report()
+
+
+def test_the_tier_table_and_the_unrouted_remainder_sum_to_the_run() -> None:
+    """The reconciliation that makes the cut checkable rather than plausible."""
+    session = make_session()
+    _billed(session, session.router.tier_models[Tier.FRONTIER])
+    _billed(session, "claude-fable-5")
+
+    total = sum(session.by_tier().values(), Decimal(0)) + session.unrouted_usd()
+
+    assert total == session.ledger.total_usd
+
+
+def test_the_tier_breakdown_reaches_the_run_report() -> None:
+    """The join: computed and rendered, not one or the other."""
+    session = make_session()
+    _billed(session, session.router.tier_models[Tier.FRONTIER])
+
+    report = session.report(confirmed_findings=1)
+
+    assert "Cost by tier:" in report
+    assert Tier.FRONTIER.value in report
