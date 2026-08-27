@@ -32,6 +32,7 @@ The document set was written incrementally and earlier files contain superseded 
 | Validation history, honest limits | `06-validation.md` |
 | Customer-facing capability list | `07-use-cases.md` |
 | Design flaws and their fixes | `08-audit.md` |
+| **Writing a framework adapter** | `09-adapters.md` |
 | **What to build, in what order** | **`10-BACKLOG.md`** |
 
 **Start at `10-BACKLOG.md` once you have read this brief.** It is the execution plan and it supersedes the build order in §5 below, which remains here as the summary view. Where `08-audit.md` corrects an earlier file, the backlog already incorporates the correction.

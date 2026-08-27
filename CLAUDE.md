@@ -24,6 +24,7 @@ Read on demand, not every session:
 | Why a limit exists | `docs/06-validation.md` |
 | Customer-facing capability claims | `docs/07-use-cases.md` |
 | **Corrections to 02 and 03** | `docs/08-audit.md` |
+| How to write a framework adapter | `docs/09-adapters.md` |
 
 `docs/08-audit.md` supersedes parts of `02` and `03`. When they disagree, the audit wins.
 
