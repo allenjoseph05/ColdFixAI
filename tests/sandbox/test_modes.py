@@ -90,7 +90,7 @@ def test_mode_is_required_and_has_no_default(workbench: Workbench) -> None:
     assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
 
     with pytest.raises(TypeError):
-        workbench.open("HEAD")  # type: ignore[call-arg]
+        workbench.open("HEAD")  # type: ignore[call-overload]
 
 
 def test_each_mode_gets_its_own_worktree(workbench: Workbench) -> None:
