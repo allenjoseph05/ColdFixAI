@@ -1071,7 +1071,11 @@ def measure_spread(  # noqa: PLR0913 - a GROUP BY needs the child, the field it
 
 
 def factory_seeder(
-    mechanism: Mechanism, *, module: str, source: str | None = None
+    mechanism: Mechanism,
+    *,
+    module: str,
+    source: str | None = None,
+    surface: Surface | None = None,
 ) -> Callable[..., tuple[FixtureRecipe, Mapping[str, int]]]:
     """A seeder that fills the subject using **its own factory**, for S-7.8 to drive.
 
@@ -1091,7 +1095,13 @@ def factory_seeder(
         *, root: Path, python: Sequence[str], scale: int, timeout: float
     ) -> tuple[FixtureRecipe, Mapping[str, int]]:
         exercised = exercise_factory(
-            root, python=python, mechanism=mechanism, module=module, count=scale, timeout=timeout
+            root,
+            python=python,
+            mechanism=mechanism,
+            module=module,
+            count=scale,
+            surface=surface,
+            timeout=timeout,
         )
         return recipe_from(exercised, source=source), exercised.grew
 
