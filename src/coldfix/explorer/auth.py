@@ -1135,6 +1135,7 @@ def resolve_auth(  # noqa: PLR0913 - the subject, how to run it, what to probe a
     trusted_entries: TrustedLookup = no_trusted,
     playbook_key: str | None = None,
     recipe: Recipe | None = None,
+    surface: Surface | None = None,
     timeout: float = PROFILE_TIMEOUT_SECONDS,
 ) -> Resolution:
     """The stage: consult, read, probe, and mint only if the route asks for it.
@@ -1159,7 +1160,8 @@ def resolve_auth(  # noqa: PLR0913 - the subject, how to run it, what to probe a
     entries = tuple(playbook(playbook_key)) if playbook_key is not None else ()
     earned = tuple(trusted_entries(playbook_key)) if playbook_key is not None else ()
 
-    profile = read_profile(root, python=python, timeout=timeout)
+    where = surface or HostSurface(Path(root))
+    profile = read_profile(root, python=python, surface=where, timeout=timeout)
     observation = Observation(path=path, reply=request(path))
     requirement = Requirement(
         path=path,
@@ -1203,6 +1205,7 @@ def resolve_auth(  # noqa: PLR0913 - the subject, how to run it, what to probe a
             profile=profile,
             scheme=requirement.scheme,
             recipe=recipe,
+            surface=where,
             timeout=timeout,
         )
 

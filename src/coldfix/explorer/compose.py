@@ -68,6 +68,7 @@ from coldfix.explorer.playbook import (
     no_use,
 )
 from coldfix.explorer.stages import Grounding, Progress, evaluate
+from coldfix.explorer.surface import HostSurface, Surface
 from coldfix.explorer.work import Seeder, Verification, WorkVerificationError, verify_work
 from coldfix.sandbox.reset import ResetStrategy
 from coldfix.sandbox.verification import VerifiedReset
@@ -186,6 +187,7 @@ def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
     request: Callable[[str], Reply],
     plan: Plan,
     reset: VerifiedReset,
+    surface: Surface | None = None,
     playbook: PlaybookLookup = no_playbook,
     trusted_entries: TrustedLookup = no_trusted,
     learn: PlaybookWriter = no_record,
@@ -230,6 +232,14 @@ def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
             the work did not hold up. Left to travel, because *it ran and did
             nothing* is the finding `evidence_of_work` exists to produce.
     """
+    # **One surface for the whole sequence, resolved once.** S-17.7 gave every
+    # subject-facing step a `surface` parameter and nothing threaded one, so all
+    # eight resolved `None` to the host and the decision never reached grounding.
+    # Resolving here rather than per step is the point: a command and the
+    # predicate that judges it have to agree about the filesystem, and two `or`
+    # expressions in different functions are two places that can stop agreeing.
+    where = surface or HostSurface(Path(root))
+
     identification = fingerprint(root)
     if not isinstance(identification, Fingerprint):
         raise NotGroundableError(_unsupported(identification))
@@ -237,7 +247,7 @@ def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
     anchor = anchor_for(root)
     interpreter = interpreter_for(root)
 
-    enumeration = enumerate_entry_points(root, python=python)
+    enumeration = enumerate_entry_points(root, python=python, surface=where)
     drivable = enumeration.drivable
     if not drivable:
         message = (
@@ -261,6 +271,7 @@ def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
         playbook=playbook,
         trusted_entries=trusted_entries,
         playbook_key=identification.playbook_key(),
+        surface=where,
     )
     if not auth.resolved:
         message = (
@@ -290,11 +301,12 @@ def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
             reset=plan.reset,
             reset_between=plan.reset_between,
             target=plan.target,
-            seed=_seeder(root, plan),
+            seed=_seeder(root, plan, where),
             environment=_environment(plan, anchor=anchor, interpreter=interpreter),
             headers=headers,
             cookies=cookies,
             repeats=plan.repeats,
+            surface=where,
         )
         emitted = emit(verification, reset=reset)
     except (WorkVerificationError, EmissionError):
@@ -314,7 +326,7 @@ def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
         emitted=emitted,
         progress=evaluate(
             identification,
-            Grounding(root=root, python=python, auth=auth, work=verification),
+            Grounding(root=root, python=python, surface=where, auth=auth, work=verification),
         ),
     )
 
@@ -365,7 +377,7 @@ def carried(
     return attach(credential, headers=plan.headers, cookies=plan.cookies)
 
 
-def _seeder(root: Path, plan: Plan) -> Seeder | None:
+def _seeder(root: Path, plan: Plan, surface: Surface) -> Seeder | None:
     """The repository's own factory where it has one, and synthesis where it does not.
 
     S-7.5's *use existing fixtures in preference to synthesis* was honoured inside
@@ -378,7 +390,7 @@ def _seeder(root: Path, plan: Plan) -> Seeder | None:
     chosen = prefer(discover(root), entity=plan.entity)
     if not isinstance(chosen, Mechanism):
         return None
-    return factory_seeder(chosen, module=plan.factory_module)
+    return factory_seeder(chosen, module=plan.factory_module, surface=surface)
 
 
 def _environment(
