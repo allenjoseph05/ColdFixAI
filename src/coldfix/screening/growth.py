@@ -154,20 +154,45 @@ def screen_growth(
     S-3.2 refuses a sweep with no cache control, and screening inherits the
     refusal rather than restating it.
 
+    **`counters` names what must be measured, not how.** Under the harness
+    vantage they are hooks installed around the callable. Under the subject's they
+    cannot be — a hook counts what happens in *this* process, and the subject ran
+    somewhere else — so they are not installed, and the subject is required to
+    have reported every one of them instead. Declining to install them and saying
+    nothing is the failure the Epic 16 composition check found: a screen that
+    measured no queries, could not verify the work, and emitted a null result
+    covering nothing.
+
     Raises:
         ScaleSweepError, CacheControlError, MeasurementError: as `scale_volume`.
+        ScreeningError: the subject measured itself and did not report a counter
+            this screen was asked for.
     """
+    installed = () if bound.vantage is Vantage.SUBJECT else counters
+
     result = scale_volume(
         seed=bound.scale,
         invoke=bound.invoke,
         reset=bound.reset,
         scales=scales,
         distribution=bound.descriptor.fixture.distribution,
-        counters=counters,
+        counters=installed,
         extra_counters=bound.extra_counters,
         clear_caches=bound.clear_caches,
         process_identity=bound.process_identity,
     )
+
+    if bound.vantage is Vantage.SUBJECT:
+        absent = sorted(name for name in counters if name not in result.fits)
+        if absent:
+            message = (
+                f"{bound.descriptor.id} was screened for {absent} and the subject reported "
+                f"{sorted(result.fits)}. Under the subject vantage a hook cannot supply "
+                "them — it would count this process — so a metric nobody reported was not "
+                "measured, and a screen that stayed quiet about it would publish an exclusion "
+                "over a number that does not exist"
+            )
+            raise ScreeningError(message)
 
     return ScreenedWorkload(
         workload=bound.descriptor.model_copy(update={"observations": _observed(result)}),
