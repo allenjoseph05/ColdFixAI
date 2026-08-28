@@ -60,8 +60,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from coldfix.bench.execute import ExecutionError, execute
+from coldfix.bench.execute import ExecutionError
 from coldfix.explorer.fingerprint import Detected
+from coldfix.explorer.surface import HostSurface, Surface
 
 RESOLVE_TIMEOUT_SECONDS = 120.0
 """Long enough for a cold `django.setup()` on an unfamiliar project, which
@@ -812,6 +813,7 @@ def resolve_entry_points(
     root: Path,
     *,
     python: Sequence[str],
+    surface: Surface | None = None,
     timeout: float = RESOLVE_TIMEOUT_SECONDS,
 ) -> tuple[list[Candidate], Resolution]:
     """Ask the framework for its own route table and command list.
@@ -833,11 +835,10 @@ def resolve_entry_points(
         )
 
     try:
-        result = execute(
+        result = (surface or HostSurface(root)).run(
             [*python, "-c", _INTROSPECT],
             timeout=timeout,
-            cwd=root,
-            env={**os.environ, "DJANGO_SETTINGS_MODULE": settings.value},
+            env={"DJANGO_SETTINGS_MODULE": settings.value},
         )
     except ExecutionError as error:
         return [], Resolution(available=False, settings_module=settings, error=str(error))
@@ -1052,6 +1053,7 @@ def enumerate_entry_points(
     root: Path,
     *,
     python: Sequence[str] | None = None,
+    surface: Surface | None = None,
     timeout: float = RESOLVE_TIMEOUT_SECONDS,
 ) -> Enumeration:
     """Every way into this repository, ranked, with the route table's standing stated.
@@ -1069,7 +1071,9 @@ def enumerate_entry_points(
         error="not attempted: no interpreter was supplied to ask the framework with",
     )
     if python is not None:
-        resolved, resolution = resolve_entry_points(root, python=python, timeout=timeout)
+        resolved, resolution = resolve_entry_points(
+            root, python=python, surface=surface, timeout=timeout
+        )
         candidates.extend(resolved)
 
     return Enumeration(
