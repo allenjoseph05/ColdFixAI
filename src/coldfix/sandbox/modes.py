@@ -48,7 +48,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from types import TracebackType
-from typing import ClassVar, Self
+from typing import ClassVar, Literal, Self, overload
 
 from coldfix.bench.execute import DEFAULT_MAX_OUTPUT_CHARS, ExecutionResult, execute
 from coldfix.sandbox.patching import DEFAULT_PATCH_POLICY, PatchPolicy
@@ -336,8 +336,24 @@ class Workbench:
     different system.
     """
 
+    @overload
+    def open(
+        self, revision: str, *, mode: Literal[ExecutionMode.DIAGNOSTIC]
+    ) -> DiagnosticSession: ...
+
+    @overload
+    def open(
+        self, revision: str, *, mode: Literal[ExecutionMode.CANDIDATE]
+    ) -> CandidateSession: ...
+
     def open(self, revision: str, *, mode: ExecutionMode) -> DiagnosticSession | CandidateSession:
         """Create a worktree at `revision` and bind a sandbox to it.
+
+        **The overloads say what this docstring already did.** `mode` selects the
+        class, so a caller that asked for a diagnostic session and got back a
+        union had to narrow a thing that could not be the other type — and the
+        narrowing would read as a check rather than as the fact it is. S-17.15 hit
+        exactly that, passing an opened session to something typed for one mode.
 
         `mode` is keyword-only and has no default. There is no value of it that
         means "whichever" and no way to reach a session without stating it: the
