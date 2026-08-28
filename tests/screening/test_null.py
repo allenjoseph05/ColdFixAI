@@ -512,9 +512,15 @@ def screened_from_the_subject(name: str, call: Any) -> Any:
 
     def reported() -> Mapping[str, float]:
         # Standing in for what `drive` already returns from inside the subject's
-        # own interpreter: a duration it timed around the request, plus the guard
-        # counters. The value is arbitrary; that the harness keeps it is not.
-        return {SECONDS: 0.004 * subject.store.cells_returned, **subject.payload()}
+        # own interpreter: a duration it timed around the request, its own query
+        # count, and the guard counters. `db.query` is reported rather than hooked
+        # because a hook counts *this* process, which is S-17.10's rule — a screen
+        # asking for a counter the subject did not report is refused.
+        return {
+            SECONDS: 0.004 * subject.store.cells_returned,
+            DB_QUERY: float(len(subject.store.log)),
+            **subject.payload(),
+        }
 
     bound = BoundWorkload(
         descriptor_for(name, call),
