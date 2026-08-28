@@ -140,22 +140,64 @@ def test_a_subject_measurement_still_drives_the_subject() -> None:
     assert ran == ["driven"]
 
 
-def test_a_hook_that_fires_here_is_still_counted(query_counter: None) -> None:
-    """A counter installed in this process measures this process either way.
+def test_a_hook_is_refused_under_the_subject_vantage(query_counter: None) -> None:
+    """**S-17.10 reversed S-17.6 here, and measurement is what decided it.**
 
-    The Django adapter's `execute_wrapper` is in-process, so a binding that can
-    reach the subject's connections from here keeps its query count — what it
-    loses is the harness's timing, which is the thing that was wrong.
+    S-17.6 kept hook counters under this vantage, reasoning that the Django
+    adapter's `execute_wrapper` is in-process so a binding able to reach the
+    subject's connections would keep its query count. **That case does not
+    exist**: a subject the harness can reach in-process is a subject the harness
+    can time, which is `HARNESS`. Under `SUBJECT` the run happened somewhere else,
+    so a hook counts zero — always — and files that zero under the name the
+    subject's real count belongs to.
+
+    Measured before it was changed: a subject-vantage binding reporting `db.query`
+    together with the `db.query` hook a real screen installs raised
+    `MetricSetError` on the first measurement, and the message advised renaming
+    the metric — which would mean screening's expectation for `db.query` never
+    matches and the N+1 is never flagged.
+
+    So this is `HARNESS_ONLY_METRICS`'s own rule reaching a category it had not
+    enumerated: a number this process produced about itself.
     """
     cursor = Cursor()
 
+    with pytest.raises(MetricSetError, match="a hook counts what happens in"):
+        measure_once(
+            lambda: cursor.execute("SELECT 1"),
+            counters=[HOOK],
+            extra_counters=reported(**{HOOK: 41.0, SECONDS: 0.003}),
+        )
+
+
+def test_the_refusal_names_the_process_rather_than_the_collision() -> None:
+    """The old message said *name them differently*, and that advice was wrong.
+
+    Renaming is available and is the worse answer: `subject.db.query` is a metric
+    screening has no expectation for, so the count would be measured, fitted, and
+    never compared against anything. The refusal has to point at where the number
+    came from, because that is the part the caller must change.
+    """
+    with pytest.raises(MetricSetError, match="Ask the subject to report them instead"):
+        measure_once(
+            lambda: None,
+            counters=[HOOK],
+            extra_counters=reported(seconds=0.001),
+        )
+
+
+def test_the_subject_reports_its_own_count_and_it_is_kept(query_counter: None) -> None:
+    """What replaces the hook: the count the subject took of itself.
+
+    The hook is registered here and never installed, so the number in the result
+    is the subject's 41 rather than the zero this process would have counted.
+    """
     taken = measure_once(
-        lambda: [cursor.execute("SELECT 1"), cursor.execute("SELECT 2")],
-        counters=[HOOK],
-        extra_counters=reported(seconds=0.003),
+        lambda: None,
+        extra_counters=reported(**{HOOK: 41.0, SECONDS: 0.003}),
     )
 
-    assert taken[HOOK] == 2.0
+    assert taken[HOOK] == 41.0
     assert taken[SECONDS] == 0.003
 
 
@@ -219,24 +261,6 @@ def test_a_subject_measurement_without_a_duration_is_refused() -> None:
         measure_once(
             lambda: None,
             extra_counters=reported(response_bytes=512.0),
-        )
-
-
-def test_a_reported_counter_may_not_overwrite_one_taken_from_a_hook(
-    query_counter: None,
-) -> None:
-    """The collision rule survives the change of vantage.
-
-    Both numbers would be real here and they would be measurements of different
-    things, which is exactly when a silent overwrite is worst.
-    """
-    cursor = Cursor()
-
-    with pytest.raises(MetricSetError, match="overwrite counters"):
-        measure_once(
-            lambda: cursor.execute("SELECT 1"),
-            counters=[HOOK],
-            extra_counters=reported(**{HOOK: 99.0, SECONDS: 0.001}),
         )
 
 
