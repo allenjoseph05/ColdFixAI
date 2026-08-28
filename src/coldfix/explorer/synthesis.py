@@ -45,7 +45,6 @@ that are valid and meaningless.
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -53,8 +52,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from coldfix.bench.execute import ExecutionError, execute
+from coldfix.bench.execute import ExecutionError
 from coldfix.explorer.entrypoints import settings_module
+from coldfix.explorer.surface import HostSurface, Surface
 from coldfix.primitives.scaling import Allocation, Distribution, allocate
 from coldfix.screening.workload import FixtureRecipe
 
@@ -555,7 +555,7 @@ def _run_in_subject(  # noqa: PLR0913 - S-7.4's shape, for S-7.4's reason: what 
     program: str,
     arguments: Sequence[str],
     *,
-    root: Path,
+    surface: Surface,
     python: Sequence[str],
     settings: str,
     timeout: float,
@@ -566,11 +566,10 @@ def _run_in_subject(  # noqa: PLR0913 - S-7.4's shape, for S-7.4's reason: what 
     nothing here can know statically. Every field is converted at the call site.
     """
     try:
-        result = execute(
+        result = surface.run(
             [*python, "-c", program, *arguments],
             timeout=timeout,
-            cwd=root,
-            env={**os.environ, "DJANGO_SETTINGS_MODULE": settings},
+            env={"DJANGO_SETTINGS_MODULE": settings},
         )
     except ExecutionError as error:
         raise SynthesisError(str(error)) from error
@@ -601,7 +600,11 @@ def _settings_for(root: Path) -> str:
 
 
 def read_schema(
-    root: Path, *, python: Sequence[str], timeout: float = SYNTHESIS_TIMEOUT_SECONDS
+    root: Path,
+    *,
+    python: Sequence[str],
+    surface: Surface | None = None,
+    timeout: float = SYNTHESIS_TIMEOUT_SECONDS,
 ) -> Mapping[str, SchemaModel]:
     """AC 1's first half: what the ORM says every model requires.
 
@@ -609,7 +612,12 @@ def read_schema(
     fact and `synthesize` is what establishes it.
     """
     payload = _run_in_subject(
-        _SCHEMA, (), root=Path(root), python=python, settings=_settings_for(root), timeout=timeout
+        _SCHEMA,
+        (),
+        surface=surface or HostSurface(Path(root)),
+        python=python,
+        settings=_settings_for(root),
+        timeout=timeout,
     )
     return {
         str(label): SchemaModel(
@@ -985,6 +993,7 @@ def synthesize(  # noqa: PLR0913 - the subject, its interpreter, what to build, 
     count: int,
     per_parent: int = 1,
     distribution: Distribution = Distribution.UNIFORM,
+    surface: Surface | None = None,
     timeout: float = SYNTHESIS_TIMEOUT_SECONDS,
 ) -> Synthesis:
     """AC 1 to 4: build rows, learn what the models did not declare, and report either way.
@@ -1021,7 +1030,7 @@ def synthesize(  # noqa: PLR0913 - the subject, its interpreter, what to build, 
         payload = _run_in_subject(
             _APPLY,
             (json.dumps(attempted.as_json()),),
-            root=root,
+            surface=surface or HostSurface(Path(root)),
             python=python,
             settings=settings,
             timeout=timeout,

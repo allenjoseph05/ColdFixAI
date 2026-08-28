@@ -53,8 +53,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from coldfix.bench.execute import ExecutionError, execute
+from coldfix.bench.execute import ExecutionError
 from coldfix.explorer.entrypoints import SKIP_DIRECTORIES, settings_module
+from coldfix.explorer.surface import HostSurface, Surface
 from coldfix.primitives.scaling import Distribution
 from coldfix.screening.workload import FixtureRecipe
 
@@ -865,7 +866,7 @@ def _run_in_subject(  # noqa: PLR0913 - S-7.4's shape, for S-7.4's reason: what
     program: str,
     arguments: Sequence[str],
     *,
-    root: Path,
+    surface: Surface,
     python: Sequence[str],
     settings: str,
     timeout: float,
@@ -876,11 +877,10 @@ def _run_in_subject(  # noqa: PLR0913 - S-7.4's shape, for S-7.4's reason: what
     know statically. Every field is converted at the call site rather than trusted.
     """
     try:
-        result = execute(
+        result = surface.run(
             [*python, "-c", program, *arguments],
             timeout=timeout,
-            cwd=root,
-            env={**os.environ, "DJANGO_SETTINGS_MODULE": settings},
+            env={"DJANGO_SETTINGS_MODULE": settings},
         )
     except ExecutionError as error:
         raise FixtureError(str(error)) from error
@@ -911,7 +911,11 @@ def _settings_for(root: Path) -> str:
 
 
 def count_models(
-    root: Path, *, python: Sequence[str], timeout: float = EXERCISE_TIMEOUT_SECONDS
+    root: Path,
+    *,
+    python: Sequence[str],
+    surface: Surface | None = None,
+    timeout: float = EXERCISE_TIMEOUT_SECONDS,
 ) -> Mapping[str, Mapping[str, Any]]:
     """Every model's row count and foreign keys, asked of the framework.
 
@@ -920,7 +924,12 @@ def count_models(
     table would have to be joined back through the ORM to mean anything.
     """
     payload = _run_in_subject(
-        _COUNT, (), root=Path(root), python=python, settings=_settings_for(root), timeout=timeout
+        _COUNT,
+        (),
+        surface=surface or HostSurface(Path(root)),
+        python=python,
+        settings=_settings_for(root),
+        timeout=timeout,
     )
     models: Mapping[str, Mapping[str, Any]] = payload.get("models", {})
     return models
@@ -940,6 +949,7 @@ def exercise_factory(  # noqa: PLR0913 - the subject, its interpreter, which
     mechanism: Mechanism,
     module: str,
     count: int,
+    surface: Surface | None = None,
     timeout: float = EXERCISE_TIMEOUT_SECONDS,
 ) -> Exercise:
     """Run one located factory at a size and measure what it wrote.
@@ -961,18 +971,19 @@ def exercise_factory(  # noqa: PLR0913 - the subject, its interpreter, which
 
     root = Path(root)
     settings = _settings_for(root)
-    before = count_models(root, python=python, timeout=timeout)
+    where = surface or HostSurface(root)
+    before = count_models(root, python=python, surface=where, timeout=timeout)
 
     _run_in_subject(
         _FACTORY,
         (json.dumps({"module": module, "factory": mechanism.name, "count": count}),),
-        root=root,
+        surface=where,
         python=python,
         settings=settings,
         timeout=timeout,
     )
 
-    after = count_models(root, python=python, timeout=timeout)
+    after = count_models(root, python=python, surface=where, timeout=timeout)
     counted_before = _counts_of(before)
     counted_after = _counts_of(after)
 
@@ -1026,6 +1037,7 @@ def measure_spread(  # noqa: PLR0913 - a GROUP BY needs the child, the field it
     child: str,
     field: str,
     parent: str,
+    surface: Surface | None = None,
     timeout: float = EXERCISE_TIMEOUT_SECONDS,
 ) -> Spread:
     """Count the children each parent actually has.
@@ -1044,7 +1056,7 @@ def measure_spread(  # noqa: PLR0913 - a GROUP BY needs the child, the field it
     payload = _run_in_subject(
         _SPREAD,
         (json.dumps({"child": child, "field": field, "parent": parent}),),
-        root=Path(root),
+        surface=surface or HostSurface(Path(root)),
         python=python,
         settings=_settings_for(root),
         timeout=timeout,

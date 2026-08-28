@@ -63,7 +63,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import secrets
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -71,10 +70,11 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
-from coldfix.bench.execute import ExecutionError, execute
+from coldfix.bench.execute import ExecutionError
 from coldfix.explorer.entrypoints import settings_module
 from coldfix.explorer.fingerprint import Detected
 from coldfix.explorer.playbook import PlaybookEntry, remembered_requirement, trusted
+from coldfix.explorer.surface import HostSurface, Surface
 from coldfix.state.persistent import Collection, PersistentStore
 
 PROFILE_TIMEOUT_SECONDS = 120.0
@@ -587,7 +587,7 @@ def _run_in_subject(  # noqa: PLR0913 - what to run, what to pass it, where, wit
     program: str,
     arguments: Sequence[str],
     *,
-    root: Path,
+    surface: Surface,
     python: Sequence[str],
     settings: Detected[str],
     timeout: float,
@@ -599,11 +599,10 @@ def _run_in_subject(  # noqa: PLR0913 - what to run, what to pass it, where, wit
     than trusted.
     """
     try:
-        result = execute(
+        result = surface.run(
             [*python, "-c", program, *arguments],
             timeout=timeout,
-            cwd=root,
-            env={**os.environ, "DJANGO_SETTINGS_MODULE": settings.value},
+            env={"DJANGO_SETTINGS_MODULE": settings.value},
         )
     except ExecutionError as error:
         raise AuthError(str(error)) from error
@@ -626,6 +625,7 @@ def read_profile(
     root: Path,
     *,
     python: Sequence[str],
+    surface: Surface | None = None,
     timeout: float = PROFILE_TIMEOUT_SECONDS,
 ) -> AuthProfile:
     """AC 1's first half, and AC 3's whole basis: ask the subject about its own auth.
@@ -651,7 +651,12 @@ def read_profile(
         raise AuthError(message)
 
     payload = _run_in_subject(
-        _PROFILE, (), root=root, python=python, settings=settings, timeout=timeout
+        _PROFILE,
+        (),
+        surface=surface or HostSurface(root),
+        python=python,
+        settings=settings,
+        timeout=timeout,
     )
 
     declared: list[Detected[Scheme]] = []
@@ -877,6 +882,7 @@ def mint(  # noqa: PLR0913 - the subject and its interpreter, what its settings
     profile: AuthProfile,
     scheme: Scheme,
     recipe: Recipe | None = None,
+    surface: Surface | None = None,
     timeout: float = MINT_TIMEOUT_SECONDS,
 ) -> Credential:
     """AC 2's first half: create a credential the subject will accept.
@@ -945,7 +951,7 @@ def mint(  # noqa: PLR0913 - the subject and its interpreter, what its settings
                 }
             ),
         ),
-        root=Path(root),
+        surface=surface or HostSurface(Path(root)),
         python=python,
         settings=profile.settings_module,
         timeout=timeout,
