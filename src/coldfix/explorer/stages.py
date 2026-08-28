@@ -46,17 +46,17 @@ reported that repository as seeded would send the Explorer to measure nothing.
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from coldfix.bench.execute import ExecutionError, execute
+from coldfix.bench.execute import ExecutionError
 from coldfix.explorer.auth import Resolution as AuthResolution
 from coldfix.explorer.entrypoints import Kind, enumerate_entry_points, settings_module
 from coldfix.explorer.fingerprint import Fingerprint, Framework, Identification
+from coldfix.explorer.surface import HostSurface, Surface
 from coldfix.explorer.work import Verification
 
 STAGE_TIMEOUT_SECONDS = 300.0
@@ -198,11 +198,25 @@ class Grounding:
 
     root: Path
     python: Sequence[str]
+    surface: Surface | None = None
+    """Where the subject-facing commands run. S-17.7.
+
+    `None` means a `HostSurface` at `root`, which is the call every predicate made
+    before this field existed — so a `Grounding` built anywhere in the tree keeps
+    its behaviour, and adopting the surface is provably a no-op for the suite.
+    A run that must judge what a proposed command did supplies a `SessionSurface`,
+    because a command and its predicate that disagree about the filesystem cannot
+    make progress."""
+
     auth: AuthResolution | None = None
     work: Verification | None = None
     seed_threshold: int = SEED_THRESHOLD
     seed_tables: int = SEED_TABLES
     timeout: float = STAGE_TIMEOUT_SECONDS
+
+    def where(self) -> Surface:
+        """The surface, or the host at `root`. Never `execute` directly."""
+        return self.surface if self.surface is not None else HostSurface(Path(self.root))
 
 
 # ================================================================== the subject probes
@@ -277,16 +291,13 @@ def probe(grounding: Grounding) -> Mapping[str, Any]:
     dependencies predicate needs.
     """
     settings = settings_module(Path(grounding.root))
-    environment = dict(os.environ)
-    if settings is not None:
-        environment["DJANGO_SETTINGS_MODULE"] = settings.value
+    overrides = {} if settings is None else {"DJANGO_SETTINGS_MODULE": settings.value}
 
     try:
-        result = execute(
+        result = grounding.where().run(
             [*grounding.python, "-c", _PROBE],
             timeout=grounding.timeout,
-            cwd=Path(grounding.root),
-            env=environment,
+            env=overrides,
         )
     except ExecutionError as error:
         return {"problems": [f"the subject's interpreter could not be started: {error}"]}
@@ -359,11 +370,9 @@ def _configure(grounding: Grounding, payload: Mapping[str, Any]) -> Outcome:
             "the framework does not import, so its check command cannot be run",
         )
 
-    result = execute(
+    result = grounding.where().run(
         [*grounding.python, "manage.py", "check"],
         timeout=grounding.timeout,
-        cwd=Path(grounding.root),
-        env={**os.environ},
     )
     if result.exit_code == 0:
         return Outcome(Stage.CONFIGURE, Verdict.HOLDS, "manage.py check exited 0")
