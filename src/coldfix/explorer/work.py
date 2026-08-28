@@ -44,15 +44,15 @@ and the backlog records why.
 from __future__ import annotations
 
 import json
-import os
 import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from coldfix.bench.execute import ExecutionError, execute
+from coldfix.bench.execute import ExecutionError
 from coldfix.explorer.entrypoints import settings_module
+from coldfix.explorer.surface import HostSurface, Surface
 from coldfix.explorer.synthesis import SYNTHESIS_TIMEOUT_SECONDS, synthesize
 from coldfix.primitives.counters import DB_QUERY
 from coldfix.primitives.measurement import SECONDS
@@ -260,7 +260,7 @@ def _run_in_subject(  # noqa: PLR0913 - S-7.4's shape, for S-7.4's reason: what 
     program: str,
     argument: str,
     *,
-    root: Path,
+    surface: Surface,
     python: Sequence[str],
     settings: str,
     timeout: float,
@@ -271,11 +271,10 @@ def _run_in_subject(  # noqa: PLR0913 - S-7.4's shape, for S-7.4's reason: what 
     converted at the call site rather than trusted.
     """
     try:
-        result = execute(
+        result = surface.run(
             [*python, "-c", program, argument],
             timeout=timeout,
-            cwd=root,
-            env={**os.environ, "DJANGO_SETTINGS_MODULE": settings},
+            env={"DJANGO_SETTINGS_MODULE": settings},
         )
     except ExecutionError as error:
         raise WorkVerificationError(str(error)) from error
@@ -318,6 +317,7 @@ def drive(  # noqa: PLR0913 - the subject, its interpreter, what to request, wit
     headers: Mapping[str, str] | None = None,
     cookies: Mapping[str, str] | None = None,
     repeats: int = DEFAULT_REPEATS,
+    surface: Surface | None = None,
     timeout: float = DRIVE_TIMEOUT_SECONDS,
 ) -> Drive:
     """Invoke the candidate at the current data volume and measure it.
@@ -346,7 +346,7 @@ def drive(  # noqa: PLR0913 - the subject, its interpreter, what to request, wit
                 "repeats": repeats,
             }
         ),
-        root=Path(root),
+        surface=surface or HostSurface(Path(root)),
         python=python,
         settings=_settings_for(root),
         timeout=timeout,
@@ -404,6 +404,7 @@ def verify_work(  # noqa: PLR0913 - what to drive, where, how to seed it, how th
     headers: Mapping[str, str] | None = None,
     cookies: Mapping[str, str] | None = None,
     repeats: int = DEFAULT_REPEATS,
+    surface: Surface | None = None,
     timeout: float = DRIVE_TIMEOUT_SECONDS,
 ) -> Verification:
     """Seed at each scale, drive the candidate, and let the artifact decide.
@@ -454,11 +455,12 @@ def verify_work(  # noqa: PLR0913 - what to drive, where, how to seed it, how th
         raise WorkVerificationError(message)
 
     root = Path(root)
+    where = surface or HostSurface(root)
     drives: list[Drive] = []
     recipe = None
 
     for scale in ordered:
-        _reset(root, python=python, command=reset_between, timeout=timeout)
+        _reset(where, python=python, command=reset_between, timeout=timeout)
         if seed is not None:
             seeded_recipe, created = seed(root=root, python=python, scale=scale, timeout=timeout)
         else:
@@ -470,6 +472,7 @@ def verify_work(  # noqa: PLR0913 - what to drive, where, how to seed it, how th
                 count=scale,
                 per_parent=per_parent,
                 distribution=distribution,
+                surface=where,
                 timeout=min(timeout, SYNTHESIS_TIMEOUT_SECONDS),
             )
             seeded_recipe, created = synthesized.recipe(), synthesized.created
@@ -484,6 +487,7 @@ def verify_work(  # noqa: PLR0913 - what to drive, where, how to seed it, how th
                 headers=headers,
                 cookies=cookies,
                 repeats=repeats,
+                surface=where,
                 timeout=timeout,
             )
         )
@@ -508,7 +512,7 @@ _MINIMUM_SCALES = 2
 
 
 def _reset(
-    root: Path, *, python: Sequence[str], command: Sequence[str] | None, timeout: float
+    surface: Surface, *, python: Sequence[str], command: Sequence[str] | None, timeout: float
 ) -> None:
     """Return the subject to its baseline between scale points.
 
@@ -520,7 +524,7 @@ def _reset(
     if command is None:
         return
     del python
-    result = execute(list(command), timeout=timeout, cwd=root)
+    result = surface.run(list(command), timeout=timeout)
     if result.exit_code != 0:
         said = (result.stderr or result.stdout).strip()[-400:]
         message = (
