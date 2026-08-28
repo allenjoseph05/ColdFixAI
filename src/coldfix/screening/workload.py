@@ -58,7 +58,13 @@ from datetime import date
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from coldfix.primitives.counters import DB_QUERY
-from coldfix.primitives.measurement import BLOCKED_SECONDS, SECONDS, Counters
+from coldfix.primitives.measurement import (
+    BLOCKED_SECONDS,
+    SECONDS,
+    Counters,
+    Vantage,
+    vantage_of,
+)
 from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetStrategy
 from coldfix.sandbox.verification import VerifiedReset
@@ -506,6 +512,17 @@ class BoundWorkload:
         self.clear_caches = clear_caches
         self.process_identity = process_identity
         self.extra_counters = extra_counters
+
+    @property
+    def vantage(self) -> Vantage:
+        """Where this binding's numbers are taken. **Derived, never stored.**
+
+        S-17.6's decision: the vantage rides on the counters it describes, so a
+        binding cannot claim one and supply numbers from the other. A `Binder`
+        driving a containerised subject hands over a `Reported` and this answers
+        `SUBJECT` because of that, not because anybody said so.
+        """
+        return vantage_of(self.extra_counters)
 
     @property
     def id(self) -> str:

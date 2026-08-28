@@ -332,7 +332,7 @@ def _reported(
     counters: Sequence[str],
     extra_counters: Callable[[], Mapping[str, float]],
 ) -> Mapping[str, float]:
-    """The subject vantage: drive it, count what fires here, take the rest as given.
+    """The subject vantage: drive it and take every number from the subject.
 
     Split out rather than branched inline because the two halves share almost
     nothing — this one has no clock, no `off_cpu`, and no `materialize` — and a
@@ -342,15 +342,33 @@ def _reported(
     There is no *nothing was reported* case to refuse: `Reported` holds the
     supplier, so a run with no numbers cannot be constructed.
     """
-    with ExitStack() as stack:
-        tallies = {name: stack.enter_context(count(name)) for name in counters}
-        invoke()
+    if counters:
+        # **S-17.10 measured this and it stopped a real run before it started.**
+        # A subject-vantage binding reports `db.query` because that is the count
+        # the subject took of itself, and a real screen also installs a
+        # `db.query` hook — so the first measurement of the first workload
+        # raised, and the collision message's advice was to rename the metric,
+        # which would mean screening's expectation for `db.query` never matches
+        # and the N+1 is never flagged.
+        #
+        # The rule is the one `HARNESS_ONLY_METRICS` already states and this is a
+        # category it did not enumerate: `count()` installs an **in-process**
+        # wrapper, so against a subject running somewhere else it counts zero,
+        # always, and files that zero under the name the subject's real count
+        # belongs to. Refused rather than dropped, because a caller that asked
+        # for a counter and silently got nothing is the failure the Epic 16
+        # composition check found — a null result covering nothing.
+        message = (
+            f"{sorted(counters)} are hooks, and a hook counts what happens in *this* process. "
+            "The subject was measured somewhere else, so these would report zero under the "
+            "names its own counts belong to. Ask the subject to report them instead: a "
+            "subject-vantage measurement takes every number from the party that saw the run"
+        )
+        raise MetricSetError(message)
+
+    invoke()
 
     metrics: dict[str, float] = {}
-    for name, tally in tallies.items():
-        metrics[name] = float(tally.events)
-        metrics[f"{name}{TOTAL_SUFFIX}"] = tally.total
-
     reported = extra_counters()
     borrowed = sorted(set(reported) & HARNESS_ONLY_METRICS)
     if borrowed:
@@ -359,14 +377,6 @@ def _reported(
             "process: `materialized` counts what was drained here, and the two rusage figures "
             "come from reading this interpreter. A subject supplying them is supplying numbers "
             "about the wrong process, which is worse than supplying none"
-        )
-        raise MetricSetError(message)
-
-    collisions = sorted(set(reported) & set(metrics))
-    if collisions:
-        message = (
-            f"extra counters {collisions} would overwrite counters this run took from its own "
-            "hooks; name them differently"
         )
         raise MetricSetError(message)
 

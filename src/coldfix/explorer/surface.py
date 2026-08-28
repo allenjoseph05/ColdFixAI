@@ -84,7 +84,16 @@ class Surface(Protocol):
         env: Mapping[str, str] | None = None,
         max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
     ) -> ExecutionResult:
-        """Run `command` at `root`. `env` is **overrides**, never the whole set."""
+        """Run `command` at `root`. `env` is **overrides**, never the whole set.
+
+        **Every call starts a new process, and S-17.10 depends on it.** `execute`
+        spawns a subprocess and `Sandbox.run` creates a container it destroys
+        before returning, so nothing a command cached in memory can reach the next
+        one. That is what lets a binding satisfy S-3.2's cache control by process
+        identity rather than by clearing a cache it cannot see — measured for the
+        host in `test_surface.py`, and structural for the session because ADR 004
+        makes container destruction unconditional.
+        """
         ...
 
 

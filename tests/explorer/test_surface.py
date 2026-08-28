@@ -255,3 +255,26 @@ def _seeded_repo(path: Path) -> Path:
     ):
         execute(["git", "-C", str(path), *args], timeout=60.0)
     return path
+
+
+def test_every_run_starts_a_new_process(two_checkouts: tuple[HostSurface, HostSurface]) -> None:
+    """S-17.10's cache control rests on this, so it is measured rather than assumed.
+
+    A binding satisfies S-3.2 by process identity — *the interpreter that served
+    one scale point is not the one that serves the next* — and that is only true
+    because a surface never reuses a process. `execute` spawns a subprocess and
+    `Sandbox.run` creates a container it destroys before returning, so nothing a
+    command cached in memory can reach the next one.
+
+    Measured for the host here. Structural for the session, because ADR 004 makes
+    the destruction unconditional and `test_a_session_surface_runs_against_its_own_worktree`
+    exercises it.
+    """
+    where, _ = two_checkouts
+
+    pids = {
+        where.run([sys.executable, "-c", "import os; print(os.getpid())"], timeout=60.0).stdout
+        for _ in range(3)
+    }
+
+    assert len(pids) == 3, "a reused process would carry its caches into the next scale point"
