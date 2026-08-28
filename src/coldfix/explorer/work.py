@@ -46,7 +46,7 @@ from __future__ import annotations
 import json
 import statistics
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -141,6 +141,29 @@ class Drive:
     status: int
     created: Mapping[str, int]
 
+    passes: tuple[Mapping[str, float], ...] = ()
+    """What **each** repeat measured, not just the aggregate. S-17.14.
+
+    `seconds`, `db.query` and `response_bytes` per pass, in order. The audit needs
+    them because `Reading` distinguishes the cold pass from the ones after it *in
+    the same process*, and two fresh processes cannot see state carried across
+    runs — neither would be the second run of anything. Empty on a `Drive` an
+    adapter built from aggregates alone."""
+
+    warm_pass: Mapping[str, float] = field(default_factory=dict)
+    """What the discarded first request measured, counters included.
+
+    It was `warmup_seconds` alone, which left `_cached_state` unable to run on a
+    count — the metric an N+1 patch claims to reduce."""
+
+    envelope_before: Mapping[str, float] = field(default_factory=dict)
+    envelope_after: Mapping[str, float] = field(default_factory=dict)
+    """The subject's own resource levels either side of the drive.
+
+    Taken **inside the subject**, because `primitives.envelope` reads
+    `RUSAGE_SELF`, this interpreter's allocated blocks and this process's thread
+    count — wrapped around a containerised drive it measures the harness waiting."""
+
     def observation(self) -> Observation:
         """The artifact form S-4.1's verdict reads."""
         return Observation(
@@ -203,7 +226,7 @@ class Verification:
 # to the small scale point is how a flat workload comes to look like a growing
 # one.
 _DRIVE_SOURCE = """
-import json, os, sys, time
+import json, os, sys, threading, time
 
 sys.path.insert(0, os.getcwd())
 
@@ -223,30 +246,76 @@ for name, value in REQUEST["cookies"].items():
 headers = REQUEST["headers"]
 path = REQUEST["path"]
 
-warm_started = time.perf_counter()
-client.get(path, headers=headers)
-warmup = time.perf_counter() - warm_started
-
-samples = []
-queries = None
-size = None
-status = None
-
-for _ in range(REQUEST["repeats"]):
+def one_pass():
+    # One request, with everything measurable about it -- the warm-up included.
+    # S-17.14: the warm-up used to run outside the capture, so the cold pass had a
+    # duration and no query count, and `_cached_state` compares warm-up excess on
+    # whichever metric the patch claims to reduce. For an N+1 that is a count, so a
+    # cold pass nobody counted left the check unable to run on the metric that
+    # matters.
     with CaptureQueriesContext(connection) as captured:
         started = time.perf_counter()
         response = client.get(path, headers=headers)
         elapsed = time.perf_counter() - started
-    samples.append(elapsed)
-    queries = len(captured)
-    size = len(response.content)
-    status = response.status_code
+    return {
+        "seconds": elapsed,
+        "db.query": float(len(captured)),
+        "response_bytes": float(len(response.content)),
+    }, response.status_code
+
+
+def resources():
+    # The subject's own resource levels, read here because they are the subject's.
+    # `primitives.envelope` takes RUSAGE_SELF and this interpreter's allocated
+    # blocks, so wrapped around this subprocess it would report what the harness
+    # did while it waited.
+    # Names match `primitives.envelope`'s constants deliberately: the audit
+    # compares these two samples against that module's tolerances, and a second
+    # spelling would silently leave every metric unwatched.
+    reading = {
+        "allocated_blocks": float(sys.getallocatedblocks()),
+        "cpu_seconds": float(time.process_time()),
+        "wall_seconds": float(time.perf_counter()),
+        "thread_count": float(threading.active_count()),
+    }
+    try:
+        import resource as _resource
+
+        usage = _resource.getrusage(_resource.RUSAGE_SELF)
+        reading["peak_rss_bytes"] = float(usage.ru_maxrss)
+        reading["bytes_written"] = float(usage.ru_oublock)
+    except (ImportError, AttributeError):
+        pass
+    try:
+        reading["open_file_descriptors"] = float(len(os.listdir("/proc/self/fd")))
+    except OSError:
+        pass
+    return reading
+
+
+envelope_before = resources()
+
+warm_started = time.perf_counter()
+warm_pass, status = one_pass()
+warmup = time.perf_counter() - warm_started
+
+passes = []
+for _ in range(REQUEST["repeats"]):
+    measured, status = one_pass()
+    passes.append(measured)
+
+envelope_after = resources()
+samples = [measured["seconds"] for measured in passes]
 
 print("__MARKER__" + json.dumps({
     "warmup_seconds": warmup,
+    "warm_pass": warm_pass,
+    "passes": passes,
+    "envelope_before": envelope_before,
+    "envelope_after": envelope_after,
     "samples": samples,
-    "queries": queries,
-    "response_bytes": size,
+    "queries": int(passes[-1]["db.query"]) if passes else None,
+    "response_bytes": int(passes[-1]["response_bytes"]) if passes else None,
     "status": status,
 }))
 """
@@ -377,6 +446,17 @@ def drive(  # noqa: PLR0913 - the subject, its interpreter, what to request, wit
         warmup_seconds=float(payload.get("warmup_seconds") or 0.0),
         status=status,
         created=dict(created),
+        passes=tuple(
+            {name: float(value) for name, value in measured.items()}
+            for measured in payload.get("passes", [])
+        ),
+        warm_pass={name: float(value) for name, value in (payload.get("warm_pass") or {}).items()},
+        envelope_before={
+            name: float(value) for name, value in (payload.get("envelope_before") or {}).items()
+        },
+        envelope_after={
+            name: float(value) for name, value in (payload.get("envelope_after") or {}).items()
+        },
     )
 
 
