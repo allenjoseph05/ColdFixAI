@@ -26,6 +26,7 @@ from coldfix.bench.execute import execute
 from coldfix.explorer import surface as surface_module
 from coldfix.explorer.surface import HostSurface, SessionSurface, Surface
 from coldfix.sandbox.modes import ExecutionMode, Workbench
+from coldfix.sandbox.runner import docker_available
 from coldfix.sandbox.worktrees import Repository
 
 EXPLORER = Path(surface_module.__file__).parent
@@ -226,6 +227,9 @@ def test_a_session_surface_runs_against_its_own_worktree(tmp_path: Path) -> None
     survivable, and it is the constraint grounding inherits — an environment that
     must outlive one command belongs in the workspace.
     """
+    if not docker_available():
+        pytest.skip("no Docker daemon is listening")
+
     repository = Repository(_seeded_repo(tmp_path / "origin"))
     workbench = Workbench(
         repository=repository,
