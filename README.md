@@ -37,8 +37,8 @@ Requests now carry a breakpoint on the playbook, the source and the log, and fou
 agents stopped rendering the source and the log into their questions *as well as*
 into the blocks, which was sending the dominant cost variable twice. The system
 prompt is deliberately not among them: the investigate loop runs three steps on
-one session, so its system string is not every step's prompt, and caching it
-would have handed two of the three the wrong instructions. What still cannot be
+one session, so its system string is not every step's prompt, and shaping it into
+the request would have handed two of the three the wrong instructions. What still cannot be
 stated is the hit rate — under a replaying client that figure comes from the
 recording, so `docs/04-cost.md` §12.3 is marked reachable rather than quoted as
 achieved. The first real number needs an API, and that is `S-17.1`.
