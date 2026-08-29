@@ -35,6 +35,7 @@ from coldfix.diagnosis.hypothesis import (
 from coldfix.diagnosis.log import ExperimentLog, Verdict
 from coldfix.llm.client import Recording, ReplayingClient
 from coldfix.primitives.registry import REGISTRY, ProjectProfile, Selection
+from fixtures.requests import shaped
 
 SYSTEM_HINT = "You are diagnosing a performance problem"
 
@@ -120,15 +121,14 @@ def test_a_recording_made_at_another_temperature_does_not_answer() -> None:
     """The reason S-0.7b's digest gained the temperature in this story: S-8.3
     sends the same question about the same log at 0.0, and without it that
     recording would answer this call."""
-    log = log_with_one_experiment()
     offered = instruments("scaling.volume", "ablation.stub")
-    question = render_question(log=log, exclusions=(), source="shop/views.py", instruments=offered)
+    question = render_question(exclusions=(), instruments=offered)
     client = ReplayingClient(
         [
             Recording.of(
                 model="claude-opus-5",
                 system=_system_of(),
-                messages=[{"role": "user", "content": question}],
+                messages=shaped(a_session(), "claude-opus-5", question),
                 max_tokens=MAX_OUTPUT_TOKENS,
                 temperature=0.0,
                 response=payload(json.dumps(ANSWER)),
@@ -140,9 +140,7 @@ def test_a_recording_made_at_another_temperature_does_not_answer() -> None:
         generate(
             a_session(),
             client,
-            log=log,
             exclusions=(),
-            source="shop/views.py",
             instruments=offered,
             measured_prefix_tokens=100,
             measured_prompt_tokens=900,
@@ -179,29 +177,32 @@ def test_there_is_no_way_to_request_a_cascade_from_this_call_site() -> None:
 # ======================================= AC 2: it receives the four things it needs
 
 
-def test_the_question_carries_the_log_exclusions_source_and_instruments() -> None:
+def test_the_question_carries_what_varies_and_nothing_the_session_caches() -> None:
+    """**S-17.16 halved this question, and both halves are asserted.**
+
+    What is offered and what is already ruled out change from call to call, so
+    they belong in the question. The source and the log do not: they were
+    rendered here *and* into the cached blocks beside this question, so every
+    call sent both copies. Asserting only their absence would pass on a question
+    that had lost the exclusions too, which is why what stayed is checked first.
+    """
     question = render_question(
-        log=log_with_one_experiment(),
         exclusions=("not the database, queries flat 10 to 100",),
-        source="shop/views.py::book_list",
         instruments=instruments("scaling.volume", "ablation.stub"),
     )
 
-    assert "shop/views.py::book_list" in question
     assert "scaling.volume" in question
+    assert "ablation.stub" in question
     assert "not the database" in question
-    assert "ablation.stub of shop.books.list" in question
+
+    assert "shop/views.py::book_list" not in question, "the source is the session's block now"
+    assert "ablation.stub of shop.books.list" not in question, "so is the log"
 
 
 def test_an_empty_log_and_no_exclusions_still_ask_a_question() -> None:
     """The first hypothesis of an investigation is asked with nothing behind it,
     and rendering that as an empty section would read as a missing input."""
-    question = render_question(
-        log=ExperimentLog(),
-        exclusions=(),
-        source="shop/views.py",
-        instruments=instruments("scaling.volume"),
-    )
+    question = render_question(exclusions=(), instruments=instruments("scaling.volume"))
 
     assert "(none yet)" in question
     assert "What is the next hypothesis" in question
@@ -263,15 +264,14 @@ def test_an_offered_instrument_is_accepted() -> None:
 def test_a_hypothesis_comes_back_priced_and_attributed() -> None:
     """The whole call: routed, authorized, replayed, parsed and billed. Epic 5's
     machinery with Epic 8's first caller in front of it."""
-    log = log_with_one_experiment()
     offered = instruments("scaling.volume", "ablation.stub")
-    question = render_question(log=log, exclusions=(), source="shop/views.py", instruments=offered)
+    question = render_question(exclusions=(), instruments=offered)
     client = ReplayingClient(
         [
             Recording.of(
                 model="claude-opus-5",
                 system=_system_of(),
-                messages=[{"role": "user", "content": question}],
+                messages=shaped(a_session(), "claude-opus-5", question),
                 max_tokens=MAX_OUTPUT_TOKENS,
                 temperature=HYPOTHESIS_TEMPERATURE,
                 response=payload(json.dumps(ANSWER)),
@@ -282,9 +282,7 @@ def test_a_hypothesis_comes_back_priced_and_attributed() -> None:
     outcome = generate(
         a_session(),
         client,
-        log=log,
         exclusions=(),
-        source="shop/views.py",
         instruments=offered,
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
@@ -299,15 +297,14 @@ def test_a_hypothesis_comes_back_priced_and_attributed() -> None:
 def test_a_refusal_is_reported_rather_than_parsed_as_a_short_answer() -> None:
     """S-0.7b: a decline is a successful response with an **empty content list**,
     so a caller reading `text` reads emptiness as brevity."""
-    log = ExperimentLog()
     offered = instruments("scaling.volume")
-    question = render_question(log=log, exclusions=(), source="s", instruments=offered)
+    question = render_question(exclusions=(), instruments=offered)
     client = ReplayingClient(
         [
             Recording.of(
                 model="claude-opus-5",
                 system=_system_of(),
-                messages=[{"role": "user", "content": question}],
+                messages=shaped(a_session(), "claude-opus-5", question),
                 max_tokens=MAX_OUTPUT_TOKENS,
                 temperature=HYPOTHESIS_TEMPERATURE,
                 response=payload("", stop_reason="refusal"),
@@ -319,9 +316,7 @@ def test_a_refusal_is_reported_rather_than_parsed_as_a_short_answer() -> None:
         generate(
             a_session(),
             client,
-            log=log,
             exclusions=(),
-            source="s",
             instruments=offered,
             measured_prefix_tokens=10,
             measured_prompt_tokens=100,
@@ -331,15 +326,14 @@ def test_a_refusal_is_reported_rather_than_parsed_as_a_short_answer() -> None:
 def test_a_truncated_reply_is_refused_rather_than_half_parsed() -> None:
     """A truncated JSON object parses as nothing, and a hypothesis assembled from
     half a sentence is a guess about what the model was going to say."""
-    log = ExperimentLog()
     offered = instruments("scaling.volume")
-    question = render_question(log=log, exclusions=(), source="s", instruments=offered)
+    question = render_question(exclusions=(), instruments=offered)
     client = ReplayingClient(
         [
             Recording.of(
                 model="claude-opus-5",
                 system=_system_of(),
-                messages=[{"role": "user", "content": question}],
+                messages=shaped(a_session(), "claude-opus-5", question),
                 max_tokens=MAX_OUTPUT_TOKENS,
                 temperature=HYPOTHESIS_TEMPERATURE,
                 response=payload('{"statement": "the author loo', stop_reason="max_tokens"),
@@ -351,9 +345,7 @@ def test_a_truncated_reply_is_refused_rather_than_half_parsed() -> None:
         generate(
             a_session(),
             client,
-            log=log,
             exclusions=(),
-            source="s",
             instruments=offered,
             measured_prefix_tokens=10,
             measured_prompt_tokens=100,

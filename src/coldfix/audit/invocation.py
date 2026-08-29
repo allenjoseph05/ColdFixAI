@@ -55,6 +55,7 @@ from decimal import Decimal
 from anthropic.types import MessageParam
 
 from coldfix.cost.accounting import Agent, ExchangeRate, Phase, TokenUsage
+from coldfix.cost.context import Block
 from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step, StepOutcome
 from coldfix.diagnosis.log import Experiment, ExperimentLog
@@ -145,6 +146,15 @@ def audit_messages(evidence: str, question: str) -> list[MessageParam]:
 
     Returns a new `list` on every call rather than a cached or module-level one,
     so that a caller mutating what it got back cannot reach the next audit.
+
+    **This is why no adversarial call site takes S-17.16's cached blocks.**
+    `Session.run` renders a prompt and hands it to every `call`, and the seven
+    investigation and repair sites shape their request from it — cheaply, because
+    the prefix then caches. The four audit sites drop it and build their request
+    here instead. Blocks assembled by the session are a prompt assembled
+    somewhere else, and accepting one would make this function's guarantee
+    depend on what that somewhere else happened to put in it. The caching
+    forgone is the audit's ten calls, not investigation's hundred and twenty.
     """
     return [{"role": "user", "content": f"{evidence}\n\n{question}"}]
 
@@ -248,8 +258,9 @@ def invoke(  # noqa: PLR0913 - the log, the question and the measured token coun
         finding_id=finding_id,
     )
 
-    def call(model: str) -> tuple[str, TokenUsage]:
-        messages: Sequence[MessageParam] = audit_messages(evidence, question)
+    def call(model: str, blocks: Sequence[Block]) -> tuple[str, TokenUsage]:
+        del blocks  # the Adversary builds its own list — see `audit_messages`
+        messages = audit_messages(evidence, question)
         reply = client.complete(
             model=model,
             system=_SYSTEM,

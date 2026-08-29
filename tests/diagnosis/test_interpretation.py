@@ -42,6 +42,7 @@ from coldfix.diagnosis.interpretation import (
 )
 from coldfix.diagnosis.log import ExperimentLog, Verdict
 from coldfix.llm.client import Recording, ReplayingClient, request_digest
+from fixtures.requests import shaped
 
 HYPOTHESIS = Hypothesis(
     statement="the author lookup is an N+1 across the book list",
@@ -116,11 +117,7 @@ def a_session() -> Session:
 
 def question_after(*rejections: str) -> str:
     return render_question(
-        hypothesis=HYPOTHESIS,
-        spec=SPEC,
-        measurement=MEASUREMENT,
-        log=a_log(),
-        rejections=rejections,
+        hypothesis=HYPOTHESIS, spec=SPEC, measurement=MEASUREMENT, rejections=rejections
     )
 
 
@@ -139,7 +136,7 @@ def recording(
     return Recording.of(
         model=model,
         system=interpretation_module._SYSTEM,
-        messages=[{"role": "user", "content": question}],
+        messages=shaped(a_session(), model, question),
         max_tokens=MAX_OUTPUT_TOKENS,
         temperature=temperature,
         response=payload(reply, model=model, stop_reason=stop_reason),
@@ -153,7 +150,6 @@ def run_interpret(client: ReplayingClient) -> StepOutcome[Interpretation]:
         hypothesis=HYPOTHESIS,
         spec=SPEC,
         measurement=MEASUREMENT,
-        log=a_log(),
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
     )
@@ -200,7 +196,6 @@ def test_identical_inputs_produce_a_byte_identical_question() -> None:
         hypothesis=HYPOTHESIS,
         spec=SPEC,
         measurement={"db.query": 1004.0, "seconds": 8.24, "rows": 1000.0},
-        log=a_log(),
     )
     second = render_question(
         hypothesis=HYPOTHESIS,
@@ -210,7 +205,6 @@ def test_identical_inputs_produce_a_byte_identical_question() -> None:
             arguments={"distribution": "power_law", "scales": [10, 100, 1000]},
         ),
         measurement={"rows": 1000.0, "seconds": 8.24, "db.query": 1004.0},
-        log=a_log(),
     )
 
     assert first == second
@@ -232,6 +226,11 @@ def test_identical_inputs_produce_the_same_request_in_a_second_process() -> None
         "from coldfix.diagnosis.hypothesis import Hypothesis;"
         "from coldfix.diagnosis.log import ExperimentLog, Verdict;"
         "from coldfix.llm.client import request_digest;"
+        "from coldfix.llm.request import as_request;"
+        "from coldfix.cost.session import Session;"
+        "from coldfix.cost.accounting import ExchangeRate;"
+        "from decimal import Decimal;"
+        "from datetime import date;"
         "log = ExperimentLog();"
         "log.append(hypothesis='the serializer dominates', primitive='ablation.stub',"
         " rationale='the serializer is the only component not yet stubbed',"
@@ -244,10 +243,21 @@ def test_identical_inputs_produce_the_same_request_in_a_second_process() -> None
         "h = Hypothesis(statement='the author lookup is an N+1 across the book list',"
         " primitive='scaling.volume',"
         " rationale='queries have not been counted against volume yet');"
-        "q = render_question(hypothesis=h, spec=spec,"
-        " measurement={'rows': 1000.0, 'db.query': 1004.0, 'seconds': 8.24}, log=log);"
+        "q = render_question(hypothesis=h, spec=spec, "
+        " measurement={'rows': 1000.0, 'db.query': 1004.0, 'seconds': 8.24});"
+        # The request is shaped the way the agent shapes it, blocks and all.
+        # Digesting a flat message list here would agree with itself across
+        # processes while agreeing with nothing this module actually sends.
+        "session = Session(system='You find performance problems by running experiments.',"
+        " playbook='Django: count queries with force_debug_cursor.',"
+        " source='shop/views.py::book_list',"
+        " rate=ExchangeRate(Decimal('0.92'), date(2026, 8, 15)));"
+        "messages = as_request(session.prompt_for('claude-sonnet-5').render(q));"
+        # `system` is this module's own prompt, not the session's: `as_request`
+        # never shapes `Segment.SYSTEM`, because one session drives all three
+        # Diagnostician steps and its string is not every step's prompt.
         "print(request_digest(model='claude-sonnet-5', system=_SYSTEM,"
-        " messages=[{'role': 'user', 'content': q}], max_tokens=MAX_OUTPUT_TOKENS,"
+        " messages=messages, max_tokens=MAX_OUTPUT_TOKENS,"
         " temperature=INTERPRETATION_TEMPERATURE))"
     )
     result = subprocess.run(
@@ -257,7 +267,7 @@ def test_identical_inputs_produce_the_same_request_in_a_second_process() -> None
     here = request_digest(
         model="claude-sonnet-5",
         system=interpretation_module._SYSTEM,
-        messages=[{"role": "user", "content": question_after()}],
+        messages=shaped(a_session(), "claude-sonnet-5", question_after()),
         max_tokens=MAX_OUTPUT_TOKENS,
         temperature=INTERPRETATION_TEMPERATURE,
     )
@@ -611,12 +621,20 @@ def test_a_verdict_comes_back_priced_and_attributed() -> None:
 
 
 def test_the_question_carries_what_was_believed_run_and_measured() -> None:
+    """The three that vary per experiment stay. **The log left. S-17.16.**
+
+    `NARROWED` still needs the log — whether a result cut the search space is a
+    judgement about the investigation rather than about one measurement — and it
+    still reaches the model, as the session's cached block. It was reaching it
+    twice, in both places, on every one of the ~40 calls this step makes per run.
+    """
     question = question_after()
 
     assert HYPOTHESIS.statement in question
     assert "scaling.volume(" in question
     assert "db.query = 1004.0" in question
-    assert "ablation.stub of shop.books.list" in question
+
+    assert "ablation.stub of shop.books.list" not in question, "the log is the session's block now"
 
 
 def test_the_rejections_go_last_so_the_cached_prefix_survives_a_retry() -> None:

@@ -16,8 +16,8 @@ Python 3.12+. Django + Postgres is the first target framework.
 ## Status
 
 **Pre-alpha, and the honest summary is that the machinery is built and has never
-been run against a real subject for real.** 145 of 152 stories are done, across
-168 ADRs. The fast test subset is ~3,300 tests.
+been run against a real subject for real.** 146 of 152 stories are done, across
+169 ADRs. The fast test subset is ~3,300 tests.
 
 The three viability spikes ran on 2026-08-02 and none of them invalidated the
 design — though `S-0.4` and `S-0.5` both changed it, which is what they were for.
@@ -31,11 +31,17 @@ against a project with a planted N+1 and finds it.
 model call outside one spike. That needs an API key and money, and it is
 `S-17.1`.
 
-**Known and recorded, not yet fixed.** Prompt caching is designed and inert:
-`Session.run` renders the cacheable blocks and nothing sends them, so
-`docs/04-cost.md` §12.3's engineered cost is a target rather than an achieved
-figure. See `S-17.16`, which carries the measurement and the reason it is not a
-one-line fix.
+**Reachable, not achieved.** Prompt caching was designed and inert — `Session.run`
+rendered the cacheable blocks and nothing sent them — and `S-17.16` fixed that.
+Requests now carry a breakpoint on the playbook, the source and the log, and four
+agents stopped rendering the source and the log into their questions *as well as*
+into the blocks, which was sending the dominant cost variable twice. The system
+prompt is deliberately not among them: the investigate loop runs three steps on
+one session, so its system string is not every step's prompt, and caching it
+would have handed two of the three the wrong instructions. What still cannot be
+stated is the hit rate — under a replaying client that figure comes from the
+recording, so `docs/04-cost.md` §12.3 is marked reachable rather than quoted as
+achieved. The first real number needs an API, and that is `S-17.1`.
 
 There is no CLI and no configuration file. The entry point is `campaign_for(...)`
 in `src/coldfix/orchestrator/assembly.py`, which takes twenty-five required
@@ -69,7 +75,7 @@ uv run mypy .                # types, strict
 ```
 
 Lint, format, types, and the fast subset must all pass before a story is done.
-The fast subset is the gate and currently collects 3,296 tests; a failure in it
+The fast subset is the gate and currently collects 3,316 tests; a failure in it
 is evidence, not noise. `timing` tests are separated because they read a real
 clock — they are excluded from the gate so that a busy machine cannot turn a
 scheduling delay into a red build, not because they are optional.
@@ -96,7 +102,7 @@ scheduling delay into a red build, not because they are optional.
 | `src/coldfix/eval/` | benchmark runners, agreement harness, cost reporting |
 | `src/coldfix/agents/` | the role index only — each agent's code lives in the four packages above |
 | `docs/` | design documents — start with `docs/00-BRIEF.md` |
-| `docs/adr/` | 168 architecture decision records |
+| `docs/adr/` | 169 architecture decision records |
 | `spikes/` | timeboxed experiments that produce a finding, not shippable code |
 | `tests/fixtures/` | a repository with deliberately planted defects |
 

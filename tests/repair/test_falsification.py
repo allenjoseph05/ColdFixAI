@@ -54,6 +54,7 @@ from coldfix.repair.falsification import (
     parse,
     render_chain,
 )
+from fixtures.requests import shaped
 
 RATE = ExchangeRate(Decimal("0.92"), date(2026, 8, 17))
 SOURCE = "shop/serializers.py::BookSerializer"
@@ -140,7 +141,7 @@ def recorded(session: Session, question: str, reply: str) -> Recording:
     return Recording.of(
         model=model,
         system=falsification_module._SYSTEM,
-        messages=[{"role": "user", "content": question}],
+        messages=shaped(session, model, question),
         max_tokens=MAX_OUTPUT_TOKENS,
         temperature=SURGEON_TEMPERATURE,
         response={
@@ -502,7 +503,7 @@ def test_a_truncated_script_is_refused_rather_than_run() -> None:
     cut_off = Recording.of(
         model=model,
         system=falsification_module._SYSTEM,
-        messages=[{"role": "user", "content": question}],
+        messages=shaped(session, model, question),
         max_tokens=MAX_OUTPUT_TOKENS,
         temperature=SURGEON_TEMPERATURE,
         response={
@@ -557,7 +558,7 @@ def test_a_cascade_escalates_when_the_cheap_answer_fails_its_check() -> None:
             Recording.of(
                 model=dearer,
                 system=falsification_module._SYSTEM,
-                messages=[{"role": "user", "content": question}],
+                messages=shaped(session, dearer, question),
                 max_tokens=MAX_OUTPUT_TOKENS,
                 temperature=SURGEON_TEMPERATURE,
                 response={
@@ -601,7 +602,7 @@ def test_a_refusal_is_reported_rather_than_read_as_nothing_to_assert() -> None:
     refusal = Recording.of(
         model=model,
         system=falsification_module._SYSTEM,
-        messages=[{"role": "user", "content": question}],
+        messages=shaped(session, model, question),
         max_tokens=MAX_OUTPUT_TOKENS,
         temperature=SURGEON_TEMPERATURE,
         response={

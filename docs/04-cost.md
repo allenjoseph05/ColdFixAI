@@ -251,6 +251,31 @@ That number is not a budget. It is the reason the engineering below is mandatory
 
 ### 12.3 Engineered case
 
+> **Status (2026-08-29, S-17.16): reachable, not achieved.** Every figure in this
+> table assumes the prefix caches, and until S-17.16 **nothing sent a cache
+> breakpoint** — `Session.run` rendered the blocks and every agent built its own
+> flat message list, so the 85% column had never been available at any price.
+> That is now fixed, and three further things were found while fixing it. Four
+> agents were rendering the source and the log into their questions *as well as*
+> into the blocks, so the dominant variable in §12.2 was being paid twice on the
+> half meant to be free. The four adversarial call sites deliberately keep
+> building their own message list, so the audit's ten calls per finding do not
+> cache at all. And **the system segment is not cached**: `adapters.py` runs the
+> whole investigate loop on one session, so the session's system string is not
+> every step's prompt, and sending it would have handed `design` and `interpret`
+> the hypothesis prompt. Each agent passes its own, as a plain string, which
+> costs one breakpoint of four and leaves the growing part — playbook, source,
+> log — cached. The figures here are unchanged: the loop still has one cached
+> prefix. **A session per step would change them**, and is left open (ADR 169).
+>
+> **The rate itself is still unmeasured.** Under the replaying client
+> `warm_hit_rate()` reports whatever figure the recording carries, so the suite
+> can prove the prefix is sent with breakpoints and that consecutive calls send a
+> prefix the later one can read — but not what the API actually served. The first
+> real number belongs to S-17.1. Check `Prompt.viability` per model when it runs:
+> haiku's minimum cacheable prefix is 4096 tokens, so routing a step down a tier
+> can raise its effective cost.
+
 | Phase | Configuration | Cost per finding |
 |---|---|---|
 | Investigate, 15 creative | frontier, 12k pruned, 85% cached | $0.59 |

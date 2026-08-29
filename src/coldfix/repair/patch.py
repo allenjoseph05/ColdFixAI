@@ -49,11 +49,13 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from coldfix.cost.accounting import Agent, Phase, TokenUsage
+from coldfix.cost.context import Block
 from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step, StepOutcome
 from coldfix.diagnosis.chain import EvidenceChain
 from coldfix.diagnosis.replies import read_object
 from coldfix.llm.client import ModelClient
+from coldfix.llm.request import as_request
 from coldfix.repair.mustfail import Falsified
 from coldfix.repair.sessions import refuse_foreign_session
 from coldfix.sandbox.modes import CandidateSession
@@ -316,11 +318,16 @@ def generate(  # noqa: PLR0913 - the chain, the proof, the prior attempts and th
     )
     question = f"{render_brief(chain, falsified)}\n\n{_render_prior(prior)}{QUESTION}"
 
-    def call(model: str) -> tuple[Patch, TokenUsage]:
+    def call(model: str, blocks: Sequence[Block]) -> tuple[Patch, TokenUsage]:
+        # **The system prompt is this module's, never the session's.** The
+        # investigate loop runs three steps on one session, so the session's
+        # string is not every step's prompt — sending it would tell two of them
+        # to answer a third one's question. See `llm/request.py`.
+        messages = as_request(blocks)
         reply = client.complete(
             model=model,
             system=_SYSTEM,
-            messages=[{"role": "user", "content": question}],
+            messages=messages,
             max_tokens=MAX_OUTPUT_TOKENS,
             temperature=temperature,
         )

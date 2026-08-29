@@ -40,13 +40,12 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from anthropic.types import MessageParam
-
 from coldfix.cost.accounting import Agent, Phase, TokenUsage
+from coldfix.cost.context import Block
 from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step, StepOutcome
-from coldfix.diagnosis.log import ExperimentLog
 from coldfix.llm.client import ModelClient
+from coldfix.llm.request import as_request
 from coldfix.primitives.registry import Selection
 
 HYPOTHESIS_TEMPERATURE = 0.8
@@ -106,12 +105,16 @@ class Hypothesis:
 
 def render_question(
     *,
-    log: ExperimentLog,
     exclusions: Sequence[str],
-    source: str,
     instruments: Selection,
 ) -> str:
-    """AC 2's four inputs, in the order they are read.
+    """What varies between one hypothesis call and the next.
+
+    **AC 2's other two inputs are the session's, and S-17.16 is why.** The source
+    and the log were rendered here *and* into the cached blocks beside this
+    question, so each call sent both copies and paid full price for the one
+    meant to be free. `Session.run` renders them as blocks with a breakpoint;
+    this asks only what changes.
 
     Exclusions arrive as rendered statements rather than as objects. S-8.5 owns
     what an exclusion *is* — its preconditions, and when a later experiment makes
@@ -125,10 +128,8 @@ def render_question(
     offered = "\n".join(f"  - {name}" for name in instruments.names) or "  (none)"
     excluded = "\n".join(f"  - {entry}" for entry in exclusions) or "  (none yet)"
     return (
-        f"SOURCE UNDER SUSPICION\n{source}\n\n"
         f"INSTRUMENTS AVAILABLE\n{offered}\n\n"
         f"ALREADY EXCLUDED\n{excluded}\n\n"
-        f"EXPERIMENT LOG\n{log.render()}\n\n"
         "What is the next hypothesis worth testing?"
     )
 
@@ -187,15 +188,14 @@ def parse(text: str, instruments: Selection) -> Hypothesis:
     )
 
 
-def generate(  # noqa: PLR0913 - AC 2's four inputs plus the session and the client.
-    # None is derivable from the others, and there is deliberately no `validate`
-    # among them — see the module docstring.
+def generate(  # noqa: PLR0913 - what is offered and what is already ruled out,
+    # plus the session, the client and the two measured token counts. S-17.16 took
+    # the source and the log out of this list, where they were being sent twice.
+    # There is deliberately no `validate` among them — see the module docstring.
     session: Session,
     client: ModelClient,
     *,
-    log: ExperimentLog,
     exclusions: Sequence[str],
-    source: str,
     instruments: Selection,
     measured_prefix_tokens: int,
     measured_prompt_tokens: int,
@@ -218,9 +218,7 @@ def generate(  # noqa: PLR0913 - AC 2's four inputs plus the session and the cli
         UnsafeRoutingError: the configuration would route this below the frontier.
         BudgetExhaustedError: a cap or the ceiling stopped the call.
     """
-    question = render_question(
-        log=log, exclusions=exclusions, source=source, instruments=instruments
-    )
+    question = render_question(exclusions=exclusions, instruments=instruments)
     step = Step(
         step_type=StepType.HYPOTHESIS_GENERATION,
         phase=Phase.INVESTIGATE,
@@ -229,8 +227,12 @@ def generate(  # noqa: PLR0913 - AC 2's four inputs plus the session and the cli
         finding_id=finding_id,
     )
 
-    def call(model: str) -> tuple[Hypothesis, TokenUsage]:
-        messages: Sequence[MessageParam] = [{"role": "user", "content": question}]
+    def call(model: str, blocks: Sequence[Block]) -> tuple[Hypothesis, TokenUsage]:
+        # **The system prompt is this module's, never the session's.** The
+        # investigate loop runs three steps on one session, so the session's
+        # string is not every step's prompt — sending it would tell two of them
+        # to answer a third one's question. See `llm/request.py`.
+        messages = as_request(blocks)
         reply = client.complete(
             model=model,
             system=_SYSTEM,

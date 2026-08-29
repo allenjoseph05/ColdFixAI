@@ -226,8 +226,34 @@ class Investigation:
 
         S-8.4 exposed `.pruned` for precisely this join and nothing used it. One
         log, one owner, one rendering.
+
+        **The source is joined the same way and for a sharper reason. S-17.16.**
+        Until that story the agents rendered the source into their own questions,
+        so a session naming a different one was a duplicated string and nothing
+        worse. Now the source reaches the model *only* as the session's cached
+        block — so a session built with somebody else's source would have this
+        investigation reason about the wrong file, silently, with every
+        measurement in the log still correct.
+
+        Refused rather than overwritten, which is the opposite of the log above.
+        The session's own `PrunedLog` is an empty placeholder and replacing it
+        loses nothing; a source is a caller's answer to *what are we studying*,
+        and two different answers is a question this cannot settle by picking
+        one.
+
+        Raises:
+            LoopError: the session names a different source from the
+                investigation.
         """
         self.session.log = self.log.pruned
+        if self.session.source != self.source:
+            message = (
+                f"this investigation studies {self.source!r} and its session was built for "
+                f"{self.session.source!r}. The source reaches the model as the session's cached "
+                "block and nowhere else, so the run would diagnose one file while measuring "
+                "another"
+            )
+            raise LoopError(message)
 
     # -------------------------------------------------------------- AC 1
 
@@ -273,9 +299,7 @@ class Investigation:
             outcome = generate(
                 self.session,
                 self.client,
-                log=self.log,
                 exclusions=(*self.exclusions.render(self.conditions), *notes),
-                source=self.source,
                 instruments=self.instruments,
                 measured_prefix_tokens=measured_prefix_tokens,
                 measured_prompt_tokens=measured_prompt_tokens,
@@ -313,8 +337,6 @@ class Investigation:
             self.client,
             hypothesis=hypothesis,
             instruments=self.instruments,
-            source=self.source,
-            log=self.log,
             measured_prefix_tokens=measured_prefix_tokens,
             measured_prompt_tokens=measured_prompt_tokens,
         ).value
@@ -327,7 +349,6 @@ class Investigation:
             hypothesis=hypothesis,
             spec=spec,
             measurement=measured.measurement,
-            log=self.log,
             measured_prefix_tokens=measured_prefix_tokens,
             measured_prompt_tokens=measured_prompt_tokens,
         ).value

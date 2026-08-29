@@ -36,12 +36,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from coldfix.cost.accounting import Agent, Phase, TokenUsage
 from coldfix.cost.cascade import NoDearerTierError
+from coldfix.cost.context import Block
 from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step, StepOutcome
 from coldfix.diagnosis.chain import Implicated, Site, Symptom
 from coldfix.diagnosis.log import Experiment
 from coldfix.diagnosis.replies import Attempted, read_object
 from coldfix.llm.client import ModelClient
+from coldfix.llm.request import as_request, with_question
 from coldfix.primitives.ablation import share_metric
 
 EXPLANATION_TEMPERATURE = 0.0
@@ -137,9 +139,13 @@ def render_question(
     symptom: Symptom,
     confirming: Sequence[Experiment],
     exclusions: Sequence[str],
-    source: str,
 ) -> str:
     """What the model is asked. The measured half, rendered for reading.
+
+    **The source is not here, and S-17.16 is why.** It was rendered at the foot
+    of this question *and* into the cached block beside it, so every call sent
+    both copies and paid full price for the one meant to be free. It is the
+    session's now.
 
     The confirming experiments arrive **with their measurements**, because the
     question is *what does this mean* and a reply reasoning about numbers it was
@@ -165,21 +171,20 @@ def render_question(
         lines.extend(["", "RULED OUT"])
         lines.extend(f"  {item}" for item in exclusions)
 
-    lines.extend(["", "SOURCE", source])
     return "\n".join(lines)
 
 
 def explain(  # noqa: PLR0913 - the symptom, the confirmations, the exclusions and
-    # the source are four different facts about one investigation, plus the
-    # session, the client and the two measured token counts. None is derivable
-    # from the others.
+    # the two measured token counts are separate facts about one investigation,
+    # plus the session and the client. None is derivable from the others, and
+    # S-17.16 took the source out of this list — it is the session's, and it was
+    # being sent twice.
     session: Session,
     client: ModelClient,
     *,
     symptom: Symptom,
     confirming: Sequence[Experiment],
     exclusions: Sequence[str],
-    source: str,
     measured_prefix_tokens: int,
     measured_prompt_tokens: int,
     finding_id: str | None = None,
@@ -207,9 +212,7 @@ def explain(  # noqa: PLR0913 - the symptom, the confirmations, the exclusions a
         raise ExplanationError(message)
 
     rejections: list[str] = []
-    question = render_question(
-        symptom=symptom, confirming=confirming, exclusions=exclusions, source=source
-    )
+    question = render_question(symptom=symptom, confirming=confirming, exclusions=exclusions)
     step = Step(
         step_type=StepType.EVIDENCE_CHAIN,
         phase=Phase.INVESTIGATE,
@@ -218,11 +221,19 @@ def explain(  # noqa: PLR0913 - the symptom, the confirmations, the exclusions a
         finding_id=finding_id,
     )
 
-    def call(model: str) -> tuple[Attempted[Explanation], TokenUsage]:
+    def call(model: str, blocks: Sequence[Block]) -> tuple[Attempted[Explanation], TokenUsage]:
+        # The rejections are the varying tail, so only the question block moves —
+        # the prefix stays byte-identical and the retry reads the cache the
+        # previous attempt wrote.
+        # **The system prompt is this module's, never the session's.** The
+        # investigate loop runs three steps on one session, so the session's
+        # string is not every step's prompt — sending it would tell two of them
+        # to answer a third one's question. See `llm/request.py`.
+        messages = as_request(with_question(blocks, _with_rejections(question, rejections)))
         reply = client.complete(
             model=model,
             system=_SYSTEM,
-            messages=[{"role": "user", "content": _with_rejections(question, rejections)}],
+            messages=messages,
             max_tokens=MAX_OUTPUT_TOKENS,
             temperature=EXPLANATION_TEMPERATURE,
         )

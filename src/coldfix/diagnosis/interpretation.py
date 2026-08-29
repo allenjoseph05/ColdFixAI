@@ -54,19 +54,20 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Self
 
-from anthropic.types import MessageParam
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from coldfix.cost.accounting import Agent, Phase, TokenUsage
 from coldfix.cost.cascade import NoDearerTierError
+from coldfix.cost.context import Block
 from coldfix.cost.pruning import MAX_SUMMARY_CHARS
 from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step, StepOutcome
 from coldfix.diagnosis.design import ExperimentSpec
 from coldfix.diagnosis.hypothesis import Hypothesis
-from coldfix.diagnosis.log import ExperimentLog, Verdict
+from coldfix.diagnosis.log import Verdict
 from coldfix.diagnosis.replies import Attempted, read_object
 from coldfix.llm.client import ModelClient
+from coldfix.llm.request import as_request, with_question
 
 INTERPRETATION_TEMPERATURE = 0.0
 """`03-agents.md` §2.4. 8.24 seconds means the same thing every time, and a
@@ -236,21 +237,24 @@ def render_question(
     hypothesis: Hypothesis,
     spec: ExperimentSpec,
     measurement: Mapping[str, float],
-    log: ExperimentLog,
     rejections: Sequence[str] = (),
 ) -> str:
     """What was believed, what was run, what came back — and any earlier rejection.
 
-    The log is included because `NARROWED` is a judgement about the
-    *investigation* rather than about one measurement: whether a result cut the
-    search space depends on how big the space was. The rejections go last, for
-    ADR 085's reason — everything before them is the part that must not move.
+    The log still reaches the model, and `NARROWED` still needs it: whether a
+    result cut the search space is a judgement about the *investigation* rather
+    than about one measurement. **It arrives as a cached block rather than in
+    this question. S-17.16.** It used to be rendered in both places, so every
+    call sent the log twice and paid full price for the copy that was supposed to
+    be free.
+
+    The rejections go last, for ADR 085's reason — everything before them is the
+    part that must not move.
     """
     question = (
         f"HYPOTHESIS\n{hypothesis.describe()}\n\n"
         f"EXPERIMENT\n{spec.render()}\n\n"
         f"MEASUREMENT\n{render_measurement(measurement)}\n\n"
-        f"EXPERIMENT LOG\n{log.render()}\n\n"
         "What does this experiment settle?"
     )
     if not rejections:
@@ -318,16 +322,15 @@ def parse(  # noqa: PLR0911 - every return is one distinct way a reply is not an
         return Attempted.no(f"this is not a usable interpretation: {error}")
 
 
-def interpret(  # noqa: PLR0913 - what was believed, what was run, what came back
-    # and what is already known are four different facts, plus the session and the
-    # client. There is deliberately no `validate` among them.
+def interpret(  # noqa: PLR0913 - what was believed, what was run and what came
+    # back are three different facts, plus the session and the client. There is
+    # deliberately no `validate` among them.
     session: Session,
     client: ModelClient,
     *,
     hypothesis: Hypothesis,
     spec: ExperimentSpec,
     measurement: Mapping[str, float],
-    log: ExperimentLog,
     measured_prefix_tokens: int,
     measured_prompt_tokens: int,
     finding_id: str | None = None,
@@ -347,7 +350,7 @@ def interpret(  # noqa: PLR0913 - what was believed, what was run, what came bac
         BudgetExhaustedError: a cap or the ceiling stopped an attempt.
     """
     rejections: list[str] = []
-    first = render_question(hypothesis=hypothesis, spec=spec, measurement=measurement, log=log)
+    first = render_question(hypothesis=hypothesis, spec=spec, measurement=measurement)
     step = Step(
         step_type=StepType.RESULT_INTERPRETATION,
         phase=Phase.INVESTIGATE,
@@ -356,15 +359,17 @@ def interpret(  # noqa: PLR0913 - what was believed, what was run, what came bac
         finding_id=finding_id,
     )
 
-    def call(model: str) -> tuple[Attempted[Interpretation], TokenUsage]:
+    def call(model: str, blocks: Sequence[Block]) -> tuple[Attempted[Interpretation], TokenUsage]:
         question = render_question(
-            hypothesis=hypothesis,
-            spec=spec,
-            measurement=measurement,
-            log=log,
-            rejections=rejections,
+            hypothesis=hypothesis, spec=spec, measurement=measurement, rejections=rejections
         )
-        messages: Sequence[MessageParam] = [{"role": "user", "content": question}]
+        # Rejections are the varying tail; only the question block moves, so the
+        # retry reads the prefix the previous attempt cached.
+        # **The system prompt is this module's, never the session's.** The
+        # investigate loop runs three steps on one session, so the session's
+        # string is not every step's prompt — sending it would tell two of them
+        # to answer a third one's question. See `llm/request.py`.
+        messages = as_request(with_question(blocks, question))
         reply = client.complete(
             model=model,
             system=_SYSTEM,
