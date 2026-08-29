@@ -24,7 +24,13 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from coldfix.agents.roles import RoleError
 from coldfix.cost.accounting import ExchangeRate, Ledger, Phase
-from coldfix.cost.budget import DEFAULT_STALL_AFTER, PHASE_CAPS
+from coldfix.cost.budget import (
+    DEFAULT_STALL_AFTER,
+    PHASE_CAPS,
+    BudgetExhaustedError,
+    ProgressStalledError,
+)
+from coldfix.cost.session import Session, SessionError
 from coldfix.diagnosis import design, explain, hypothesis, interpretation
 from coldfix.diagnosis.progress import INVESTIGATION_STALL_AFTER, check_stall_configuration
 from coldfix.explorer import proposal
@@ -37,7 +43,7 @@ from coldfix.orchestrator.campaign import (
     sessions_for,
 )
 from coldfix.primitives.counters import DB_QUERY
-from coldfix.repair import falsification
+from coldfix.repair import falsification, testaudit
 from coldfix.state.trust import Level, standing
 
 RATE = ExchangeRate(euros_per_dollar=Decimal("0.92"), as_of=date(2026, 8, 25))
@@ -135,6 +141,105 @@ def test_two_prompts_get_two_sessions() -> None:
     sessions = factory()
 
     assert sessions(hypothesis._SYSTEM) is not sessions(proposal._SYSTEM)
+
+
+# ============================== one budget per stall regime, under several sessions
+
+
+def test_two_sessions_of_one_phase_share_its_budget() -> None:
+    """**The defect this closed, measured before it was fixed. S-17.17.**
+
+    `Ledger` was shared across a campaign's sessions from the start and `Budget`
+    was not, so a phase driven by two sessions counted its cap twice. The repair
+    node opens `falsification` and `testaudit`; `Phase.REPAIR` caps at three
+    attempts; and after three steps on the first session the second still
+    authorized a fourth. The euro ceiling hid it, because that reads the shared
+    ledger and was right all along.
+    """
+    sessions = factory()
+
+    first = sessions(falsification._SYSTEM)
+    second = sessions(testaudit.SYSTEM)
+
+    assert first is not second, "two prompts are still two sessions"
+    assert first.budget is second.budget
+
+
+def test_a_cap_reached_through_one_session_refuses_the_other() -> None:
+    """The behaviour, asserted where it bites rather than on object identity."""
+    sessions = factory()
+    limit = PHASE_CAPS[Phase.REPAIR].limit
+
+    for index in range(limit):
+        sessions(falsification._SYSTEM).budget.record_step(Phase.REPAIR, "f1", f"try {index}")
+
+    with pytest.raises(BudgetExhaustedError):
+        sessions(testaudit.SYSTEM).budget.authorize(Phase.REPAIR, "f1")
+
+
+def test_a_stall_is_reached_across_the_sessions_of_one_phase() -> None:
+    """The other half of a split budget, and the quieter one.
+
+    S-8.9 stops a phase that has concluded the same thing `stall_after` times
+    running. With a budget each, two sessions could reach it twice over and
+    neither would trip — an agent repeating itself for double the intended
+    number of steps, reported as ordinary progress.
+    """
+    sessions = factory()
+    stall = sessions(falsification._SYSTEM).budget.stall_after
+
+    for _ in range(stall - 1):
+        sessions(falsification._SYSTEM).budget.record_step(Phase.REPAIR, "f1", "no change")
+
+    with pytest.raises(ProgressStalledError):
+        sessions(testaudit.SYSTEM).budget.record_step(Phase.REPAIR, "f1", "no change")
+
+
+def test_the_three_diagnostician_prompts_share_one_budget() -> None:
+    """The investigate loop is where this matters most: S-5.4 caps it at forty
+    experiments, and S-17.17 gave it three sessions where it had one."""
+    sessions = factory()
+
+    budgets = {
+        id(sessions(prompt).budget)
+        for prompt in (hypothesis._SYSTEM, design._SYSTEM, interpretation._SYSTEM)
+    }
+
+    assert len(budgets) == 1
+
+
+def test_two_stall_regimes_do_not_share_a_budget() -> None:
+    """**The partition's other half.** Grounding tolerates fifteen unchanged
+    reports and an investigation eight, and `stall_after` is one number per
+    budget — so sharing across the two would run one phase under the other's
+    rule. Both halves are listed because the dangerous direction is a single
+    campaign-wide budget, which looks tidier and silently picks one of them."""
+    sessions = factory()
+
+    grounding = sessions(proposal._SYSTEM).budget
+    investigating = sessions(hypothesis._SYSTEM).budget
+
+    assert grounding is not investigating
+    assert grounding.stall_after == GROUNDING_STALL_AFTER
+    assert investigating.stall_after == INVESTIGATION_STALL_AFTER
+
+
+def test_a_session_refuses_a_budget_from_another_stall_regime() -> None:
+    """The violation, attempted directly. A caller assembling sessions by hand
+    cannot hand grounding's budget to an investigation's session and have the
+    mismatch pass unnoticed."""
+    sessions = factory()
+    grounding = sessions(proposal._SYSTEM).budget
+
+    with pytest.raises(SessionError, match="one stall regime"):
+        Session(
+            system=hypothesis._SYSTEM,
+            playbook="p",
+            source="s",
+            rate=ExchangeRate(Decimal("0.92"), date(2026, 8, 29)),
+            stall_after=INVESTIGATION_STALL_AFTER,
+            shared_budget=grounding,
+        )
 
 
 # ================================================ one ledger underneath all of them

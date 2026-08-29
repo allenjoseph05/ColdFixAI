@@ -47,6 +47,7 @@ from coldfix.cost.session import Session, Step, StepOutcome
 from coldfix.llm.client import ModelClient
 from coldfix.llm.request import as_request
 from coldfix.primitives.registry import Selection
+from coldfix.repair.sessions import refuse_foreign_session
 
 HYPOTHESIS_TEMPERATURE = 0.8
 """`03-agents.md` §2.4. Diversity is the point: an unusual explanation that turns
@@ -218,6 +219,7 @@ def generate(  # noqa: PLR0913 - what is offered and what is already ruled out,
         UnsafeRoutingError: the configuration would route this below the frontier.
         BudgetExhaustedError: a cap or the ceiling stopped the call.
     """
+    refuse_foreign_session(session, _SYSTEM, HypothesisError)
     question = render_question(exclusions=exclusions, instruments=instruments)
     step = Step(
         step_type=StepType.HYPOTHESIS_GENERATION,
