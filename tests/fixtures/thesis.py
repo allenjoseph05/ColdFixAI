@@ -173,7 +173,7 @@ def sweep_queries(subject: Subject) -> Measured:
     return Measured(
         measurement=measurement,
         kinds=dict.fromkeys(measurement, result.kinds[QUERIES]),
-        fit=result.fits[QUERIES],
+        fits={QUERIES: result.fits[QUERIES]},
     )
 
 
@@ -224,7 +224,7 @@ def ablate_renderer(subject: Subject) -> tuple[Measured, str]:
             },
             # An ablation fits no curve, and saying so is what keeps S-9.4
             # `NOT_RUN` here rather than judging one nobody drew.
-            fit=None,
+            fits={},
         ),
         f"baseline {result.baseline} against ablated {result.ablated}",
     )

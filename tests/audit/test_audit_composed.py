@@ -41,11 +41,13 @@ from coldfix.audit.compose import (
     NO_KINDS,
     NO_RERUN,
     NO_SWEEP,
+    _fit_for,
     audit_cost,
     audit_finding,
     audit_partial,
     audit_scales_result,
     audit_session,
+    fits_from,
     key_experiment,
     reproducibility_result,
 )
@@ -73,13 +75,14 @@ from coldfix.diagnosis.loop import Investigation, LoopError, Measured, run_inves
 from coldfix.diagnosis.progress import PartialChain, Stopped, partial_chain
 from coldfix.llm.client import Recording, ReplayingClient
 from coldfix.orchestrator.adapters import _log_of, _stored
-from coldfix.primitives.measurement import MetricKind, metric_kind
+from coldfix.primitives.measurement import SECONDS, MetricKind, metric_kind
 from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetStrategy
 from coldfix.screening.workload import FixtureRecipe, Observation, Workload
 from coldfix.state.checkpoint import CheckpointedState
 from fixtures.thesis import (  # the subject and its harness, not a second copy
     CONDITIONS,
+    QUERIES,
     SCALES,
     Subject,
     _query_counter,  # noqa: F401 - registers the `query_counter` fixture
@@ -277,6 +280,7 @@ def test_a_confirmed_diagnosis_can_now_be_audited_end_to_end(query_counter: None
         workload=workload,
         conditions=CONDITIONS,
         log=investigation.log,
+        metric=QUERIES,
         exclusions=investigation.exclusions.exclusions,
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
@@ -307,6 +311,7 @@ def test_the_audit_costs_two_model_calls_through_the_real_path(query_counter: No
         workload=workload,
         conditions=CONDITIONS,
         log=investigation.log,
+        metric=QUERIES,
         exclusions=investigation.exclusions.exclusions,
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
@@ -334,6 +339,7 @@ def test_the_audit_round_is_counted_only_when_an_audit_actually_runs(
         workload=workload,
         conditions=CONDITIONS,
         log=investigation.log,
+        metric=QUERIES,
         exclusions=investigation.exclusions.exclusions,
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
@@ -359,6 +365,7 @@ def test_a_third_audit_round_is_refused_through_the_composed_path(
             workload=workload,
             conditions=CONDITIONS,
             log=investigation.log,
+            metric=QUERIES,
             exclusions=investigation.exclusions.exclusions,
             measured_prefix_tokens=100,
             measured_prompt_tokens=900,
@@ -372,6 +379,7 @@ def test_a_third_audit_round_is_refused_through_the_composed_path(
             workload=workload,
             conditions=CONDITIONS,
             log=investigation.log,
+            metric=QUERIES,
             exclusions=investigation.exclusions.exclusions,
             measured_prefix_tokens=100,
             measured_prompt_tokens=900,
@@ -396,6 +404,7 @@ def test_the_diagnosticians_session_is_refused_by_the_composed_audit(
             workload=workload,
             conditions=CONDITIONS,
             log=investigation.log,
+            metric=QUERIES,
             exclusions=investigation.exclusions.exclusions,
             measured_prefix_tokens=100,
             measured_prompt_tokens=900,
@@ -470,17 +479,22 @@ def test_a_growth_fit_survives_into_the_experiment_log(query_counter: None) -> N
     is what keeps them comparable between experiments.
 
     **The ablation still fits nothing, and that is the point of the pair.** A
-    sweep records its curve; a primitive that drew none records `None`, and
-    S-9.2 refuses to judge a curve nobody drew.
+    sweep records its curves; a primitive that drew none records an empty
+    mapping, and S-9.2 refuses to judge a curve nobody drew.
+
+    **S-17.12 made it a curve per metric.** A sweep fits every metric it
+    measured, and the audit picks the one the finding's claim rests on — so what
+    travels is the whole mapping rather than the one fit an earlier version had
+    to choose between carrying wrongly and not carrying at all.
     """
     investigation = run_the_diagnosis(Subject())
     for experiment in investigation.log.experiments:
         assert all(isinstance(value, float) for value in experiment.measurement.values())
-    assert "fit" in Experiment.model_fields
+    assert "fits" in Experiment.model_fields
 
     by_primitive = {item.primitive: item for item in investigation.log.experiments}
-    assert by_primitive["scaling.volume"].fit is not None, "the sweep fitted a curve"
-    assert by_primitive["ablation.stub"].fit is None, "and the ablation drew none"
+    assert by_primitive["scaling.volume"].fits, "the sweep fitted a curve"
+    assert by_primitive["ablation.stub"].fits == {}, "and the ablation drew none"
 
 
 def test_an_unfitted_sweep_is_not_run_and_a_finding_with_no_sweep_is_inapplicable() -> None:
@@ -546,6 +560,7 @@ def test_the_thesis_diagnosis_does_not_survive_its_own_audit(query_counter: None
         workload=workload,
         conditions=CONDITIONS,
         log=investigation.log,
+        metric=QUERIES,
         exclusions=investigation.exclusions.exclusions,
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
@@ -587,6 +602,7 @@ def test_the_audit_reads_the_conditions_in_force_not_the_original_recipe(
         workload=workload,
         conditions=WELL_SWEPT,
         log=investigation.log,
+        metric=QUERIES,
         exclusions=[
             Exclusion(experiment=item.experiment, conditions=WELL_SWEPT)
             for item in investigation.exclusions.exclusions
@@ -626,6 +642,7 @@ def test_an_audit_missing_the_one_input_the_log_cannot_carry_is_inconclusive(
         workload=workload,
         conditions=WELL_SWEPT,
         log=investigation.log,
+        metric=QUERIES,
         exclusions=[
             Exclusion(experiment=item.experiment, conditions=WELL_SWEPT)
             for item in investigation.exclusions.exclusions
@@ -671,6 +688,7 @@ def test_the_thesis_sweep_is_too_narrow_to_support_a_growth_claim(
         workload=workload,
         conditions=WIDENED,
         log=investigation.log,
+        metric=QUERIES,
         exclusions=[
             Exclusion(experiment=item.experiment, conditions=WIDENED)
             for item in investigation.exclusions.exclusions
@@ -711,6 +729,7 @@ def test_a_fully_supplied_audit_over_a_proper_sweep_reaches_sound(
         workload=workload,
         conditions=WELL_SWEPT,
         log=investigation.log,
+        metric=QUERIES,
         exclusions=[
             Exclusion(experiment=item.experiment, conditions=WELL_SWEPT)
             for item in investigation.exclusions.exclusions
@@ -802,6 +821,7 @@ def test_the_composed_audit_refuses_to_spend_past_its_call_ceiling(
             workload=workload,
             conditions=CONDITIONS,
             log=investigation.log,
+            metric=QUERIES,
             exclusions=investigation.exclusions.exclusions,
             measured_prefix_tokens=100,
             measured_prompt_tokens=900,
@@ -938,7 +958,7 @@ def test_an_executor_that_knows_nothing_extra_still_works() -> None:
     measured = Measured(measurement={"db.query": 2.0})
 
     assert measured.kinds == {}
-    assert measured.fit is None
+    assert measured.fits == {}
 
 
 def test_the_kinds_and_the_fit_survive_a_checkpoint(query_counter: None) -> None:
@@ -952,8 +972,10 @@ def test_the_kinds_and_the_fit_survive_a_checkpoint(query_counter: None) -> None
     assert json.loads(json.dumps(stored)) == stored, "a checkpoint cannot hold what will not encode"
 
     restored = _log_of(CheckpointedState(experiments=stored))
-    before = {item.index: (dict(item.kinds), item.fit) for item in investigation.log.experiments}
-    after = {item.index: (dict(item.kinds), item.fit) for item in restored.experiments}
+    before = {
+        item.index: (dict(item.kinds), dict(item.fits)) for item in investigation.log.experiments
+    }
+    after = {item.index: (dict(item.kinds), dict(item.fits)) for item in restored.experiments}
 
     assert after == before
 
@@ -967,3 +989,92 @@ def test_a_stored_experiment_still_fits_the_checkpoint_budget(query_counter: Non
 
     for item in investigation.log.experiments:
         assert len(json.dumps(_stored(item))) < 1024
+
+
+# ======================== S-17.12: the fit the audit judges is the metric's own
+
+
+def test_the_fit_the_audit_judges_is_the_one_for_the_cited_metric(
+    query_counter: None,
+) -> None:
+    """**S-17.12's AC, driven rather than passed in.**
+
+    `_fit_for` used to answer *the most recent fit recorded*, which was the only
+    rule available while an experiment carried one — and recency is not the
+    claim. A sweep fits every metric it measured, `audit_scales` reads `exponent`
+    and `power_r_squared` off whatever curve it is handed, and the finding cites
+    one metric. So the fit judged has to be that metric's.
+
+    Driven through a real investigation, because the mapping this reads is built
+    by the loop from what the primitive produced — supplying one by hand would
+    test the selection against a shape nothing produces.
+    """
+    investigation = run_the_diagnosis(Subject())
+    fits = fits_from(investigation.log)
+
+    chosen = _fit_for(investigation.log, fits, QUERIES)
+
+    sweep = next(
+        item for item in investigation.log.experiments if item.primitive == "scaling.volume"
+    )
+    assert chosen is not None, "the sweep fitted this metric and the audit found it"
+    assert chosen is sweep.fits[QUERIES]
+
+
+def test_a_fit_for_a_metric_the_finding_does_not_cite_is_not_judged(
+    query_counter: None,
+) -> None:
+    """**The other half, and the defect S-17.11 recorded.**
+
+    A poor fit on a metric the finding says nothing about must raise no objection
+    against it. Here the log carries a deliberately terrible curve under
+    `seconds` — r² of 0.01, the shape `audit_scales` raises `FIT_TOO_POOR` from —
+    beside the real one under the cited metric. Selecting by recency or by
+    *whatever is there* would object to a claim nobody made.
+    """
+    investigation = run_the_diagnosis(Subject())
+    fits = dict(fits_from(investigation.log))
+
+    unusable = Fit(
+        slope=0.0,
+        intercept=0.0,
+        linear_r_squared=0.01,
+        exponent=0.0,
+        power_r_squared=0.01,
+        growth=Growth.CONSTANT,
+        constant_below=0.2,
+        superlinear_above=1.2,
+    )
+    latest = max(fits)
+    fits[latest] = {**fits[latest], SECONDS: unusable}
+
+    assert _fit_for(investigation.log, fits, QUERIES) is not unusable
+    assert _fit_for(investigation.log, fits, SECONDS) is unusable, (
+        "and it is found when it is the metric that was asked for"
+    )
+
+
+def test_a_metric_nothing_fitted_is_unjudged_rather_than_misjudged(
+    query_counter: None,
+) -> None:
+    """`None` is the honest answer and S-9.2 already treats it as *not judged*.
+
+    The alternative — falling back to some other metric's curve — is the failure
+    this story exists to close, and it would read as an audit that ran.
+    """
+    investigation = run_the_diagnosis(Subject())
+
+    assert _fit_for(investigation.log, fits_from(investigation.log), "nothing.measured") is None
+
+
+def test_every_metric_the_sweep_fitted_reaches_the_log(query_counter: None) -> None:
+    """S-17.11 carried a fit only for a single-metric sweep, which no real sweep
+    is — so the scale audit had nothing to judge on any real run."""
+    investigation = run_the_diagnosis(Subject())
+
+    sweep = next(
+        item for item in investigation.log.experiments if item.primitive == "scaling.volume"
+    )
+
+    assert len(sweep.fits) >= 1
+    assert QUERIES in sweep.fits

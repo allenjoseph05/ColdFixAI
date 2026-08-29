@@ -159,12 +159,16 @@ class Experiment(BaseModel):
     the honest answer and the one `audit/compose.py` chose when this had to be
     passed in by hand."""
 
-    fit: Fit | None = None
-    """The growth fit behind this experiment, where the primitive produced one.
+    fits: Mapping[str, Fit] = Field(default_factory=dict)
+    """The growth fit **per metric**, where the primitive drew one.
 
-    S-8.12, and `None` is a real answer rather than a gap: an ablation fits
-    nothing, and S-9.2 already refuses to judge a rejection that came from no
-    sweep — *inventing a fit to judge would be auditing a curve nobody drew.*
+    S-8.12 widened this boundary and S-17.12 made it per metric. It was one fit,
+    and a volume sweep fits every metric it measured — so the audit had no way to
+    pick the one the finding's claim rests on, and S-17.11 carried none at all
+    rather than pick wrong. An empty mapping is a real answer rather than a gap:
+    an ablation fits nothing, and S-9.2 already refuses to judge a rejection that
+    came from no sweep — *inventing a fit to judge would be auditing a curve
+    nobody drew.*
 
     A stdlib dataclass held in a pydantic model, which round-trips through JSON
     unchanged. S-6.1 requires that: a checkpoint that cannot serialize is a run
@@ -225,7 +229,7 @@ class ExperimentLog:
         outcome: str,
         detail: str = "",
         kinds: Mapping[str, MetricKind] | None = None,
-        fit: Fit | None = None,
+        fits: Mapping[str, Fit] | None = None,
     ) -> Experiment:
         """Record one experiment. The only way anything enters this log.
 
@@ -257,7 +261,7 @@ class ExperimentLog:
                 verdict=verdict,
                 outcome=outcome,
                 kinds=dict(kinds or {}),
-                fit=fit,
+                fits=dict(fits or {}),
                 detail=detail,
             )
         except ValueError as error:
