@@ -140,15 +140,15 @@ def test_a_volume_sweep_is_read_at_its_largest_point(query_counter: None) -> Non
     assert measured.kinds == dict(result.kinds), "the kinds the primitive stated"
 
 
-def test_a_multi_metric_sweep_carries_no_fit(query_counter: None) -> None:
-    """The narrowing this story records rather than papers over.
+def test_a_multi_metric_sweep_carries_every_fit(query_counter: None) -> None:
+    """**S-17.12 closed S-17.11's narrowing, and this test is where it was.**
 
-    `Measured.fit` is singular and a sweep fits every metric it measured;
-    `audit/scales.py` reads `exponent` and `power_r_squared` off it and objects
-    `FIT_TOO_POOR`, so picking the wrong metric's fit objects to a finding whose
-    claim is about a different one. Nothing in an `ExperimentSpec` names which
-    metric the finding will rest on — the interpretation picks that, and it runs
-    after this. So the fit is absent, which S-9.2 already treats as *not judged*.
+    It used to assert the fit was *absent*, because `Measured.fit` was singular:
+    a sweep fits every metric it measured, `audit/scales.py` reads `exponent` and
+    `power_r_squared` off one curve, and picking wrong objects to a claim nobody
+    made. Carrying none was the safe direction and it meant the scale audit never
+    ran on a real sweep — every real sweep fits more than one metric. Now all of
+    them travel, keyed by metric, and the audit selects by the finding's own.
     """
 
     subject = Subject()
@@ -174,7 +174,7 @@ def test_a_multi_metric_sweep_carries_no_fit(query_counter: None) -> None:
     )
 
     assert len(result.fits) > 1, "a real sweep fits several metrics"
-    assert read_volume(result).fit is None
+    assert set(read_volume(result).fits) == set(result.fits)
 
 
 # ============================================ hand-built, with values that discriminate
@@ -376,7 +376,7 @@ def test_faults_reports_what_the_subject_did_at_each_magnitude() -> None:
 
     assert measured.measurement["magnitude_0.1.calls"] == 4.0
     assert measured.measurement["magnitude_0.5.seconds"] == 2.0
-    assert measured.fit is None
+    assert measured.fits == {}
 
 
 def test_faults_with_no_response_is_refused() -> None:
@@ -434,7 +434,7 @@ def test_a_load_finding_reports_the_usl_coefficients_and_every_level() -> None:
     assert measured.measurement["usl.gamma"] == 95.0
     assert measured.measurement["concurrency_8.completions"] == 200.0
     assert measured.measurement["concurrency_8.errors"] == 3.0
-    assert measured.fit is None
+    assert measured.fits == {}
 
 
 def test_a_soak_reports_where_each_trend_started_and_ended() -> None:
@@ -462,7 +462,7 @@ def test_a_soak_reports_where_each_trend_started_and_ended() -> None:
     assert measured.measurement["rss.first"] == 100.0
     assert measured.measurement["rss.last"] == 900.0
     assert measured.measurement["soak.duration"] == 3600.0
-    assert measured.fit is only, "one trend, so the fit is unambiguous"
+    assert measured.fits == {"rss.first": only}, "keyed by the metric it is of"
 
 
 def test_a_soak_that_fitted_nothing_is_refused() -> None:

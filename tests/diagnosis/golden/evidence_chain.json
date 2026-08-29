@@ -44,7 +44,7 @@
       "experiment": {
         "design": "scaling.volume(scales=[10, 100, 1000], distribution='uniform')",
         "detail": "",
-        "fit": null,
+        "fits": {},
         "hypothesis": "the database is the bottleneck",
         "index": 1,
         "kinds": {},
@@ -65,7 +65,7 @@
       "experiment": {
         "design": "ablation.stub(attribute='to_representation') on shop.books.list",
         "detail": "",
-        "fit": null,
+        "fits": {},
         "hypothesis": "the serializer re-renders the author for every book",
         "index": 2,
         "kinds": {},

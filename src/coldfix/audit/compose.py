@@ -224,6 +224,7 @@ def audit_finding(  # noqa: PLR0913 - the workload, the log, the conditions and
     conditions: Conditions,
     log: ExperimentLog,
     exclusions: Sequence[Exclusion],
+    metric: str,
     measured_prefix_tokens: int,
     measured_prompt_tokens: int,
     rerun: Rerun | None = None,
@@ -231,6 +232,14 @@ def audit_finding(  # noqa: PLR0913 - the workload, the log, the conditions and
     finding_id: str | None = None,
 ) -> tuple[Routing, tuple[ModelCall, ...]]:
     """Run all six attacks over one diagnosis and route what they add up to.
+
+    `metric` is which measurement the finding's growth claim rests on. **S-17.12**,
+    and required rather than derived: `Resources.metric` is already documented as
+    exactly this — *which of the workload's measurements the symptom quotes*. A
+    sweep fits every metric it measured and the scale audit reads `exponent` and
+    `power_r_squared` off whichever curve it is handed, so without a name the only
+    available rule was *the most recent fit*, which is as likely to be `seconds`
+    as the metric the finding is about.
 
     **The whole of Epic 9 performed once.** The round is recorded after the
     verdict exists, because `Phase.FINDING_AUDIT`'s cap counts rounds and S-9.8 is
@@ -306,9 +315,16 @@ def audit_finding(  # noqa: PLR0913 - the workload, the log, the conditions and
     kinds = kinds_from(log)
 
     results = [
-        from_exclusions(audit_all(exclusions, fits=fits, relative_noise=relative_noise)),
+        # **Exclusions get the span check and not the fit-quality one, and that
+        # is unchanged rather than a regression.** An `Exclusion` declares no
+        # metric — its claim is *queries flat across 100x scale* and the metric
+        # lives in the prose — so there is no name to select a curve by. Passing
+        # the finding's metric would judge one hypothesis's exclusion against
+        # another's claim. Recorded as follow-on work; today a fit reaches
+        # `audit_exclusion` only where the experiment fitted exactly one metric.
+        from_exclusions(audit_all(exclusions, fits=_single(fits), relative_noise=relative_noise)),
         from_fixture(assess_fixture(conditions, workload.fixture)),
-        audit_scales_result(scales, _fit_for(log, fits), relative_noise=relative_noise),
+        audit_scales_result(scales, _fit_for(log, fits, metric), relative_noise=relative_noise),
         from_alternatives(alternatives.value),
         reproducibility_result(key_experiment(log), rerun, kinds, relative_noise=relative_noise),
         from_representativeness(representativeness.value),
@@ -319,15 +335,28 @@ def audit_finding(  # noqa: PLR0913 - the workload, the log, the conditions and
     return route(verdict, session.budget, finding_id), tuple(calls)
 
 
-def fits_from(log: ExperimentLog) -> dict[int, Fit]:
-    """Every growth fit the log carries, keyed by experiment index. **S-8.12.**
+def fits_from(log: ExperimentLog) -> dict[int, Mapping[str, Fit]]:
+    """Every growth fit the log carries, by experiment index then by metric.
 
-    Keyed by index because that is how S-9.2 reads them: an exclusion names the
-    experiment that produced it, and the fit to judge is that experiment's.
-    Experiments that fitted nothing are absent rather than present-and-empty —
-    an ablation draws no curve, and S-9.2 refuses to judge one nobody drew.
+    **S-8.12 for the index, S-17.12 for the metric.** Keyed by index because that
+    is how S-9.2 reads them — an exclusion names the experiment that produced it.
+    Keyed by metric inside that because a volume sweep fits every metric it
+    measured, and `audit/scales.py` raises `FIT_TOO_POOR` from a single curve's
+    r²: judging a `db.query` claim against a noisy `seconds` fit is an objection
+    to something nobody claimed.
+
+    **Experiments that fitted nothing are left out, and that is now tidiness
+    rather than a guarantee.** It was a real distinction while the value was a
+    `Fit | None`: absent and `None` were different things a reader could confuse.
+    With a mapping they are not — an empty mapping *is* the absence, `_fit_for`
+    reads `fits.get(index, {})`, and `_single` drops both. Sabotage confirms:
+    keeping the empty entries changes no outcome.
+
+    Recorded rather than tested, and rather than dropping the filter: a comment
+    claiming a protection that is no longer there is what S-2.6 found in its own
+    `--volumes` note, and the correction is to say what is true.
     """
-    return {item.index: item.fit for item in log.experiments if item.fit is not None}
+    return {item.index: item.fits for item in log.experiments if item.fits}
 
 
 def kinds_from(log: ExperimentLog) -> Mapping[str, MetricKind]:
@@ -345,13 +374,37 @@ def kinds_from(log: ExperimentLog) -> Mapping[str, MetricKind]:
     return merged
 
 
-def _fit_for(log: ExperimentLog, fits: Mapping[int, Fit]) -> Fit | None:
-    """The fit behind the finding's growth claim: the most recent one recorded."""
-    if not fits:
-        return None
+def _single(fits: Mapping[int, Mapping[str, Fit]]) -> dict[int, Fit]:
+    """The one fit per experiment, where an experiment fitted exactly one metric.
+
+    What `audit_exclusion` can honestly be given until an `Exclusion` names the
+    metric it rests on: with one curve there is no choice to get wrong, and with
+    several there is no basis to choose. An absent fit leaves the span check,
+    which is metric-independent, and drops only the r² objection — which is the
+    same thing that happened before S-17.12 for every multi-metric sweep.
+    """
+    return {index: next(iter(drawn.values())) for index, drawn in fits.items() if len(drawn) == 1}
+
+
+def _fit_for(log: ExperimentLog, fits: Mapping[int, Mapping[str, Fit]], metric: str) -> Fit | None:
+    """The fit behind the finding's growth claim: **the one for its own metric**.
+
+    S-17.12. It used to be *the most recent one recorded*, which was the only
+    thing it could be while an experiment carried a single fit — and recency is
+    not the claim. The finding cites `Symptom.metric`, `audit_scales` reads
+    `exponent` and `power_r_squared` off whatever curve it is given, and a sweep
+    fits every metric it measured. So the most recent fit was as likely to be
+    `seconds` as the metric the finding rests on, and a poor fit on the wrong one
+    objects to a claim nobody made.
+
+    Still the most recent *experiment* that fitted this metric, because a
+    reseeded investigation measures the same metric more than once and the last
+    sweep is the one the claim was drawn from.
+    """
     for experiment in reversed(log.experiments):
-        if experiment.index in fits:
-            return fits[experiment.index]
+        drawn = fits.get(experiment.index, {})
+        if metric in drawn:
+            return drawn[metric]
     return None
 
 
