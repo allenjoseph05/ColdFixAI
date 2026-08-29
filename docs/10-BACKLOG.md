@@ -1983,6 +1983,18 @@ AC:
 - The measured `warm_hit_rate()` on a driven multi-call loop is above zero, which it cannot be today
 - `04-cost.md` §12.3 may be quoted as achieved, or the story says why not
 
+**ATTEMPTED 2026-08-29 AND REVERTED, WITH THE DESIGN VERIFIED. The work is in `git stash@{0}`.** The source side was completed and is clean — `uv run mypy .` passes over 333 files — and the obstacle that stopped it is a **third** thing neither composition check recorded. Take the stash rather than starting over.
+
+**What was built and works.** `llm/request.py`: `as_request(blocks)` shapes the API request with `cache_control` on each cacheable segment's end, `with_question(blocks, question)` swaps only the question, `text_of` flattens. `Session.run` hands the rendered blocks to `call`, whose type is now `Callable[[str, Sequence[Block]], ...]`. Ten of the eleven agents shape their request from the blocks. `request_digest` strips `cache_control` recursively, so two requests differing only in breakpoints resolve to one recording — a breakpoint changes what a call *costs*, not what it *asks*.
+
+**Two findings the attempt produced, and both are why a mechanical migration is wrong.**
+
+1. **`design`, `explain` and `interpretation` re-render their question on every attempt**, feeding the previous rejection back in — ADR 085's *a retry told what was wrong is a correction, a retry at a higher temperature is a dice roll*. `Session.run` renders the blocks once, from the **first** attempt's question, so sending them unchanged on attempt two sends the question that was already rejected and **loses the correction entirely**. `with_question` exists for exactly this, and it makes the retry cheaper as a side effect: the prefix is byte-identical, so attempt two reads the cache attempt one wrote.
+
+2. **The Adversary must keep building its own message list, and a regex nearly took it.** `audit/invocation.py`'s `audit_messages` *is* `CLAUDE.md`'s non-negotiable — *the Adversary never sees the Surgeon's reasoning, enforced by constructing a fresh message list, not by instructing the model to ignore it.* A blind migration dropped `evidence` from the request and only `F841` caught it. That call site stays as it is; the caching it forgoes is the audit's ten calls, not investigation's hundred and twenty.
+
+**THE OBSTACLE, WHICH IS THE REAL REMAINING WORK.** Moving the log into the cached prefix means **the prefix grows on every call** — which is correct and is Epic 5's whole design (`context.py`: *call N's log is a byte prefix of call N+1's*), and it means **every recording must mirror the session's log state at the moment of its call**. The fixtures build theirs from a fresh session with an empty log, so 48 tests across 8 files fail with `NoRecordingError`. The fix is per file rather than mechanical: `_recording_list` already walks a growing `ExperimentLog`, so a session whose `.log` is set to `log.pruned` before each render reproduces it — but each of the eight files structures its sessions differently, and one (`test_testaudit.py`) mismatches for an unrelated reason still undiagnosed. Rushing that is how a recording comes to answer the wrong request, which is the failure the replaying client exists to prevent.
+
 Notes: **do not quote §12.3's cost as achieved until this lands** — both composition checks say so explicitly, and that sentence is the reason this story exists rather than a caveat on it. `Prompt.viability` already answers *will this actually cache*, and S-5.7 recorded the trap it exists for: **haiku's minimum cacheable prefix is 4096 tokens**, so routing a step down a tier can raise its effective cost. A run that starts caching should be checked against `viability` per model rather than assumed.
 
 ### S-17.2 — Documentation
