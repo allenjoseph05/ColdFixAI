@@ -46,19 +46,19 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from anthropic.types import MessageParam
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from coldfix.cost.accounting import Agent, Phase, TokenUsage
 from coldfix.cost.cascade import NoDearerTierError
+from coldfix.cost.context import Block
 from coldfix.cost.pruning import MAX_SUMMARY_CHARS
 from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step, StepOutcome
 from coldfix.diagnosis.hypothesis import Hypothesis
-from coldfix.diagnosis.log import ExperimentLog
 from coldfix.diagnosis.replies import read_object
 from coldfix.diagnosis.schema import PrimitiveSchema, schema_of
 from coldfix.llm.client import ModelClient
+from coldfix.llm.request import as_request, with_question
 from coldfix.primitives.registry import Selection
 
 DESIGN_TEMPERATURE = 0.0
@@ -210,8 +210,6 @@ def render_question(
     *,
     hypothesis: Hypothesis,
     schema: PrimitiveSchema,
-    source: str,
-    log: ExperimentLog,
     rejections: Sequence[str] = (),
 ) -> str:
     """The design question, with any earlier rejections last.
@@ -220,12 +218,16 @@ def render_question(
     varying question last, so the rejections go at the end: they are the only
     part that differs between the cascade's attempts, and putting them anywhere
     else would invalidate the prefix on every retry.
+
+    **The source and the log are not here, and their absence is S-17.16.** They
+    used to be rendered into this question *and* into the cached blocks beside
+    it, so every call sent both copies and paid full price for the one that was
+    supposed to be free. They are the session's now: `Session.run` renders them
+    as blocks with a breakpoint, and this function asks only what varies.
     """
     question = (
         f"HYPOTHESIS\n{hypothesis.describe()}\n\n"
         f"INSTRUMENT\n{schema.render()}\n\n"
-        f"SOURCE UNDER SUSPICION\n{source}\n\n"
-        f"EXPERIMENT LOG\n{log.render()}\n\n"
         "Specify the experiment."
     )
     if not rejections:
@@ -271,16 +273,16 @@ def parse(text: str, *, primitive: str, schema: PrimitiveSchema) -> Draft:
     return Draft(spec, "")
 
 
-def design(  # noqa: PLR0913 - the hypothesis, its instruments, the source and the
-    # log are what a design is made from, plus the session and the client. There
-    # is deliberately no `validate` among them — see the module docstring.
+def design(  # noqa: PLR0913 - the hypothesis and its instruments are what a design
+    # is made from, plus the session, the client and the two measured token counts.
+    # S-17.16 took the source and the log out of this list, where they were being
+    # sent twice; what is left is not reducible. There is deliberately no
+    # `validate` among them — see the module docstring.
     session: Session,
     client: ModelClient,
     *,
     hypothesis: Hypothesis,
     instruments: Selection,
-    source: str,
-    log: ExperimentLog,
     measured_prefix_tokens: int,
     measured_prompt_tokens: int,
     finding_id: str | None = None,
@@ -308,7 +310,7 @@ def design(  # noqa: PLR0913 - the hypothesis, its instruments, the source and t
     schema = schema_of(instruments.get(hypothesis.primitive))
     rejections: list[str] = []
 
-    first = render_question(hypothesis=hypothesis, schema=schema, source=source, log=log)
+    first = render_question(hypothesis=hypothesis, schema=schema)
     step = Step(
         step_type=StepType.EXPERIMENT_DESIGN,
         phase=Phase.INVESTIGATE,
@@ -317,15 +319,16 @@ def design(  # noqa: PLR0913 - the hypothesis, its instruments, the source and t
         finding_id=finding_id,
     )
 
-    def call(model: str) -> tuple[Draft, TokenUsage]:
-        question = render_question(
-            hypothesis=hypothesis,
-            schema=schema,
-            source=source,
-            log=log,
-            rejections=rejections,
-        )
-        messages: Sequence[MessageParam] = [{"role": "user", "content": question}]
+    def call(model: str, blocks: Sequence[Block]) -> tuple[Draft, TokenUsage]:
+        question = render_question(hypothesis=hypothesis, schema=schema, rejections=rejections)
+        # Only the question block moves: the rejection is the correction ADR 085
+        # is about, and the prefix it is appended to is the one the previous
+        # attempt already cached.
+        # **The system prompt is this module's, never the session's.** The
+        # investigate loop runs three steps on one session, so the session's
+        # string is not every step's prompt — sending it would tell two of them
+        # to answer a third one's question. See `llm/request.py`.
+        messages = as_request(with_question(blocks, question))
         reply = client.complete(
             model=model,
             system=_SYSTEM,

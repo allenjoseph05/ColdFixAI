@@ -45,6 +45,7 @@ from coldfix.sandbox.reset import ResetMechanism, ResetStrategy
 from coldfix.sandbox.verification import VerificationReport, VerifiedReset
 from fixtures.planted.rendering import CheapRenderer, ExpensiveRenderer, ListView
 from fixtures.planted.store import Store, build_store
+from fixtures.requests import shaped
 
 QUERIES = "store.select"
 SCALES = (10, 20, 40)
@@ -251,13 +252,52 @@ def payload(text: str, *, model: str) -> dict[str, object]:
     }
 
 
-def recorded(
-    *, system: str, question: str, reply: str, model: str, temperature: float
+def recording_session(log: ExperimentLog) -> Session:
+    """A session rendering `log`, for building recordings against. **S-17.16.**
+
+    **The log has to be joined before the first `prompt_for`.** `Investigation`
+    binds `log_source=self.log.render` when it builds a model's prompt and caches
+    the prompt from then on, so a session given its log afterwards renders the
+    empty one it was constructed with — for every call, silently, because an
+    empty log block is a valid prefix of a full one and caching would still
+    report hits.
+
+    Bound to the `PrunedLog` object rather than to a copy of its text, so the
+    block grows as the walk appends and each recording sees the log as it stood
+    at its own call. That is what the real run does: `Investigation.__post_init__`
+    performs this same assignment, for this same reason.
+    """
+    session = a_session()
+    session.log = log.pruned
+    return session
+
+
+def recorded(  # noqa: PLR0913 - a recording is identified by its whole request, and
+    # the digest is over every one of these. Dropping one to satisfy the rule would
+    # mean defaulting it, and a defaulted temperature or model is how a recording
+    # comes to answer a call it was not made for.
+    *,
+    session: Session,
+    system: str,
+    question: str,
+    reply: str,
+    model: str,
+    temperature: float,
 ) -> Recording:
+    """One recording, shaped from `session`'s prompt as it stands right now.
+
+    `session` is not a default. A recording built from a fresh session records
+    the request as it would be on call one, and every call after the first asks
+    against a longer log — so a default here would make the caller's *second*
+    recording wrong in a way nothing reads as an error.
+    """
     return Recording.of(
         model=model,
+        # **The module's own prompt, never the session's.** `as_request` does not
+        # shape `Segment.SYSTEM`, because one session drives all three
+        # Diagnostician steps and its string is not every step's prompt.
         system=system,
-        messages=[{"role": "user", "content": question}],
+        messages=shaped(session, model, question),
         max_tokens={
             hypothesis_module._SYSTEM: hypothesis_module.MAX_OUTPUT_TOKENS,
             design_module._SYSTEM: design_module.MAX_OUTPUT_TOKENS,
@@ -388,6 +428,7 @@ def _recording_list(investigation: Investigation, plan: list[Turn]) -> list[Reco
     recording.
     """
     log = ExperimentLog()
+    session = recording_session(log)
     recordings = []
     register = ExclusionRegister()
 
@@ -405,13 +446,11 @@ def _recording_list(investigation: Investigation, plan: list[Turn]) -> list[Reco
             turn.reading,
         )
         question = hypothesis_module.render_question(
-            log=log,
-            exclusions=register.render(CONDITIONS),
-            source=investigation.source,
-            instruments=investigation.instruments,
+            exclusions=register.render(CONDITIONS), instruments=investigation.instruments
         )
         recordings.append(
             recorded(
+                session=session,
                 system=hypothesis_module._SYSTEM,
                 question=question,
                 reply=json.dumps(answer),
@@ -422,11 +461,10 @@ def _recording_list(investigation: Investigation, plan: list[Turn]) -> list[Reco
 
         hypothesis = Hypothesis(**answer)
         schema = schema_of(investigation.instruments.get(hypothesis.primitive))
-        design_question = design_module.render_question(
-            hypothesis=hypothesis, schema=schema, source=investigation.source, log=log
-        )
+        design_question = design_module.render_question(hypothesis=hypothesis, schema=schema)
         recordings.append(
             recorded(
+                session=session,
                 system=design_module._SYSTEM,
                 question=design_question,
                 reply=json.dumps(spec_reply),
@@ -436,10 +474,11 @@ def _recording_list(investigation: Investigation, plan: list[Turn]) -> list[Reco
         )
 
         interpret_question = interpretation_module.render_question(
-            hypothesis=hypothesis, spec=spec, measurement=measurement, log=log
+            hypothesis=hypothesis, spec=spec, measurement=measurement
         )
         recordings.append(
             recorded(
+                session=session,
                 system=interpretation_module._SYSTEM,
                 question=interpret_question,
                 reply=json.dumps(reading),
@@ -468,6 +507,7 @@ def _repeat_recordings(investigation: Investigation, primitive: str) -> list[Rec
     """The three refusals `propose` needs before it gives up on one instrument."""
     register = ExclusionRegister()
     log = ExperimentLog()
+    session = recording_session(log)
     experiment = log.append(
         hypothesis="hypothesis 0",
         primitive=primitive,
@@ -492,13 +532,11 @@ def _repeat_recordings(investigation: Investigation, primitive: str) -> list[Rec
     recordings = []
     for _ in range(3):
         question = hypothesis_module.render_question(
-            log=log,
-            exclusions=(*register.render(CONDITIONS), *notes),
-            source=investigation.source,
-            instruments=investigation.instruments,
+            exclusions=(*register.render(CONDITIONS), *notes), instruments=investigation.instruments
         )
         recordings.append(
             recorded(
+                session=session,
                 system=hypothesis_module._SYSTEM,
                 question=question,
                 reply=repeat,

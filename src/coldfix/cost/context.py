@@ -134,6 +134,29 @@ class Block:
     breakpoint: bool
 
 
+def labelled(segment: Segment, text: str) -> str:
+    """`text` under its segment's own name. **S-17.16.**
+
+    The source and the log used to arrive labelled because each agent wrote a
+    header above them *in its question* — and wrote the content again with it,
+    which is the duplication S-17.16 removes. The content now travels once, as a
+    block, so the header has to travel with it or the model receives a bare path
+    and a bare log between a playbook and a question with nothing saying what
+    either is.
+
+    Taken from `Segment` rather than written out at each call, so a renamed
+    segment cannot leave a stale header behind on the one block nobody re-read.
+
+    Empty text stays empty rather than becoming a lone header. `as_request` drops
+    an empty block, and a labelled empty one would instead send the word
+    `EXPERIMENT LOG` above nothing — which reads as a log that was rendered and
+    came back blank rather than one that has no entries yet.
+    """
+    if not text.strip():
+        return ""
+    return f"{segment.value.upper()}\n{text}"
+
+
 class Cacheability(StrEnum):
     """Whether this prompt can hit the cache at all."""
 
@@ -319,8 +342,8 @@ class Investigation:
         blocks = (
             Block(Segment.SYSTEM, self.system, breakpoint=True),
             Block(Segment.PLAYBOOK, self.playbook, breakpoint=True),
-            Block(Segment.SOURCE, self.source, breakpoint=True),
-            Block(Segment.LOG, self.log_text(), breakpoint=True),
+            Block(Segment.SOURCE, labelled(Segment.SOURCE, self.source), breakpoint=True),
+            Block(Segment.LOG, labelled(Segment.LOG, self.log_text()), breakpoint=True),
             Block(Segment.QUESTION, question, breakpoint=False),
         )
 

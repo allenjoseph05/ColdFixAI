@@ -46,7 +46,7 @@ only stated.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -59,6 +59,7 @@ from coldfix.audit.invocation import (
 )
 from coldfix.cost.accounting import Agent, ExchangeRate, Phase, TokenUsage
 from coldfix.cost.budget import Budget
+from coldfix.cost.context import Block
 from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step, StepOutcome
 from coldfix.diagnosis.chain import EvidenceChain
@@ -263,7 +264,8 @@ def invoke(  # noqa: PLR0913 - the candidate, the chain, the test, the question
         finding_id=finding_id,
     )
 
-    def call(model: str) -> tuple[str, TokenUsage]:
+    def call(model: str, blocks: Sequence[Block]) -> tuple[str, TokenUsage]:
+        del blocks  # the Adversary builds its own list — see `audit_messages`
         reply = client.complete(
             model=model,
             system=SYSTEM,

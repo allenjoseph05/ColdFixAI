@@ -128,9 +128,7 @@ def test_a_hypothesis_reproposing_a_settled_instrument_is_refused_and_reasked() 
     )
 
     first = hypothesis_module.render_question(
-        log=investigation.log,
         exclusions=investigation.exclusions.render(CONDITIONS),
-        source=investigation.source,
         instruments=investigation.instruments,
     )
     note = (
@@ -139,15 +137,14 @@ def test_a_hypothesis_reproposing_a_settled_instrument_is_refused_and_reasked() 
         "this one to be worth repeating."
     )
     second = hypothesis_module.render_question(
-        log=investigation.log,
         exclusions=(*investigation.exclusions.render(CONDITIONS), note),
-        source=investigation.source,
         instruments=investigation.instruments,
     )
 
     investigation.client = ReplayingClient(
         [
             recorded(
+                session=investigation.session,
                 system=hypothesis_module._SYSTEM,
                 question=first,
                 reply=repeat,
@@ -155,6 +152,7 @@ def test_a_hypothesis_reproposing_a_settled_instrument_is_refused_and_reasked() 
                 temperature=hypothesis_module.HYPOTHESIS_TEMPERATURE,
             ),
             recorded(
+                session=investigation.session,
                 system=hypothesis_module._SYSTEM,
                 question=second,
                 reply=switch,
@@ -190,13 +188,12 @@ def test_an_agent_that_only_ever_repeats_is_a_result_and_not_a_crash() -> None:
     recordings = []
     for _ in range(3):
         question = hypothesis_module.render_question(
-            log=investigation.log,
             exclusions=(*investigation.exclusions.render(CONDITIONS), *notes),
-            source=investigation.source,
             instruments=investigation.instruments,
         )
         recordings.append(
             recorded(
+                session=investigation.session,
                 system=hypothesis_module._SYSTEM,
                 question=question,
                 reply=repeat,
