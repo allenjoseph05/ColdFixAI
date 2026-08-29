@@ -56,6 +56,7 @@ from coldfix.cost.session import Session, Step, StepOutcome
 from coldfix.explorer.stages import Outcome, Progress, Stage
 from coldfix.llm.client import ModelClient
 from coldfix.llm.request import as_request
+from coldfix.repair.sessions import refuse_foreign_session
 
 EXPLORER_TEMPERATURE = 0.3
 """`03-agents.md` §2.1. Between the Diagnostician's two: standing a project up is
@@ -317,6 +318,7 @@ def propose(  # noqa: PLR0913 - the four inputs `render_question` needs plus the
         ProposalError: no usable action came back.
         BudgetExhaustedError: a cap or the ceiling stopped the call.
     """
+    refuse_foreign_session(session, _SYSTEM, ProposalError)
     question = render_question(
         blocked=blocked,
         progress=progress,

@@ -68,6 +68,7 @@ from coldfix.diagnosis.log import Verdict
 from coldfix.diagnosis.replies import Attempted, read_object
 from coldfix.llm.client import ModelClient
 from coldfix.llm.request import as_request, with_question
+from coldfix.repair.sessions import refuse_foreign_session
 
 INTERPRETATION_TEMPERATURE = 0.0
 """`03-agents.md` §2.4. 8.24 seconds means the same thing every time, and a
@@ -349,6 +350,7 @@ def interpret(  # noqa: PLR0913 - what was believed, what was run and what came
             measure, the dearest model included.
         BudgetExhaustedError: a cap or the ceiling stopped an attempt.
     """
+    refuse_foreign_session(session, _SYSTEM, InterpretationError)
     rejections: list[str] = []
     first = render_question(hypothesis=hypothesis, spec=spec, measurement=measurement)
     step = Step(

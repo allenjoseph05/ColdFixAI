@@ -16,6 +16,7 @@ import pytest
 
 from coldfix.cost.cascade import cascadable
 from coldfix.cost.routing import StepType
+from coldfix.diagnosis import explain as explain_module
 from coldfix.diagnosis.chain import Symptom
 from coldfix.diagnosis.explain import (
     Explanation,
@@ -193,7 +194,7 @@ def test_an_investigation_that_confirmed_nothing_is_never_asked() -> None:
 
     with pytest.raises(ExplanationError, match="confirmed nothing"):
         explain(
-            a_session(),
+            a_session(explain_module._SYSTEM),
             client,
             symptom=Symptom(metric="seconds", at_scale=1000.0, magnitude=8.24),
             confirming=(),

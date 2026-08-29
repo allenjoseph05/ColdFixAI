@@ -33,10 +33,10 @@ from coldfix.diagnosis.design import ExperimentSpec, JSONValue
 from coldfix.diagnosis.exclusions import Conditions, Exclusion, ExclusionRegister
 from coldfix.diagnosis.hypothesis import Hypothesis
 from coldfix.diagnosis.log import ExperimentLog, Verdict
-from coldfix.diagnosis.loop import Investigation, Measured
-from coldfix.diagnosis.progress import INVESTIGATION_STALL_AFTER
+from coldfix.diagnosis.loop import Investigation, Measured, SessionFor
 from coldfix.diagnosis.schema import schema_of
 from coldfix.llm.client import Recording, ReplayingClient
+from coldfix.orchestrator.campaign import sessions_for
 from coldfix.primitives.ablation import ablate
 from coldfix.primitives.registry import REGISTRY, ProjectProfile, Selection
 from coldfix.primitives.scaling import Distribution, scale_volume
@@ -252,8 +252,8 @@ def payload(text: str, *, model: str) -> dict[str, object]:
     }
 
 
-def recording_session(log: ExperimentLog) -> Session:
-    """A session rendering `log`, for building recordings against. **S-17.16.**
+def recording_sessions(log: ExperimentLog) -> SessionFor:
+    """`sessions`, with every session it hands out rendering `log`. **S-17.16.**
 
     **The log has to be joined before the first `prompt_for`.** `Investigation`
     binds `log_source=self.log.render` when it builds a model's prompt and caches
@@ -266,10 +266,22 @@ def recording_session(log: ExperimentLog) -> Session:
     block grows as the walk appends and each recording sees the log as it stood
     at its own call. That is what the real run does: `Investigation.__post_init__`
     performs this same assignment, for this same reason.
+
+    **Its own factory, not the investigation's. S-17.17.** One session per step,
+    built the same way, but *separate objects* — because this walk drives the log
+    forward to build each recording, and sharing the run's sessions would leave
+    their cached prompts bound to the walk's log instead of the run's. The
+    request is identical either way; what must not be shared is the log the
+    prompt renders.
     """
-    session = a_session()
-    session.log = log.pruned
-    return session
+    sessions = a_sessions()
+
+    def opened(system: str) -> Session:
+        session = sessions(system)
+        session.log = log.pruned
+        return session
+
+    return opened
 
 
 def recorded(  # noqa: PLR0913 - a recording is identified by its whole request, and
@@ -277,19 +289,21 @@ def recorded(  # noqa: PLR0913 - a recording is identified by its whole request,
     # mean defaulting it, and a defaulted temperature or model is how a recording
     # comes to answer a call it was not made for.
     *,
-    session: Session,
+    sessions: SessionFor,
     system: str,
     question: str,
     reply: str,
     model: str,
     temperature: float,
 ) -> Recording:
-    """One recording, shaped from `session`'s prompt as it stands right now.
+    """One recording, shaped from this step's own session as it stands right now.
 
-    `session` is not a default. A recording built from a fresh session records
-    the request as it would be on call one, and every call after the first asks
-    against a longer log — so a default here would make the caller's *second*
-    recording wrong in a way nothing reads as an error.
+    **`system` picks the session as well as being sent**, which is S-17.17: each
+    step has its own, and a recording built against another step's answers a
+    request nothing makes. Neither argument is a default — a recording built from
+    a fresh factory records call one, and every call after the first asks against
+    a longer log, so a default would make the caller's *second* recording wrong
+    in a way nothing reads as an error.
     """
     return Recording.of(
         model=model,
@@ -297,7 +311,7 @@ def recorded(  # noqa: PLR0913 - a recording is identified by its whole request,
         # shape `Segment.SYSTEM`, because one session drives all three
         # Diagnostician steps and its string is not every step's prompt.
         system=system,
-        messages=shaped(session, model, question),
+        messages=shaped(sessions(system), model, question),
         max_tokens={
             hypothesis_module._SYSTEM: hypothesis_module.MAX_OUTPUT_TOKENS,
             design_module._SYSTEM: design_module.MAX_OUTPUT_TOKENS,
@@ -308,6 +322,21 @@ def recorded(  # noqa: PLR0913 - a recording is identified by its whole request,
     )
 
 
+A_HYPOTHESIS = Hypothesis(
+    statement="the renderer dominates the request",
+    primitive="scaling.volume",
+    rationale="queries are flat, so the cost is above the database",
+)
+"""One valid hypothesis, for tests that need the shape rather than the content."""
+
+A_SPEC = ExperimentSpec(
+    primitive="scaling.volume",
+    target="shop.books.list",
+    arguments={"scales": list(SCALES), "distribution": "uniform"},
+)
+"""Its specification, likewise."""
+
+
 def instruments(*names: str) -> Selection:
     return Selection(
         profile=ProjectProfile(),
@@ -316,23 +345,51 @@ def instruments(*names: str) -> Selection:
     )
 
 
-def a_session() -> Session:
-    return Session(
-        system="You find performance problems by running experiments.",
+SOURCE = "shop/views.py::ListView.list_books"
+
+
+def a_sessions() -> SessionFor:
+    """The campaign's own factory, one session per step's prompt. **S-17.17.**
+
+    `sessions_for` rather than a hand-built `Session`, because the thing under
+    test in half this suite is what a call sends, and a fixture that hands one
+    session to three steps models a shape the campaign no longer produces. It
+    also brings the stall regimes and the shared budget with it, which a
+    hand-built session would have to restate and could restate wrongly.
+    """
+    return sessions_for(
         playbook="Django: count queries with force_debug_cursor.",
-        source="shop/views.py::ListView.list_books",
+        source=SOURCE,
         rate=ExchangeRate(Decimal("0.92"), date(2026, 8, 16)),
-        # S-8.9 refuses an investigation budget at any other value.
-        stall_after=INVESTIGATION_STALL_AFTER,
     )
 
 
-def an_investigation(client: ReplayingClient, execute: object) -> Investigation:
+def a_session(system: str = hypothesis_module._SYSTEM) -> Session:
+    """One step's session. Defaults to the hypothesis step's.
+
+    A default so the many tests that only need *a* session keep reading simply,
+    named so the ones that care say which step they mean — `refuse_foreign_session`
+    now rejects the wrong one, and S-8.9 refuses an investigation budget at any
+    stall value but eight, which `sessions_for` supplies.
+    """
+    return a_sessions()(system)
+
+
+def an_investigation(
+    client: ReplayingClient, execute: object, sessions: SessionFor | None = None
+) -> Investigation:
+    """The loop, with its three sessions.
+
+    `sessions` is a parameter because a test that builds recordings has to walk
+    the *same* factory the investigation will use — a second one would hand out
+    different `Session` objects with their own empty logs, and every recording
+    would answer a request the run does not make.
+    """
     return Investigation(
-        session=a_session(),
+        sessions=sessions if sessions is not None else a_sessions(),
         client=client,
         instruments=instruments("scaling.volume", "ablation.stub"),
-        source="shop/views.py::ListView.list_books",
+        source=SOURCE,
         conditions=CONDITIONS,
         execute=execute,  # type: ignore[arg-type]
     )
@@ -428,7 +485,7 @@ def _recording_list(investigation: Investigation, plan: list[Turn]) -> list[Reco
     recording.
     """
     log = ExperimentLog()
-    session = recording_session(log)
+    sessions = recording_sessions(log)
     recordings = []
     register = ExclusionRegister()
 
@@ -450,7 +507,7 @@ def _recording_list(investigation: Investigation, plan: list[Turn]) -> list[Reco
         )
         recordings.append(
             recorded(
-                session=session,
+                sessions=sessions,
                 system=hypothesis_module._SYSTEM,
                 question=question,
                 reply=json.dumps(answer),
@@ -464,7 +521,7 @@ def _recording_list(investigation: Investigation, plan: list[Turn]) -> list[Reco
         design_question = design_module.render_question(hypothesis=hypothesis, schema=schema)
         recordings.append(
             recorded(
-                session=session,
+                sessions=sessions,
                 system=design_module._SYSTEM,
                 question=design_question,
                 reply=json.dumps(spec_reply),
@@ -478,7 +535,7 @@ def _recording_list(investigation: Investigation, plan: list[Turn]) -> list[Reco
         )
         recordings.append(
             recorded(
-                session=session,
+                sessions=sessions,
                 system=interpretation_module._SYSTEM,
                 question=interpret_question,
                 reply=json.dumps(reading),
@@ -507,7 +564,7 @@ def _repeat_recordings(investigation: Investigation, primitive: str) -> list[Rec
     """The three refusals `propose` needs before it gives up on one instrument."""
     register = ExclusionRegister()
     log = ExperimentLog()
-    session = recording_session(log)
+    sessions = recording_sessions(log)
     experiment = log.append(
         hypothesis="hypothesis 0",
         primitive=primitive,
@@ -536,7 +593,7 @@ def _repeat_recordings(investigation: Investigation, primitive: str) -> list[Rec
         )
         recordings.append(
             recorded(
-                session=session,
+                sessions=sessions,
                 system=hypothesis_module._SYSTEM,
                 question=question,
                 reply=repeat,

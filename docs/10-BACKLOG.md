@@ -2016,6 +2016,25 @@ AC:
 
 Notes: **do not quote §12.3's cost as achieved until this lands** — both composition checks say so explicitly, and that sentence is the reason this story exists rather than a caveat on it. `Prompt.viability` already answers *will this actually cache*, and S-5.7 recorded the trap it exists for: **haiku's minimum cacheable prefix is 4096 tokens**, so routing a step down a tier can raise its effective cost. A run that starts caching should be checked against `viability` per model rather than assumed.
 
+### S-17.17 — One session per step, and one budget per phase
+**DONE (2026-08-29, ADR 170).** `Investigation` holds a factory and derives three sessions; `refuse_foreign_session` now guards all seven block-shaped call sites rather than two; budgets are shared per stall regime. **The second defect was real and was live on `main`**: measured at `Phase.REPAIR`, whose three-attempt cap allowed six because the node opens two sessions and each built its own `Budget` — the euro ceiling was right all along, which is why nothing noticed, since `spent_eur` reads the shared ledger. **The fixtures were part of the S-17.16 defect and are fixed too**: `thesis.py` built a `Session` by hand with a generic system string and gave it to three steps, a shape the campaign does not produce, and that is why 3307 tests passed with the regression live. It now calls `sessions_for`. `recording_sessions` keeps its **own** factory, because the walk drives a log forward to build each recording and the run needs its own log behind the same request.
+
+Depends: S-17.16
+Why: **`sessions_for` documents itself as *"a session per agent step"* and the investigate node does not use it that way.** `adapters.py` opens one session for the whole loop with `_INVESTIGATION_PROMPT = hypothesis._SYSTEM`, so `design` and `interpret` run against a session whose system string is not their prompt. S-17.16 found this the hard way: shaping that string into the request would have handed two of the three steps the hypothesis prompt, and **the full gate stayed green while it did**, because every fixture builds its recordings from the session it drives the agent with. The guard that would have caught it — `repair/sessions.refuse_foreign_session` — exists, is used by `patch` and `falsification`, and was never applied to the other five call sites.
+
+**AND A SECOND DEFECT, MEASURED WHILE SCOPING THIS ONE, THAT IS ALREADY LIVE ON `main`.** `Session` builds its **own** `Budget` in `__post_init__`. `Ledger` is shared across a campaign's sessions and `Budget._used` is not — so a phase driven by two sessions counts its cap twice. Measured: `Phase.REPAIR` caps at **3 attempts**, the repair node opens `_SURGEON_TEST_PROMPT` and `_TEST_AUDIT_PROMPT`, and after three steps on the first the second still authorizes a fourth. The audit node has the same shape. **The stall history splits the same way**, so S-8.9's *three identical conclusions* can be reached six times without tripping. This is not caused by the story below — the story makes it worse, from two sessions per phase to four, which is why it is fixed here.
+
+**`stall_after` is the reason a budget cannot simply be per campaign.** `Budget._used` and `_conclusions` are both keyed by `(phase, finding_id)` already, so one budget serves every phase correctly on those. `stall_after` is not: it is a single per-`Budget` number, and `STALL_AFTER` gives grounding 15, an investigation 8 and everything else the default — three regimes that a single budget cannot hold at once. So a budget is shared **per stall regime**, which is the grouping the three values already describe.
+
+AC:
+- The investigate node opens a session per step's `_SYSTEM`; a test proves `design` and `interpret` are each sent their own system prompt on a driven loop, not the hypothesis one
+- `refuse_foreign_session` is called by every call site that shapes its request from the session's blocks; a test attempts the violation for each and asserts it raises
+- A campaign's sessions share one `Budget` per stall regime; a test drives a phase's cap to exhaustion through one session and asserts the other refuses the next step
+- The stall history is shared the same way; a test reaches `stall_after` across two sessions of one phase
+- `Investigation` holds its sessions rather than one, and the log join and the source check of ADR 169 hold for each
+
+Notes: **the cache cost of this is zero and the first version of ADR 169 said otherwise.** Caching is a prefix match with render order `tools` → `system` → `messages`, so the system parameter is part of the cached prefix; three steps sending three system prompts have had three cache entries all along, whatever the session count. Do not re-derive `04-cost.md` §12.2 for this story — the correction commit already did, and the figure that moved was §4's *one stable prefix per run*, which for the Diagnostician is one per step.
+
 ### S-17.2 — Documentation
 Depends: S-17.1
 AC:

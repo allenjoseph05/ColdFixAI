@@ -30,9 +30,15 @@ the same reason.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from coldfix.bench.stats import Growth
+from coldfix.cost.session import Session
+from coldfix.diagnosis import design as design_module
+from coldfix.diagnosis import hypothesis as hypothesis_module
+from coldfix.diagnosis import interpretation as interpretation_module
 from coldfix.diagnosis.chain import ChainError, EvidenceChain, Implicated, Site
 from coldfix.diagnosis.compose import assemble_with
 from coldfix.diagnosis.design import ExperimentSpec
@@ -52,6 +58,8 @@ from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetStrategy
 from coldfix.screening.workload import FixtureRecipe, Observation, Workload
 from fixtures.thesis import (  # the subject and its harness, not a second copy
+    A_HYPOTHESIS,
+    A_SPEC,
     CONDITIONS,
     SCALES,
     Subject,
@@ -103,7 +111,7 @@ def run_the_epic(subject: Subject) -> object:
     investigation = an_investigation(ReplayingClient([]), execute)
     client = thesis_recordings(investigation, subject)
     return run_investigation(
-        investigation.session,
+        investigation.sessions,
         client,
         instruments=investigation.instruments,
         source=investigation.source,
@@ -131,11 +139,11 @@ def test_the_log_the_agent_reads_is_the_log_the_prompt_caches(query_counter: Non
     result = run_the_epic(Subject())
 
     assert len(result.log.experiments) == 2  # type: ignore[attr-defined]
-    assert len(result.session.log.records) == 2  # type: ignore[attr-defined]
-    assert result.session.log is result.log.pruned  # type: ignore[attr-defined]
+    assert len(result.hypothesis_session.log.records) == 2  # type: ignore[attr-defined]
+    assert result.hypothesis_session.log is result.log.pruned  # type: ignore[attr-defined]
 
-    model = result.session.models_used[0]  # type: ignore[attr-defined]
-    blocks = result.session.prompt_for(model).render("next?")  # type: ignore[attr-defined]
+    model = result.hypothesis_session.models_used[0]  # type: ignore[attr-defined]
+    blocks = result.hypothesis_session.prompt_for(model).render("next?")  # type: ignore[attr-defined]
     rendered = next(block.text for block in blocks if "Experiment log" in block.text)
 
     assert "scaling.volume" in rendered
@@ -161,7 +169,9 @@ def test_an_investigation_whose_session_names_another_source_is_refused() -> Non
 
     with pytest.raises(LoopError, match="diagnose one file while measuring another"):
         Investigation(
-            session=session,
+            # One session for every step, which is what makes the mismatch the
+            # only thing under test here rather than the session count.
+            sessions=lambda _: session,
             client=ReplayingClient([]),
             instruments=instruments("scaling.volume"),
             source="shop/views.py::somebody_elses_view",
@@ -170,13 +180,118 @@ def test_an_investigation_whose_session_names_another_source_is_refused() -> Non
         )
 
 
+def test_each_step_runs_against_a_session_carrying_its_own_prompt() -> None:
+    """**S-17.17, and S-17.16 is how it was found.**
+
+    `adapters.py` opened one session for the whole loop with
+    `_INVESTIGATION_PROMPT = hypothesis._SYSTEM`, so `design` and `interpret` ran
+    against a prefix belonging to a step that was not theirs — billed and cached
+    under a system prompt their calls never sent. `Sessions` has documented
+    itself as *one per agent step* since it was written; this is the caller that
+    did not, and shaping that string into the request would have sent the
+    hypothesis prompt to two of the three.
+    """
+    investigation = an_investigation(ReplayingClient([]), lambda spec: None)
+
+    assert investigation.hypothesis_session.system == hypothesis_module._SYSTEM
+    assert investigation.design_session.system == design_module._SYSTEM
+    assert investigation.interpretation_session.system == interpretation_module._SYSTEM
+    assert len({id(session) for session in investigation.step_sessions}) == 3
+
+
+def test_the_three_sessions_share_one_budget_and_one_log() -> None:
+    """Three sessions must not become three experiment caps or three logs.
+
+    S-5.4 caps an investigation at forty experiments and S-8.9 stops it after
+    eight identical conclusions; both are counted on the budget, so a session
+    each would have made this loop's own bounds three times looser at the moment
+    it gained the sessions.
+    """
+    investigation = an_investigation(ReplayingClient([]), lambda spec: None)
+
+    assert len({id(session.budget) for session in investigation.step_sessions}) == 1
+    assert all(session.log is investigation.log.pruned for session in investigation.step_sessions)
+
+
+def _generate_with(session: Session) -> None:
+    hypothesis_module.generate(
+        session,
+        ReplayingClient([]),
+        exclusions=(),
+        instruments=instruments("scaling.volume"),
+        measured_prefix_tokens=100,
+        measured_prompt_tokens=900,
+    )
+
+
+def _design_with(session: Session) -> None:
+    design_module.design(
+        session,
+        ReplayingClient([]),
+        hypothesis=A_HYPOTHESIS,
+        instruments=instruments("scaling.volume"),
+        measured_prefix_tokens=100,
+        measured_prompt_tokens=900,
+    )
+
+
+def _interpret_with(session: Session) -> None:
+    interpretation_module.interpret(
+        session,
+        ReplayingClient([]),
+        hypothesis=A_HYPOTHESIS,
+        spec=A_SPEC,
+        measurement={"db.query": 2.0},
+        measured_prefix_tokens=100,
+        measured_prompt_tokens=900,
+    )
+
+
+@pytest.mark.parametrize(
+    ("step", "error", "borrowed_from"),
+    [
+        pytest.param(
+            _generate_with, hypothesis_module.HypothesisError, design_module._SYSTEM, id="generate"
+        ),
+        pytest.param(
+            _design_with, design_module.DesignError, hypothesis_module._SYSTEM, id="design"
+        ),
+        pytest.param(
+            _interpret_with,
+            interpretation_module.InterpretationError,
+            hypothesis_module._SYSTEM,
+            id="interpret",
+        ),
+    ],
+)
+def test_a_step_refuses_a_session_belonging_to_another_step(
+    step: Callable[[Session], None], error: type[Exception], borrowed_from: str
+) -> None:
+    """The violation, attempted once per step. **S-17.17.**
+
+    `refuse_foreign_session` existed for the two Surgeon steps and was never
+    applied to these three. Without it, the only thing between a mis-wired caller
+    and two agents sharing a prefix was that nothing had wired it wrongly yet —
+    and `adapters.py` had, for the whole investigate loop.
+
+    Each step is offered a **real** session belonging to a different step, which
+    is the mistake that was actually live, rather than a hand-made object that
+    could fail for some unrelated reason. The client holds no recordings, so a
+    step that failed to refuse would raise `NoRecordingError` instead and the
+    test would still fail — but with the wrong reason, which is why the match is
+    on the refusal's own words.
+    """
+    with pytest.raises(error, match="not this step's"):
+        step(a_session(borrowed_from))
+
+
 def test_the_session_reports_on_the_experiments_that_actually_ran(query_counter: None) -> None:
     """The other half of the same defect: S-5.8's pruning report described an
     empty log, so the figure `04-cost.md` §5's 60-80% claim is measured from was
     measured over nothing."""
     result = run_the_epic(Subject())
 
-    assert "2" in result.session.log.report()  # type: ignore[attr-defined]
+    assert "2" in result.hypothesis_session.log.report()  # type: ignore[attr-defined]
 
 
 # ================== defect 2: the conditions and the symptom come from the workload
