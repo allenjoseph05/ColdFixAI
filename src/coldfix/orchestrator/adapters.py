@@ -543,6 +543,7 @@ def audit_finding(resources: Resources, state: CheckpointedState) -> Mapping[str
         workload=workload,
         conditions=conditions_for(workload),
         log=_log_of(state),
+        metric=resources.metric,
         exclusions=(),
         measured_prefix_tokens=resources.tokens.prefix,
         measured_prompt_tokens=resources.tokens.prompt,
@@ -987,7 +988,7 @@ def _log_of(state: CheckpointedState) -> ExperimentLog:
             # reported a verdict — and an attack that did not run is not one that
             # passed.
             kinds=record.kinds,
-            fit=record.fit,
+            fits=record.fits,
         )
     return log
 

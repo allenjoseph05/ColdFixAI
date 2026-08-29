@@ -37,16 +37,12 @@ recorded failure: `metric_kind` defaults to `COUNT`, the thesis ablation reports
 reading kinds off spelling would mark every re-run divergent and every finding
 unsound for ever.
 
-**A known narrowing, stated rather than papered over.** `Measured.fit` is
-singular and a volume sweep fits *every* metric it measured. `audit/scales.py`
-reads `fit.exponent` and `fit.power_r_squared` and raises `FIT_TOO_POOR` from
-them, so the choice is metric-specific: a noisy `seconds` fit would object to a
-finding whose claim is about `db.query`. Nothing in an `ExperimentSpec` names
-which metric the finding will rest on — the interpretation picks that, and it runs
-*after* this. So a fit travels only when the sweep fitted exactly one metric, and
-is absent otherwise. Absence is already meaningful and S-9.2 refuses to judge a
-rejection that came from no sweep, which is the safe direction: unjudged rather
-than wrongly judged. Widening `Measured.fit` to a mapping is filed separately.
+**Every fit travels, keyed by its metric.** S-17.11 could carry only one, because
+`Measured.fit` was singular and a volume sweep fits *every* metric it measured —
+so a fit travelled only for the single-metric case, which no real sweep is, and
+`audit/scales.py`'s check never ran. S-17.12 made it a mapping: the executor
+carries all of them and the audit picks the one the finding's claim rests on,
+which is a choice only the interpretation can make and it runs after this.
 """
 
 from __future__ import annotations
@@ -120,8 +116,14 @@ def read_volume(result: ScalingResult) -> Measured:
     the fit was taken over.
     """
     top = result.points[-1]
-    only = next(iter(result.fits.values())) if len(result.fits) == 1 else None
-    return Measured(measurement=dict(top.adjusted), kinds=dict(result.kinds), fit=only)
+    # **Every metric's fit, which is the whole of S-17.12.** The sweep fitted all
+    # of them and the interpretation has not yet chosen which the finding rests
+    # on, so carrying one would be this module guessing at that choice — and
+    # carrying none, which is what it did, left the scale audit unable to run on
+    # any real sweep.
+    return Measured(
+        measurement=dict(top.adjusted), kinds=dict(result.kinds), fits=dict(result.fits)
+    )
 
 
 def read_shape(result: ShapeComparison) -> Measured:
@@ -301,8 +303,10 @@ def read_soak(result: Soak) -> Measured:
     for metric, trend in result.trends.items():
         measurement[f"{metric}.first"] = trend.first
         measurement[f"{metric}.last"] = trend.last
-    only = next(iter(result.trends.values())).fit if len(result.trends) == 1 else None
-    return Measured(measurement=measurement, fit=only)
+    # Keyed by the metric the trend is of, and every trend has one — a soak that
+    # fitted three metrics carries three curves, and the audit picks by name.
+    fits = {f"{metric}.first": trend.fit for metric, trend in result.trends.items()}
+    return Measured(measurement=measurement, fits=fits)
 
 
 def read_instructions(result: Separation) -> Measured:
