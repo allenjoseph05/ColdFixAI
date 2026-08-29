@@ -16,8 +16,8 @@ Python 3.12+. Django + Postgres is the first target framework.
 ## Status
 
 **Pre-alpha, and the honest summary is that the machinery is built and has never
-been run against a real subject for real.** 146 of 152 stories are done, across
-169 ADRs. The fast test subset is ~3,300 tests.
+been run against a real subject for real.** 147 of 153 stories are done, across
+170 ADRs. The fast test subset is ~3,300 tests.
 
 The three viability spikes ran on 2026-08-02 and none of them invalidated the
 design — though `S-0.4` and `S-0.5` both changed it, which is what they were for.
@@ -75,7 +75,7 @@ uv run mypy .                # types, strict
 ```
 
 Lint, format, types, and the fast subset must all pass before a story is done.
-The fast subset is the gate and currently collects 3,316 tests; a failure in it
+The fast subset is the gate and currently collects 3,327 tests; a failure in it
 is evidence, not noise. `timing` tests are separated because they read a real
 clock — they are excluded from the gate so that a busy machine cannot turn a
 scheduling delay into a red build, not because they are optional.
@@ -102,7 +102,7 @@ scheduling delay into a red build, not because they are optional.
 | `src/coldfix/eval/` | benchmark runners, agreement harness, cost reporting |
 | `src/coldfix/agents/` | the role index only — each agent's code lives in the four packages above |
 | `docs/` | design documents — start with `docs/00-BRIEF.md` |
-| `docs/adr/` | 169 architecture decision records |
+| `docs/adr/` | 170 architecture decision records |
 | `spikes/` | timeboxed experiments that produce a finding, not shippable code |
 | `tests/fixtures/` | a repository with deliberately planted defects |
 
