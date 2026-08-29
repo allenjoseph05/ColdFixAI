@@ -17,7 +17,7 @@ its usage — which is the same seam E7 will fill.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -39,7 +39,15 @@ from coldfix.cost.budget import (
     ProgressStalledError,
 )
 from coldfix.cost.cascade import CHEAP_ATTEMPTS, NoValidatorError, cascade
-from coldfix.cost.context import Cacheability, ContextError, Investigation, is_append_only
+from coldfix.cost.context import (
+    Block,
+    Cacheability,
+    ContextError,
+    Investigation,
+    Segment,
+    is_append_only,
+    labelled,
+)
 from coldfix.cost.pruning import RETRIEVAL_NOTICE, PrunedLog
 from coldfix.cost.routing import (
     Router,
@@ -93,11 +101,11 @@ def usage(
 
 def api(
     result: str = "ok", used: TokenUsage | None = None
-) -> Callable[[str], tuple[str, TokenUsage]]:
+) -> Callable[[str, Sequence[Block]], tuple[str, TokenUsage]]:
     """An API that returns a result and what it used, like the real one will."""
     reply = used if used is not None else usage()
 
-    def call(model: str) -> tuple[str, TokenUsage]:
+    def call(model: str, blocks: Sequence[Block] = ()) -> tuple[str, TokenUsage]:
         return result, reply
 
     return call
@@ -242,7 +250,10 @@ def test_the_session_renders_the_pruned_log_once_however_long_the_run() -> None:
     assert log_block.count(RETRIEVAL_NOTICE) == 1
     assert "read_experiment" in log_block
     assert log_block.count("experiment 1 —") == 1
-    assert log_block == session.log.render()
+    assert log_block == labelled(Segment.LOG, session.log.render()), (
+        "the block is the log under its own header — S-17.16 moved that header here "
+        "from the four agent questions that each used to write their own above their own copy"
+    )
 
 
 def test_a_prompt_whose_log_is_owned_elsewhere_refuses_to_hold_its_own() -> None:
@@ -344,7 +355,7 @@ def test_a_calls_usage_is_recorded_against_the_cache_it_actually_used() -> None:
     def validate(_: str) -> bool:
         return len(rejected) > CHEAP_ATTEMPTS
 
-    def call(model: str) -> tuple[str, TokenUsage]:
+    def call(model: str, blocks: Sequence[Block] = ()) -> tuple[str, TokenUsage]:
         rejected.append(model)
         return "patch", usage()
 
@@ -384,7 +395,7 @@ def test_an_unbudgeted_cascade_spends_three_calls_for_one_authorization() -> Non
     """
     attempts: list[str] = []
 
-    def attempt(model: str) -> str:
+    def attempt(model: str, blocks: Sequence[Block] = ()) -> str:
         attempts.append(model)
         return "patch"
 
@@ -411,7 +422,7 @@ def test_the_session_authorizes_every_attempt_at_the_model_it_uses() -> None:
     session = make_session(ceiling_eur=Decimal("0.03"))
     attempts: list[str] = []
 
-    def call(model: str) -> tuple[str, TokenUsage]:
+    def call(model: str, blocks: Sequence[Block] = ()) -> tuple[str, TokenUsage]:
         attempts.append(model)
         return "patch", usage()
 
@@ -492,7 +503,7 @@ def test_the_routed_frontier_share_misses_the_calls_that_escalate_to_it() -> Non
     session = make_session()
     seen: list[str] = []
 
-    def call(model: str) -> tuple[str, TokenUsage]:
+    def call(model: str, blocks: Sequence[Block] = ()) -> tuple[str, TokenUsage]:
         seen.append(model)
         return "patch", usage()
 

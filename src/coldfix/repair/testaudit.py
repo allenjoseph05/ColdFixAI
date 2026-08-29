@@ -69,6 +69,7 @@ from coldfix.audit.invocation import (
 )
 from coldfix.cost.accounting import Agent, ModelCall, Phase, TokenUsage
 from coldfix.cost.budget import Budget
+from coldfix.cost.context import Block
 from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step, StepOutcome
 from coldfix.diagnosis.chain import EvidenceChain
@@ -416,7 +417,8 @@ def audit_test(  # noqa: PLR0913 - the test, the chain and the two measured toke
         finding_id=finding_id,
     )
 
-    def call(model: str) -> tuple[TestAudit, TokenUsage]:
+    def call(model: str, blocks: Sequence[Block]) -> tuple[TestAudit, TokenUsage]:
+        del blocks  # the Adversary builds its own list — see `audit_messages`
         reply = client.complete(
             model=model,
             system=SYSTEM,

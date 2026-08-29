@@ -24,6 +24,7 @@ from coldfix.cost.accounting import (
     StepClass,
     TokenUsage,
 )
+from coldfix.cost.context import Block
 from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step
 from coldfix.llm.client import (
@@ -442,7 +443,8 @@ def test_a_replayed_call_prices_through_the_ledger() -> None:
         rate=ExchangeRate(Decimal("0.90"), date(2026, 8, 11)),
     )
 
-    def call(model: str) -> tuple[str, TokenUsage]:
+    def call(model: str, blocks: Sequence[Block]) -> tuple[str, TokenUsage]:
+        del blocks  # this test is about routing and billing, not request shaping
         reply = client.complete(
             model=model, system=SYSTEM, messages=MESSAGES, max_tokens=1_000, temperature=TEMPERATURE
         )

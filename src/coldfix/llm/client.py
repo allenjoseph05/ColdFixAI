@@ -125,6 +125,20 @@ def translate(message: Message, *, cache_ttl: str = "5m") -> ModelResponse:
     )
 
 
+def _asked(value: object) -> object:
+    """`value` with every `cache_control` removed, however deeply it is nested.
+
+    Recursive rather than a top-level pop, because a breakpoint sits on a content
+    block inside a message's content list — two levels down — and a shallow strip
+    would leave exactly the ones that are actually used.
+    """
+    if isinstance(value, dict):
+        return {key: _asked(inner) for key, inner in value.items() if key != "cache_control"}
+    if isinstance(value, list):
+        return [_asked(item) for item in value]
+    return value
+
+
 def request_digest(
     *,
     model: str,
@@ -150,12 +164,24 @@ def request_digest(
     Hashed over a canonical rendering rather than a joined string, for S-5.1's
     reason: any separator that can occur inside a field makes two different
     requests hash alike.
+
+    **`cache_control` is not part of it, and that is a claim rather than a
+    convenience.** S-17.16 puts breakpoints on the blocks of a request, and a
+    breakpoint changes what the call *costs* rather than what it *asks*: the API
+    returns the same answer to the same text whether or not a prefix of it was
+    served from a cache. So two requests differing only in their breakpoints
+    resolve to one recording — otherwise every recording in the suite would be
+    invalidated by a change that cannot alter a reply.
+
+    What is emphatically still part of it is the text. Moving content out of the
+    question and into a block changes what is asked and gives a different digest,
+    which is correct: that is a different prompt.
     """
     payload = json.dumps(
         {
             "model": model,
             "system": system,
-            "messages": list(messages),
+            "messages": _asked(list(messages)),
             "max_tokens": max_tokens,
             "temperature": temperature,
         },

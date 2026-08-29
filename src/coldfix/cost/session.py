@@ -58,7 +58,7 @@ because there was nowhere left for it to go. See ADR 139.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -301,15 +301,24 @@ class Session:
         question: str,
         measured_prefix_tokens: int,
         measured_prompt_tokens: int,
-        call: Callable[[str], tuple[T, TokenUsage]],
+        call: Callable[[str, Sequence[Block]], tuple[T, TokenUsage]],
         validate: Callable[[T], bool] | None = None,
     ) -> StepOutcome[T]:
         """Route a step, authorize it, assemble its prompt, run it, and bill it.
 
-        `call` is handed a model id and returns what the API returned: the result
-        and its usage. The usage is the API's own figures, never a caller's
-        estimate — `CLAUDE.md` forbids an agent reporting a measurement, and a
-        token count is one.
+        `call` is handed a model id **and the rendered blocks**, and returns what
+        the API returned: the result and its usage.
+
+        **The blocks are why this signature changed. S-17.16.** They were rendered
+        here and never left, so every caller built its own flat message list, no
+        `cache_control` ever reached the API, and Epic 5's caching design was inert
+        from the day it was written — recorded by two composition checks and fixed
+        by neither, because a caller cannot put a breakpoint on a prompt it does
+        not have. `llm.request.as_request` turns them into the API's shape.
+
+        The usage is the API's own figures, never a caller's estimate —
+        `CLAUDE.md` forbids an agent reporting a measurement, and a token count
+        is one.
 
         `validate` opts the step into S-5.6's cascade where §3 says one exists.
         Every attempt is authorized separately, at the model that attempt uses,
@@ -351,7 +360,7 @@ class Session:
                 step.finding_id,
                 worst_case_usd(model, measured_prompt_tokens, step.max_output_tokens),
             )
-            value, usage = call(model)
+            value, usage = call(model, blocks)
             calls.append(self._record(step, model, usage))
             return value
 
