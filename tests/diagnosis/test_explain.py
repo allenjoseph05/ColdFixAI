@@ -198,7 +198,6 @@ def test_an_investigation_that_confirmed_nothing_is_never_asked() -> None:
             symptom=Symptom(metric="seconds", at_scale=1000.0, magnitude=8.24),
             confirming=(),
             exclusions=(),
-            source="shop/views.py",
             measured_prefix_tokens=8000,
             measured_prompt_tokens=900,
         )
@@ -218,10 +217,12 @@ def test_the_question_shows_the_measurements_it_asks_about() -> None:
         symptom=Symptom(metric="seconds", at_scale=1000.0, magnitude=8.24),
         confirming=[experiment],
         exclusions=["the database is the bottleneck — queries flat at 2 across a 4x sweep"],
-        source="shop/views.py::ListView.list_books",
     )
 
     assert "seconds=8.24" in question
     assert "ablation.stub on ExpensiveRenderer.render" in question
     assert "queries flat at 2" in question, "what was ruled out is half the argument"
-    assert "shop/views.py::ListView.list_books" in question
+    assert "shop/views.py::ListView.list_books" not in question, (
+        "the source is the session's cached block now — S-17.16, which stopped it "
+        "being sent at the foot of this question as well"
+    )

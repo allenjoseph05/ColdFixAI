@@ -66,6 +66,7 @@ from coldfix.explorer.stages import Grounding, Outcome, Progress, Stage, Verdict
 from coldfix.llm.client import ModelResponse, Recording, ReplayingClient
 from coldfix.sandbox.reset import ResetMechanism, ResetStrategy
 from coldfix.sandbox.verification import VerificationReport, VerifiedReset
+from fixtures.requests import shaped
 
 # ================================================================ the double
 
@@ -605,7 +606,7 @@ def test_a_recorded_answer_replays_through_the_real_client() -> None:
             Recording.of(
                 model=CHEAP,
                 system=proposal_module._SYSTEM,
-                messages=[{"role": "user", "content": question}],
+                messages=shaped(a_session(), CHEAP, question),
                 max_tokens=MAX_OUTPUT_TOKENS,
                 temperature=EXPLORER_TEMPERATURE,
                 response=payload(says(["python", "manage.py", "migrate"])),

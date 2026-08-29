@@ -39,7 +39,13 @@ from coldfix.diagnosis.design import ExperimentSpec
 from coldfix.diagnosis.emit import chain_from, conditions_for, symptom_for
 from coldfix.diagnosis.exclusions import Dimension
 from coldfix.diagnosis.explain import parse, shares_from
-from coldfix.diagnosis.loop import Measured, confirming_links, run_investigation
+from coldfix.diagnosis.loop import (
+    Investigation,
+    LoopError,
+    Measured,
+    confirming_links,
+    run_investigation,
+)
 from coldfix.diagnosis.progress import ProgressError, Stopped
 from coldfix.llm.client import ReplayingClient
 from coldfix.primitives.scaling import Distribution
@@ -50,8 +56,10 @@ from fixtures.thesis import (  # the subject and its harness, not a second copy
     SCALES,
     Subject,
     _query_counter,  # noqa: F401 - registers the `query_counter` fixture
+    a_session,
     ablate_renderer,
     an_investigation,
+    instruments,
     sweep_queries,
 )
 from fixtures.thesis import (
@@ -132,6 +140,34 @@ def test_the_log_the_agent_reads_is_the_log_the_prompt_caches(query_counter: Non
 
     assert "scaling.volume" in rendered
     assert "ablation.stub" in rendered
+
+
+def test_an_investigation_whose_session_names_another_source_is_refused() -> None:
+    """The violation, attempted. **S-17.16 and ADR 169.**
+
+    Until that story the source travelled in each agent's own question, so a
+    session built for a different one was a duplicated string and nothing worse.
+    It now reaches the model *only* as the session's cached block — so a mismatch
+    would have this investigation reason about one file while measuring another,
+    silently, with every measurement in its log still correct.
+
+    Refused rather than resolved, which is the opposite of the log join two tests
+    above. An empty `PrunedLog` is a placeholder and replacing it loses nothing;
+    two different sources are two answers to *what are we studying*, and picking
+    one would be this constructor deciding what the caller meant.
+    """
+    session = a_session()
+    assert session.source != "shop/views.py::somebody_elses_view"
+
+    with pytest.raises(LoopError, match="diagnose one file while measuring another"):
+        Investigation(
+            session=session,
+            client=ReplayingClient([]),
+            instruments=instruments("scaling.volume"),
+            source="shop/views.py::somebody_elses_view",
+            conditions=CONDITIONS,
+            execute=lambda spec: Measured(measurement={"db.query": 2.0}),
+        )
 
 
 def test_the_session_reports_on_the_experiments_that_actually_ran(query_counter: None) -> None:

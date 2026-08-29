@@ -379,9 +379,7 @@ def test_the_register_feeds_the_sentences_s81_asks_for() -> None:
     )
 
     question = render_question(
-        log=ExperimentLog(),
         exclusions=register.render(skewed),
-        source="shop/views.py",
         instruments=Selection(
             profile=ProjectProfile(),
             available=(REGISTRY.get("scaling.shape"),),

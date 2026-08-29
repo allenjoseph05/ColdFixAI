@@ -49,13 +49,13 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from anthropic.types import MessageParam
-
 from coldfix.cost.accounting import Agent, Phase, TokenUsage
+from coldfix.cost.context import Block
 from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step, StepOutcome
 from coldfix.explorer.stages import Outcome, Progress, Stage
 from coldfix.llm.client import ModelClient
+from coldfix.llm.request import as_request
 
 EXPLORER_TEMPERATURE = 0.3
 """`03-agents.md` §2.1. Between the Diagnostician's two: standing a project up is
@@ -331,8 +331,12 @@ def propose(  # noqa: PLR0913 - the four inputs `render_question` needs plus the
         max_output_tokens=MAX_OUTPUT_TOKENS,
     )
 
-    def call(model: str) -> tuple[Proposal, TokenUsage]:
-        messages: Sequence[MessageParam] = [{"role": "user", "content": question}]
+    def call(model: str, blocks: Sequence[Block]) -> tuple[Proposal, TokenUsage]:
+        # **The system prompt is this module's, never the session's.** The
+        # investigate loop runs three steps on one session, so the session's
+        # string is not every step's prompt — sending it would tell two of them
+        # to answer a third one's question. See `llm/request.py`.
+        messages = as_request(blocks)
         reply = client.complete(
             model=model,
             system=_SYSTEM,

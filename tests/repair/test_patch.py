@@ -59,6 +59,7 @@ from coldfix.repair.patch import (
 )
 from coldfix.sandbox.modes import CandidateSession, DiagnosticSession
 from coldfix.sandbox.patching import ProtectedPathError, touched_paths
+from fixtures.requests import shaped
 
 RATE = ExchangeRate(Decimal("0.92"), date(2026, 8, 18))
 SOURCE = "shop/serializers.py::BookSerializer"
@@ -181,7 +182,7 @@ def recorded(session: Session, question: str, reply: str, *, stop: str = "end_tu
     return Recording.of(
         model=model,
         system=patch_module._SYSTEM,
-        messages=[{"role": "user", "content": question}],
+        messages=shaped(session, model, question),
         max_tokens=MAX_OUTPUT_TOKENS,
         temperature=SURGEON_TEMPERATURE,
         response={

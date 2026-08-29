@@ -55,12 +55,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from coldfix.audit.alternatives import measured_pairs
 from coldfix.cost.accounting import Agent, Phase, TokenUsage
+from coldfix.cost.context import Block
 from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step, StepOutcome
 from coldfix.diagnosis.chain import EvidenceChain
 from coldfix.diagnosis.log import Experiment
 from coldfix.diagnosis.replies import read_object
 from coldfix.llm.client import ModelClient
+from coldfix.llm.request import as_request
 from coldfix.repair.sessions import refuse_foreign_session
 
 SURGEON_TEMPERATURE = 0.2
@@ -449,11 +451,16 @@ def generate(  # noqa: PLR0913 - the chain and the two measured token counts are
     )
     question = f"{render_chain(chain)}\n\n{QUESTION}"
 
-    def call(model: str) -> tuple[FalsificationTest, TokenUsage]:
+    def call(model: str, blocks: Sequence[Block]) -> tuple[FalsificationTest, TokenUsage]:
+        # **The system prompt is this module's, never the session's.** The
+        # investigate loop runs three steps on one session, so the session's
+        # string is not every step's prompt — sending it would tell two of them
+        # to answer a third one's question. See `llm/request.py`.
+        messages = as_request(blocks)
         reply = client.complete(
             model=model,
             system=_SYSTEM,
-            messages=[{"role": "user", "content": question}],
+            messages=messages,
             max_tokens=MAX_OUTPUT_TOKENS,
             temperature=SURGEON_TEMPERATURE,
         )

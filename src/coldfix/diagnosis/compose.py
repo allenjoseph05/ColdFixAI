@@ -87,7 +87,6 @@ def chain_of(  # noqa: PLR0913 - the investigation, the workload, the metric, th
         symptom=symptom,
         confirming=confirming,
         exclusions=[item.describe() for item in investigation.exclusions.exclusions],
-        source=source,
         measured_prefix_tokens=measured_prefix_tokens,
         measured_prompt_tokens=measured_prompt_tokens,
         finding_id=finding_id,

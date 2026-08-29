@@ -53,6 +53,7 @@ from coldfix.primitives.registry import (
     Verdict as ApplicabilityVerdict,
 )
 from coldfix.primitives.scaling import _check_scales
+from fixtures.requests import shaped
 
 HYPOTHESIS = Hypothesis(
     statement="the author lookup is an N+1 across the book list",
@@ -145,7 +146,7 @@ def recording(
     return Recording.of(
         model=model,
         system=design_module._SYSTEM,
-        messages=[{"role": "user", "content": question}],
+        messages=shaped(a_session(), model, question),
         max_tokens=MAX_OUTPUT_TOKENS,
         temperature=temperature,
         response=payload(reply, model=model, stop_reason=stop_reason),
@@ -154,13 +155,7 @@ def recording(
 
 def question_after(*rejections: str) -> str:
     """The question this module sends on the attempt following `rejections`."""
-    return render_question(
-        hypothesis=HYPOTHESIS,
-        schema=volume_schema(),
-        source=SOURCE,
-        log=a_log(),
-        rejections=rejections,
-    )
+    return render_question(hypothesis=HYPOTHESIS, schema=volume_schema(), rejections=rejections)
 
 
 def rejection_for(reply: str) -> str:
@@ -174,8 +169,6 @@ def run_design(client: ReplayingClient) -> StepOutcome[ExperimentSpec]:
         client,
         hypothesis=HYPOTHESIS,
         instruments=instruments("scaling.volume", "ablation.stub"),
-        source=SOURCE,
-        log=a_log(),
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
     )
@@ -723,8 +716,6 @@ def test_an_instrument_this_run_withheld_is_refused_where_the_reason_is_recorded
             ReplayingClient([]),
             hypothesis=HYPOTHESIS,
             instruments=selection,
-            source=SOURCE,
-            log=a_log(),
             measured_prefix_tokens=100,
             measured_prompt_tokens=900,
         )
@@ -742,8 +733,6 @@ def test_a_design_comes_back_priced_and_attributed() -> None:
         client,
         hypothesis=HYPOTHESIS,
         instruments=instruments("scaling.volume", "ablation.stub"),
-        source=SOURCE,
-        log=a_log(),
         measured_prefix_tokens=100,
         measured_prompt_tokens=900,
     )
@@ -755,13 +744,18 @@ def test_a_design_comes_back_priced_and_attributed() -> None:
     assert not outcome.escalated
 
 
-def test_the_question_carries_the_hypothesis_the_instrument_and_the_log() -> None:
+def test_the_question_carries_the_hypothesis_and_the_instrument_and_no_more() -> None:
+    """**S-17.16 halved this question.** The hypothesis and the instrument's
+    schema vary per call and stay; the source and the log were being rendered
+    here *and* into the cached blocks beside this question, so every call sent
+    both copies and paid full price for the one meant to be free."""
     question = question_after()
 
     assert HYPOTHESIS.statement in question
     assert "scales" in question
-    assert "ablation.stub of shop.books.list" in question
-    assert SOURCE in question
+
+    assert SOURCE not in question, "the source is the session's block now"
+    assert "ablation.stub of shop.books.list" not in question, "so is the log"
 
 
 def test_the_rejections_go_last_so_the_cached_prefix_survives_a_retry() -> None:
