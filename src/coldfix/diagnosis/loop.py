@@ -127,7 +127,30 @@ class Measured:
 
     measurement: Mapping[str, float]
     kinds: Mapping[str, MetricKind] = field(default_factory=dict)
-    fit: Fit | None = None
+    fits: Mapping[str, Fit] = field(default_factory=dict)
+    """The growth fit **per metric**, where the primitive drew one.
+
+    S-17.12, and it was one `Fit | None` until the executor could not fill it.
+    A volume sweep fits *every* metric it measured, and `audit/scales.py` reads
+    `exponent` and `power_r_squared` off a single fit to raise `FIT_TOO_POOR` —
+    so a noisy `seconds` fit objected to a finding whose claim was about
+    `db.query`. Nothing in an `ExperimentSpec` names the metric a finding will
+    rest on (the interpretation picks it, and it runs after the executor), so
+    S-17.11 could only carry a fit for a sweep that fitted exactly one metric,
+    which no real sweep does. **The check never ran.**
+
+    Empty is still a real answer: an ablation draws no curve, and S-9.2 refuses
+    to judge a rejection that came from no sweep.
+
+    **Keyed by the primitive's metric name, which need not be a key of
+    `measurement`, and the first version of this got that wrong.** `kinds` is
+    validated against `measurement` because a kind describes one measured number.
+    A fit does not: it describes a **series across scale points**, and a reader is
+    free to record the points under derived names — the thesis fixture reports
+    `db.query.n10`, `db.query.n20`, `db.query.n40` for a curve fitted on
+    `db.query`. Requiring the two namespaces to coincide refused a correct
+    reading, so there is no such check: what selects a fit is the metric the
+    sweep fitted, and `_fit_for` looks it up by that name."""
 
     def __post_init__(self) -> None:
         unmeasured = set(self.kinds) - set(self.measurement)
@@ -323,7 +346,7 @@ class Investigation:
             # S-8.12; the verdict and the measurement remain the interpreter's
             # and the harness's respectively.
             kinds=measured.kinds,
-            fit=measured.fit,
+            fits=measured.fits,
         )
 
         if reading.verdict is Verdict.REJECTED:
