@@ -15,10 +15,31 @@ Python 3.12+. Django + Postgres is the first target framework.
 
 ## Status
 
-Pre-alpha. Epic 0 — foundations and viability. Nothing here works yet.
+**Pre-alpha, and the honest summary is that the machinery is built and has never
+been run against a real subject for real.** 145 of 152 stories are done, across
+168 ADRs. The fast test subset is ~3,300 tests.
 
-The three viability spikes (`S-0.3`, `S-0.4`, `S-0.5`) have not been run, and any
-of them can still invalidate the design.
+The three viability spikes ran on 2026-08-02 and none of them invalidated the
+design — though `S-0.4` and `S-0.5` both changed it, which is what they were for.
+
+**What works, verified end to end.** A campaign assembles, binds a workload
+artifact to a live Django subject, drives it at three scales, fits growth per
+metric and reaches a decision. The Epic 17 composition check does exactly that
+against a project with a planted N+1 and finds it.
+
+**What has never happened.** No run against the holdout repository, and no live
+model call outside one spike. That needs an API key and money, and it is
+`S-17.1`.
+
+**Known and recorded, not yet fixed.** Prompt caching is designed and inert:
+`Session.run` renders the cacheable blocks and nothing sends them, so
+`docs/04-cost.md` §12.3's engineered cost is a target rather than an achieved
+figure. See `S-17.16`, which carries the measurement and the reason it is not a
+one-line fix.
+
+There is no CLI and no configuration file. The entry point is `campaign_for(...)`
+in `src/coldfix/orchestrator/assembly.py`, which takes twenty-five required
+keyword arguments and five optional ones.
 
 ---
 
@@ -40,14 +61,18 @@ software fast in general. We do not replace performance engineering.
 ```bash
 uv sync                      # install
 uv run pytest                # all tests
-uv run pytest -m "not slow"  # fast subset
+uv run pytest -m "not slow and not timing"   # fast subset — the gate
+uv run pytest -m "timing"                    # real-clock tests; run on a quiet machine
 uv run ruff check --fix .    # lint
 uv run ruff format .         # format
 uv run mypy .                # types, strict
 ```
 
-Lint, format, types, and the fast test subset must all pass before a story is
-done.
+Lint, format, types, and the fast subset must all pass before a story is done.
+The fast subset is the gate and currently collects 3,296 tests; a failure in it
+is evidence, not noise. `timing` tests are separated because they read a real
+clock — they are excluded from the gate so that a busy machine cannot turn a
+scheduling delay into a red build, not because they are optional.
 
 ---
 
@@ -56,14 +81,32 @@ done.
 | Path | Contents |
 |---|---|
 | `src/coldfix/bench/` | the lab bench — five deterministic operations that decide nothing |
-| `src/coldfix/primitives/` | experiment types the Diagnostician composes |
-| `src/coldfix/agents/` | Explorer, Diagnostician, Surgeon, Adversary |
-| `src/coldfix/orchestrator/` | graph, state, checkpointing, budgets |
+| `src/coldfix/primitives/` | the thirteen registered experiment types the Diagnostician composes |
+| `src/coldfix/sandbox/` | worktrees, mode separation, state reset, the production and real-time guards |
+| `src/coldfix/screening/` | workloads, growth fitting, flagging, null results |
+| `src/coldfix/explorer/` | the Explorer — grounding a subject to a runnable workload |
+| `src/coldfix/diagnosis/` | the Diagnostician — hypotheses, experiment design, the append-only log |
+| `src/coldfix/repair/` | the Surgeon — falsification tests, patches, retry discipline |
+| `src/coldfix/audit/` | the finding audit and the Adversary |
+| `src/coldfix/orchestrator/` | graph assembly, node binding, checkpointing, `campaign_for` |
+| `src/coldfix/state/` | investigation state, the persistent store, the trust ledger |
+| `src/coldfix/cost/` | routing, cascade, budgets, token accounting, context assembly |
+| `src/coldfix/llm/` | the model client |
 | `src/coldfix/adapters/` | framework-specific layer (Django first) |
 | `src/coldfix/eval/` | benchmark runners, agreement harness, cost reporting |
+| `src/coldfix/agents/` | the role index only — each agent's code lives in the four packages above |
 | `docs/` | design documents — start with `docs/00-BRIEF.md` |
-| `docs/adr/` | architecture decision records |
+| `docs/adr/` | 168 architecture decision records |
 | `spikes/` | timeboxed experiments that produce a finding, not shippable code |
+| `tests/fixtures/` | a repository with deliberately planted defects |
+
+`agents/` is named for the four agents and contains one module. That is not a
+leftover. Which agent may see what is enforced structurally in six separate
+places, each argued for on its own merits and none of them persuadable — and
+somebody verifying the system has to find all six and know that six is all there
+are. `roles.py` is that index. It declares and does not enforce, and the tests
+beside it check the declaration against the code, so a withheld field that
+quietly reappears on a handover type fails a test rather than a review.
 
 ---
 
