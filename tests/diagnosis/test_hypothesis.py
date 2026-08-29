@@ -101,7 +101,11 @@ def log_with_one_experiment() -> ExperimentLog:
 def a_session() -> Session:
     """Epic 5's entry point, built the way its own composition check builds one."""
     return Session(
-        system="You find performance problems by running experiments.",
+        # **This step's own prompt. S-17.17.** `refuse_foreign_session` rejects a
+        # session whose system text is not the one these calls send, so a generic
+        # string here would fail every test in the file rather than model a
+        # session the campaign builds.
+        system=hypothesis_module._SYSTEM,
         playbook="Django: count queries with force_debug_cursor.",
         source="def list_books(): ...",
         rate=ExchangeRate(Decimal("0.92"), date(2026, 8, 15)),

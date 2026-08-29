@@ -489,9 +489,13 @@ def investigate(resources: Resources, state: CheckpointedState) -> Mapping[str, 
         return null_result("screening flagged nothing, so there was nothing to investigate")
 
     workload = _workload_named(state, target)
-    session = resources.sessions(_INVESTIGATION_PROMPT)
+    # **The factory, not one session out of it. S-17.17.** This node used to open
+    # `_INVESTIGATION_PROMPT` and hand that single session to all three
+    # Diagnostician steps, so `design` and `interpret` were billed and cached
+    # against a prefix belonging to `hypothesis`. `Sessions` has said *one per
+    # agent step* since it was written; this is the caller that did not.
     investigation = run_investigation(
-        session,
+        resources.sessions,
         resources.client,
         instruments=resources.instruments,
         source=resources.source,

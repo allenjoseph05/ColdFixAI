@@ -454,13 +454,16 @@ def test_reseeding_makes_a_settled_instrument_proposable_again() -> None:
     reachable from the loop is the thing that was missing, and one reachable only
     from a helper function would satisfy the AC without closing the gap.
     """
+    session = Session(
+        system="s",
+        playbook="p",
+        source="shop/views.py",
+        rate=ExchangeRate(Decimal("0.92"), date(2026, 8, 16)),
+    )
     investigation = Investigation(
-        session=Session(
-            system="s",
-            playbook="p",
-            source="shop/views.py",
-            rate=ExchangeRate(Decimal("0.92"), date(2026, 8, 16)),
-        ),
+        # A constant factory: this test is about reseeding, and one session for
+        # all three steps keeps the sessions out of what it asserts.
+        sessions=lambda _: session,
         client=ReplayingClient([]),
         instruments=Selection(profile=ProjectProfile(), available=(), withheld=()),
         source="shop/views.py",
@@ -487,13 +490,16 @@ def test_a_failed_reseed_leaves_the_investigation_where_it_was() -> None:
         message = "cannot build"
         raise RuntimeError(message)
 
+    session = Session(
+        system="s",
+        playbook="p",
+        source="shop/views.py",
+        rate=ExchangeRate(Decimal("0.92"), date(2026, 8, 16)),
+    )
     investigation = Investigation(
-        session=Session(
-            system="s",
-            playbook="p",
-            source="shop/views.py",
-            rate=ExchangeRate(Decimal("0.92"), date(2026, 8, 16)),
-        ),
+        # A constant factory: this test is about reseeding, and one session for
+        # all three steps keeps the sessions out of what it asserts.
+        sessions=lambda _: session,
         client=ReplayingClient([]),
         instruments=Selection(profile=ProjectProfile(), available=(), withheld=()),
         source="shop/views.py",

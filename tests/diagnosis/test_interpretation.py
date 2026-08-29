@@ -108,7 +108,11 @@ def a_log() -> ExperimentLog:
 
 def a_session() -> Session:
     return Session(
-        system="You find performance problems by running experiments.",
+        # **This step's own prompt. S-17.17.** `refuse_foreign_session` rejects a
+        # session whose system text is not the one these calls send, so a generic
+        # string here would fail every test in the file rather than model a
+        # session the campaign builds.
+        system=interpretation_module._SYSTEM,
         playbook="Django: count queries with force_debug_cursor.",
         source=SOURCE,
         rate=ExchangeRate(Decimal("0.92"), date(2026, 8, 15)),

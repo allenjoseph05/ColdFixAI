@@ -249,10 +249,41 @@ class Session:
     escalations: EscalationLog = field(default_factory=EscalationLog)
     clock: Callable[[], datetime] = _now
 
+    shared_budget: Budget | None = None
+    """A budget belonging to more than this session. **S-17.17.**
+
+    `Ledger` was shared across a campaign's sessions from the start and `Budget`
+    was not, so a phase driven by two sessions counted its cap twice: measured at
+    `Phase.REPAIR`, which caps at three attempts and had two sessions, a fourth
+    step was authorized. The stall history split the same way, so S-8.9's three
+    identical conclusions could be reached six times without tripping.
+
+    `Budget` was already most of the way to being shareable — `_used` and
+    `_conclusions` are keyed by `(phase, finding_id)`, so one budget serves every
+    phase correctly on both. `stall_after` is the exception: it is one number per
+    budget, and grounding wants 15 where an investigation wants 8. So budgets are
+    shared **per stall regime** rather than per campaign, which is the grouping
+    those numbers already describe. `orchestrator/campaign.py` does the keying.
+
+    `None` means this session owns its budget, which is what a test or a caller
+    with one session wants and what every caller did before this field existed.
+    """
+
     budget: Budget = field(init=False)
     _prompts: dict[str, Investigation] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
+        if self.shared_budget is not None:
+            if self.shared_budget.stall_after != self.stall_after:
+                message = (
+                    f"this session tolerates {self.stall_after} identical conclusions and the "
+                    f"budget it was given tolerates {self.shared_budget.stall_after}. A shared "
+                    "budget holds one stall regime, so sharing across two is one of the phases "
+                    "silently running under the other's rule"
+                )
+                raise SessionError(message)
+            self.budget = self.shared_budget
+            return
         self.budget = Budget(
             ledger=self.ledger,
             rate=self.rate,

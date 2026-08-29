@@ -60,6 +60,7 @@ from coldfix.diagnosis.schema import PrimitiveSchema, schema_of
 from coldfix.llm.client import ModelClient
 from coldfix.llm.request import as_request, with_question
 from coldfix.primitives.registry import Selection
+from coldfix.repair.sessions import refuse_foreign_session
 
 DESIGN_TEMPERATURE = 0.0
 """A translation, not an invention.
@@ -307,6 +308,7 @@ def design(  # noqa: PLR0913 - the hypothesis and its instruments are what a des
         UnknownPrimitiveError: it names one that does not exist.
         BudgetExhaustedError: a cap or the ceiling stopped an attempt.
     """
+    refuse_foreign_session(session, _SYSTEM, DesignError)
     schema = schema_of(instruments.get(hypothesis.primitive))
     rejections: list[str] = []
 
