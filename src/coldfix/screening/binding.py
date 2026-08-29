@@ -39,6 +39,7 @@ from coldfix.explorer.synthesis import synthesize
 from coldfix.explorer.work import Drive, drive
 from coldfix.primitives.counters import DB_QUERY
 from coldfix.primitives.measurement import SECONDS, Reported
+from coldfix.primitives.scaling import BASELINE_SCALE
 from coldfix.sandbox.verification import VerifiedReset
 from coldfix.screening.workload import RESPONSE_BYTES, BoundWorkload, Workload
 
@@ -106,6 +107,20 @@ def bind_workload(  # noqa: PLR0913 - the artifact, the checkout, its interprete
     # importable from, which `FixtureRecipe` does not carry. A binding that guessed
     # would seed a different table than the one the screen names.
     def scale(n: int) -> None:
+        # **N=0 is the baseline and it means an empty subject, not a seeding plan
+        # for nothing.** `scale_volume` measures a baseline at zero to establish
+        # the framework's own fixed cost, and subtracts it from every point — and
+        # it calls `seed` inside `reset.mechanism.cycle()`, so the subject has
+        # already been emptied by the time this runs. `synthesize` refuses a
+        # zero-row plan on its own correct terms (*a plan for 0 row(s) seeds
+        # nothing and would report success for it*), so asking it for one is what
+        # the Epic 17 composition check found: two modules each right, and no
+        # screen possible between them.
+        created.clear()
+        at_scale["n"] = n
+        if n == BASELINE_SCALE:
+            return
+
         synthesized = synthesize(
             root,
             python=python,
@@ -115,9 +130,7 @@ def bind_workload(  # noqa: PLR0913 - the artifact, the checkout, its interprete
             distribution=descriptor.fixture.distribution,
             surface=surface,
         )
-        created.clear()
         created.update(synthesized.created)
-        at_scale["n"] = n
 
     def invoke() -> object:
         taken = drive(
