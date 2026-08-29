@@ -66,16 +66,38 @@ Conflating them is what produced this.
 
 The cost is one breakpoint of four: the system text is sent as a plain string and
 does not cache. The playbook, the source and the log do, and they are the part
-that grows. `04-cost.md` §12.2's figures are unchanged, because the investigate
-loop still has exactly one cached prefix.
+that grows. **The system text was never being cached across the loop's three
+steps anyway** — see the correction below.
 
 **The alternative was a session per step**, which is what `sessions_for` already
 documents itself as (*"a session per agent step"*) and what `owner_of` and
 `refuse_foreign_session` are built for. It is the better end state and it is not
-this story: it makes the investigate loop pay three write premiums instead of
-one, which re-derives the dominant variable in §12.2. That belongs in a story
-with its own AC, and the guard it needs — `refuse_foreign_session` on the five
-call sites that never adopted it — belongs with it.
+this story. It needs `refuse_foreign_session` on the five call sites that never
+adopted it, and a shared `Budget`, so it belongs in a story with its own AC.
+
+## Correction: the loop already has three cached prefixes
+
+**Recorded 2026-08-29, and it was wrong in this ADR before it was checked.** The
+first version of this section justified skipping the system segment partly on
+cost: that keeping one session for the loop keeps one cached prefix, and that a
+session per step would make it pay three write premiums instead of one.
+
+**Both halves are false.** Prompt caching is a prefix match and the render order
+is `tools` -> `system` -> `messages`, so the `system` parameter is *part of* the
+cached prefix and sits ahead of every message block. The three Diagnostician
+steps send three different `_SYSTEM` strings, so they have **three separate cache
+entries already** — on `main`, before this story and after it, under any session
+arrangement. Session objects do not decide this; the bytes sent do.
+
+What follows:
+
+- **§12.2's figures were already optimistic for the investigate loop**, and this
+  story did not change that in either direction.
+- **A session per step costs nothing extra in cache terms.** The premiums are
+  paid today. The objection recorded against it below was not real.
+- **The decision to skip the system segment still stands**, on the argument that
+  actually holds: a session's system string is not the prompt its steps send, so
+  shaping it into the request substitutes one agent's instructions for another's.
 
 ## The headers moved with the content
 

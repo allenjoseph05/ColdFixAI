@@ -265,8 +265,18 @@ That number is not a budget. It is the reason the engineering below is mandatory
 > every step's prompt, and sending it would have handed `design` and `interpret`
 > the hypothesis prompt. Each agent passes its own, as a plain string, which
 > costs one breakpoint of four and leaves the growing part — playbook, source,
-> log — cached. The figures here are unchanged: the loop still has one cached
-> prefix. **A session per step would change them**, and is left open (ADR 169).
+> log — cached.
+>
+> **A correction to §4, found while checking rather than recalling.** Caching is a
+> prefix match and the render order is `tools` → `system` → `messages`, so the
+> system parameter is *part of* the cached prefix and sits ahead of every message
+> block. The investigate loop's three steps send three different system prompts,
+> so **they have three separate cache entries and always have** — on `main`,
+> before this story and after it. §4's diagram shows one stable prefix per run;
+> for the Diagnostician it is one per *step*. The 85% column is still reachable
+> within each step, because the log is what grows and it grows inside each of the
+> three, but the write premium is paid three times per finding rather than once.
+> A session per step would not change this either way (ADR 169).
 >
 > **The rate itself is still unmeasured.** Under the replaying client
 > `warm_hit_rate()` reports whatever figure the recording carries, so the suite
