@@ -441,7 +441,7 @@ def a_run_the_agent_would_have_continued() -> tuple[Investigation, Budget]:
     repeats = _repeat_recordings(investigation, "scaling.volume")
 
     result = run_investigation(
-        investigation.session,
+        investigation.sessions,
         ReplayingClient([*first, *repeats]),
         instruments=investigation.instruments,
         source=investigation.source,
@@ -451,7 +451,7 @@ def a_run_the_agent_would_have_continued() -> tuple[Investigation, Budget]:
         measured_prompt_tokens=900,
         finding_id=FINDING,
     )
-    return result, investigation.session.budget
+    return result, investigation.hypothesis_session.budget
 
 
 def test_a_real_run_stops_with_the_agent_still_proposing_and_budget_to_spare() -> None:

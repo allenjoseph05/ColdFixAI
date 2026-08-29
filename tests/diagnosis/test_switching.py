@@ -144,7 +144,7 @@ def test_a_hypothesis_reproposing_a_settled_instrument_is_refused_and_reasked() 
     investigation.client = ReplayingClient(
         [
             recorded(
-                session=investigation.session,
+                sessions=investigation.sessions,
                 system=hypothesis_module._SYSTEM,
                 question=first,
                 reply=repeat,
@@ -152,7 +152,7 @@ def test_a_hypothesis_reproposing_a_settled_instrument_is_refused_and_reasked() 
                 temperature=hypothesis_module.HYPOTHESIS_TEMPERATURE,
             ),
             recorded(
-                session=investigation.session,
+                sessions=investigation.sessions,
                 system=hypothesis_module._SYSTEM,
                 question=second,
                 reply=switch,
@@ -193,7 +193,7 @@ def test_an_agent_that_only_ever_repeats_is_a_result_and_not_a_crash() -> None:
         )
         recordings.append(
             recorded(
-                session=investigation.session,
+                sessions=investigation.sessions,
                 system=hypothesis_module._SYSTEM,
                 question=question,
                 reply=repeat,
@@ -343,7 +343,7 @@ def test_the_thesis_run(query_counter: None) -> None:
     investigation.client = _thesis_recordings(investigation, subject)
 
     result = run_investigation(
-        investigation.session,
+        investigation.sessions,
         investigation.client,
         instruments=investigation.instruments,
         source=investigation.source,
@@ -390,7 +390,7 @@ def test_the_loop_records_the_rationale_the_agent_actually_gave(query_counter: N
     investigation = an_investigation(ReplayingClient([]), execute)
     client = _thesis_recordings(investigation, subject)
     result = run_investigation(
-        investigation.session,
+        investigation.sessions,
         client,
         instruments=investigation.instruments,
         source=investigation.source,
@@ -420,7 +420,7 @@ def test_a_narrowed_verdict_does_not_end_the_investigation() -> None:
     client = _synthetic(investigation, [Verdict.NARROWED, Verdict.CONFIRMED])
 
     result = run_investigation(
-        investigation.session,
+        investigation.sessions,
         client,
         instruments=investigation.instruments,
         source=investigation.source,
@@ -446,11 +446,11 @@ def test_the_loop_is_bounded_by_the_experiment_cap_and_stops_with_a_result() -> 
     """
     investigation = an_investigation(ReplayingClient([]), lambda spec: {"db.query": 2.0})
     investigation.instruments = instruments("scaling.volume", "ablation.stub", "scaling.shape")
-    investigation.session.budget.tighten(Phase.INVESTIGATE, 2)
+    investigation.hypothesis_session.budget.tighten(Phase.INVESTIGATE, 2)
     client = _synthetic(investigation, [Verdict.REJECTED, Verdict.REJECTED])
 
     result = run_investigation(
-        investigation.session,
+        investigation.sessions,
         client,
         instruments=investigation.instruments,
         source=investigation.source,
@@ -508,7 +508,7 @@ def test_running_out_of_instruments_is_reported_as_such_and_not_as_the_cap() -> 
     repeats = _repeat_recordings(investigation, "scaling.volume")
 
     result = run_investigation(
-        investigation.session,
+        investigation.sessions,
         ReplayingClient([*first_turn, *repeats]),
         instruments=investigation.instruments,
         source=investigation.source,
@@ -528,11 +528,11 @@ def test_a_stopped_investigation_hands_over_the_exclusions_it_bought() -> None:
     exclusions — `00-BRIEF.md` §9's proven negative."""
     investigation = an_investigation(ReplayingClient([]), lambda spec: {"db.query": 2.0})
     investigation.instruments = instruments("scaling.volume", "ablation.stub", "scaling.shape")
-    investigation.session.budget.tighten(Phase.INVESTIGATE, 2)
+    investigation.hypothesis_session.budget.tighten(Phase.INVESTIGATE, 2)
     client = _synthetic(investigation, [Verdict.REJECTED, Verdict.REJECTED])
 
     result = run_investigation(
-        investigation.session,
+        investigation.sessions,
         client,
         instruments=investigation.instruments,
         source=investigation.source,

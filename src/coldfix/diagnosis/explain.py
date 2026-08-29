@@ -45,6 +45,7 @@ from coldfix.diagnosis.replies import Attempted, read_object
 from coldfix.llm.client import ModelClient
 from coldfix.llm.request import as_request, with_question
 from coldfix.primitives.ablation import share_metric
+from coldfix.repair.sessions import refuse_foreign_session
 
 EXPLANATION_TEMPERATURE = 0.0
 """The same 0.0 `interpret` uses and for the same reason. `00-BRIEF.md` §6 makes
@@ -202,6 +203,7 @@ def explain(  # noqa: PLR0913 - the symptom, the confirmations, the exclusions a
         UnexplainableError: every tier produced something the schema refused.
         BudgetExhaustedError: a cap or the ceiling stopped an attempt.
     """
+    refuse_foreign_session(session, _SYSTEM, ExplanationError)
     if not confirming:
         message = (
             "this investigation confirmed nothing, so there is no cause to explain. What it has "

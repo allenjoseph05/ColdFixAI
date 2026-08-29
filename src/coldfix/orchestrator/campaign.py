@@ -44,7 +44,7 @@ from typing import Any
 
 from coldfix.agents.roles import owner_of
 from coldfix.cost.accounting import ExchangeRate, Ledger
-from coldfix.cost.budget import DEFAULT_STALL_AFTER
+from coldfix.cost.budget import DEFAULT_STALL_AFTER, Budget
 from coldfix.cost.session import Session
 from coldfix.diagnosis import design, explain, hypothesis, interpretation
 from coldfix.diagnosis.progress import INVESTIGATION_STALL_AFTER
@@ -99,6 +99,17 @@ class _Sessions:
     ceiling_eur: Decimal | None
     ledger: Ledger
     opened: dict[str, Session] = field(default_factory=dict)
+    budgets: dict[int, Budget] = field(default_factory=dict)
+    """One budget per stall regime, keyed by the number itself. **S-17.17.**
+
+    Not one per session: `Ledger` was shared and `Budget` was not, so a phase
+    driven by two sessions counted its cap twice — the repair node opens two and
+    `Phase.REPAIR` caps at three attempts, so a fourth was authorized after three.
+    Not one per campaign either: `stall_after` is a single number per budget and
+    `STALL_AFTER` gives grounding 15, an investigation 8 and the rest the default.
+    Everything else in `Budget` is keyed by `(phase, finding_id)` already, so the
+    stall value is the only thing that forces a split, and it is what this keys on.
+    """
 
     def __call__(self, system: str) -> Session:
         """This prompt's session, refusing one no role owns.
@@ -112,14 +123,23 @@ class _Sessions:
         """
         owner_of(system)
         if system not in self.opened:
+            stall_after = STALL_AFTER.get(system, DEFAULT_STALL_AFTER)
+            if stall_after not in self.budgets:
+                self.budgets[stall_after] = Budget(
+                    ledger=self.ledger,
+                    rate=self.rate,
+                    ceiling_eur=self.ceiling_eur,
+                    stall_after=stall_after,
+                )
             self.opened[system] = Session(
                 system=system,
                 playbook=self.playbook,
                 source=self.source,
                 rate=self.rate,
                 ceiling_eur=self.ceiling_eur,
-                stall_after=STALL_AFTER.get(system, DEFAULT_STALL_AFTER),
+                stall_after=stall_after,
                 ledger=self.ledger,
+                shared_budget=self.budgets[stall_after],
             )
         return self.opened[system]
 

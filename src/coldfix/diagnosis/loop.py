@@ -49,6 +49,9 @@ from coldfix.bench.stats import Fit
 from coldfix.cost.accounting import Phase
 from coldfix.cost.budget import BudgetExhaustedError, Disposition, ProgressStalledError
 from coldfix.cost.session import Session
+from coldfix.diagnosis import design as design_module
+from coldfix.diagnosis import hypothesis as hypothesis_module
+from coldfix.diagnosis import interpretation as interpretation_module
 from coldfix.diagnosis.chain import Symptom
 from coldfix.diagnosis.design import ExperimentSpec, design
 from coldfix.diagnosis.exclusions import Conditions, ExclusionRegister
@@ -191,6 +194,14 @@ class Step:
         return self.interpretation.verdict
 
 
+type SessionFor = Callable[[str], Session]
+"""A session per system prompt. `orchestrator.adapters.Sessions` satisfies it.
+
+Named here rather than imported, because `diagnosis` sits below `orchestrator`
+and a module that reached upwards for a type would invert the layering this
+project keeps flat."""
+
+
 @dataclass
 class Investigation:
     """One subject, one register of what has been ruled out, one log.
@@ -200,7 +211,19 @@ class Investigation:
     declined that guess.
     """
 
-    session: Session
+    sessions: SessionFor
+    """This investigation's sessions, one per step's system prompt. **S-17.17.**
+
+    A callable rather than a `Session`, because the loop drives **three** agents
+    with three different system prompts and a session carries one. It held a
+    single `Session` until S-17.17, so `design` and `interpret` ran against a
+    prefix belonging to `hypothesis` — billed and cached under a prompt that was
+    never sent with their calls, and one shaping change away from being sent
+    *instead of* theirs. `Sessions` in `orchestrator/adapters.py` is the
+    production implementation and its docstring has said *one per agent step*
+    since it was written.
+    """
+
     client: ModelClient
     instruments: Selection
     source: str
@@ -212,6 +235,20 @@ class Investigation:
     stopped: Stopped | None = None
     """Why the investigation ended without a cause, or `None` while it is still
     running or when it found one. S-8.9's three ways to run out."""
+
+    hypothesis_session: Session = field(init=False)
+    design_session: Session = field(init=False)
+    interpretation_session: Session = field(init=False)
+
+    @property
+    def step_sessions(self) -> tuple[Session, ...]:
+        """The three this loop drives, in the order a turn uses them.
+
+        Listed rather than derived from `sessions`, because the property every
+        caller wants is *these three were joined to this log and this source* and
+        a factory can hand out a fourth.
+        """
+        return (self.hypothesis_session, self.design_session, self.interpretation_session)
 
     def __post_init__(self) -> None:
         """Wire this investigation's log into the prompt the session assembles.
@@ -245,15 +282,20 @@ class Investigation:
             LoopError: the session names a different source from the
                 investigation.
         """
-        self.session.log = self.log.pruned
-        if self.session.source != self.source:
-            message = (
-                f"this investigation studies {self.source!r} and its session was built for "
-                f"{self.session.source!r}. The source reaches the model as the session's cached "
-                "block and nowhere else, so the run would diagnose one file while measuring "
-                "another"
-            )
-            raise LoopError(message)
+        self.hypothesis_session = self.sessions(hypothesis_module._SYSTEM)
+        self.design_session = self.sessions(design_module._SYSTEM)
+        self.interpretation_session = self.sessions(interpretation_module._SYSTEM)
+
+        for session in self.step_sessions:
+            session.log = self.log.pruned
+            if session.source != self.source:
+                message = (
+                    f"this investigation studies {self.source!r} and one of its sessions was "
+                    f"built for {session.source!r}. The source reaches the model as the "
+                    "session's cached block and nowhere else, so the run would diagnose one "
+                    "file while measuring another"
+                )
+                raise LoopError(message)
 
     # -------------------------------------------------------------- AC 1
 
@@ -297,7 +339,7 @@ class Investigation:
 
         for _ in range(RETRIES_PER_HYPOTHESIS):
             outcome = generate(
-                self.session,
+                self.hypothesis_session,
                 self.client,
                 exclusions=(*self.exclusions.render(self.conditions), *notes),
                 instruments=self.instruments,
@@ -333,7 +375,7 @@ class Investigation:
         )
 
         spec = design(
-            self.session,
+            self.design_session,
             self.client,
             hypothesis=hypothesis,
             instruments=self.instruments,
@@ -344,7 +386,7 @@ class Investigation:
         measured = self.execute(spec)
 
         reading = interpret(
-            self.session,
+            self.interpretation_session,
             self.client,
             hypothesis=hypothesis,
             spec=spec,
@@ -414,7 +456,9 @@ class Investigation:
             current=self.conditions,
             register=self.exclusions,
             seeder=seeder,
-            budget=self.session.budget,
+            # Any of the three: S-17.17 gives a stall regime one budget, so the
+            # loop's three sessions share it and the experiment cap counts once.
+            budget=self.hypothesis_session.budget,
             finding_id=finding_id,
         )
         self.conditions = outcome.after
@@ -464,8 +508,8 @@ class Investigation:
 
 def run_investigation(  # noqa: PLR0913 - the subject, its instruments, its
     # conditions and the way to run one experiment are four different facts, plus
-    # the session and the client. None is derivable from the others.
-    session: Session,
+    # the sessions and the client. None is derivable from the others.
+    sessions: SessionFor,
     client: ModelClient,
     *,
     instruments: Selection,
@@ -494,15 +538,18 @@ def run_investigation(  # noqa: PLR0913 - the subject, its instruments, its
     `partial_chain` assembles what was learned. `00-BRIEF.md` §9: null results
     ship as answers.
     """
-    check_stall_configuration(session.budget)
     investigation = Investigation(
-        session=session,
+        sessions=sessions,
         client=client,
         instruments=instruments,
         source=source,
         conditions=conditions,
         execute=execute,
     )
+    # After construction, because the budget is a session's and the sessions are
+    # built by `__post_init__`. S-17.17 gives a stall regime one budget, so
+    # checking one of the three checks all three.
+    check_stall_configuration(investigation.hypothesis_session.budget)
 
     while True:
         try:
@@ -529,7 +576,7 @@ def run_investigation(  # noqa: PLR0913 - the subject, its instruments, its
             return investigation
 
         try:
-            session.budget.record_step(
+            investigation.hypothesis_session.budget.record_step(
                 Phase.INVESTIGATE, finding_id, progress_conclusion(step.verdict)
             )
         except ProgressStalledError:

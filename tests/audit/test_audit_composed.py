@@ -172,7 +172,7 @@ def run_the_diagnosis(subject: Subject) -> Investigation:
     investigation = an_investigation(ReplayingClient([]), execute)
     client = thesis_recordings(investigation, subject)
     return run_investigation(
-        investigation.session,
+        investigation.sessions,
         client,
         instruments=investigation.instruments,
         source=investigation.source,
@@ -399,7 +399,8 @@ def test_the_diagnosticians_session_is_refused_by_the_composed_audit(
 
     with pytest.raises(AuditError, match="not the auditor's"):
         audit_finding(
-            investigation.session,
+            # A real session that is not the auditor's — the Diagnostician's own.
+            investigation.hypothesis_session,
             ReplayingClient([]),
             workload=workload,
             conditions=CONDITIONS,
