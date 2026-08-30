@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+import coldfix.adapters  # noqa: F401 - registers grounding support; the registry is empty without it
 from coldfix.explorer.anchor import anchor_for, interpreter_for, resolve
 from coldfix.explorer.auth import Reply, resolve_auth
 from coldfix.explorer.compose import Plan, ground_workload

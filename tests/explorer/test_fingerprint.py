@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import coldfix.adapters  # noqa: F401 - registers grounding support; the registry is empty without it
 from coldfix.explorer.fingerprint import (
     Database,
     Detected,
@@ -199,10 +200,17 @@ def test_the_undetermined_facets_are_enumerable(tmp_path: Path) -> None:
 # ============================ AC 3: unknown and unsupported are different answers
 
 
-def test_an_identified_but_unsupported_framework_is_named(tmp_path: Path) -> None:
-    """*This is Flask, which is not supported yet* sends somebody to the roadmap.
+def test_an_identified_but_ungroundable_framework_is_named(tmp_path: Path) -> None:
+    """*This is Flask, and nothing can ground it yet* sends somebody to the roadmap.
 
     Both are refusals; only the other one is a mystery.
+
+    **S-14.6 changed what the sentence says and not what it is for.** It used to
+    call Flask *not supported yet* and blame the adapter, the reset strategies
+    and the query counter, pointing at S-14.3 as the story that would add a
+    second adapter — which landed in August. It now names the thing that is
+    actually absent, which is grounding support in the registry, and lists what
+    is registered so the reader can compare.
     """
     root = tmp_path / "subject"
     root.mkdir()
@@ -213,7 +221,8 @@ def test_an_identified_but_unsupported_framework_is_named(tmp_path: Path) -> Non
     assert isinstance(found, Unsupported)
     assert found.identified is not None
     assert found.identified.value is Framework.FLASK
-    assert "not a framework this system supports yet" in found.reason
+    assert "nothing has taught this system to ground it" in found.reason
+    assert "registered so far: Django" in found.reason
 
 
 def test_a_repository_naming_no_framework_says_it_is_a_mystery(tmp_path: Path) -> None:

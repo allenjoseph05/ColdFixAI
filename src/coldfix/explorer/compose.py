@@ -57,7 +57,7 @@ from coldfix.explorer.auth import (
     resolve_auth,
 )
 from coldfix.explorer.emission import EmissionError, EmittedWorkload, emit
-from coldfix.explorer.entrypoints import Enumeration, enumerate_entry_points
+from coldfix.explorer.entrypoints import Enumeration
 from coldfix.explorer.fingerprint import Detected, Fingerprint, Identification, fingerprint
 from coldfix.explorer.fixtures import Mechanism, discover, factory_seeder, prefer
 from coldfix.explorer.playbook import (
@@ -67,6 +67,7 @@ from coldfix.explorer.playbook import (
     no_record,
     no_use,
 )
+from coldfix.explorer.registry import grounds_for
 from coldfix.explorer.stages import Grounding, Progress, evaluate
 from coldfix.explorer.surface import HostSurface, Surface
 from coldfix.explorer.work import Seeder, Verification, WorkVerificationError, verify_work
@@ -247,7 +248,15 @@ def ground_workload(  # noqa: PLR0913 - the repository, how to run it, how to
     anchor = anchor_for(root)
     interpreter = interpreter_for(root)
 
-    enumeration = enumerate_entry_points(root, python=python, surface=where)
+    # **The framework's own enumerator, not Django's. S-14.6.** This line called
+    # `enumerate_entry_points` directly, which is Django's — one of the three
+    # places ADR 148 §1 recorded core still knowing a framework. The fingerprint
+    # above already decided which framework this is, and `grounds_for` cannot
+    # return `None` here because `fingerprint` refuses anything unregistered.
+    grounds = grounds_for(identification.framework.value)
+    if grounds is None:  # pragma: no cover - the gate above admits only registered frameworks
+        raise NotGroundableError(_unsupported(identification))
+    enumeration = grounds.enumerate_entry_points(root, python=python, surface=where)
     drivable = enumeration.drivable
     if not drivable:
         message = (

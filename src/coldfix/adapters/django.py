@@ -78,8 +78,17 @@ from typing import Any
 from coldfix.adapters.interface import ROW_COUNTING_VENDORS, Declarations, Subject
 from coldfix.bench.counting import Hook, HookError, Record
 from coldfix.bench.execute import ExecutionResult
-from coldfix.explorer.entrypoints import Enumeration, enumerate_entry_points
+from coldfix.explorer.entrypoints import Enumeration, Kind, enumerate_entry_points
 from coldfix.explorer.fingerprint import Framework, Orm, TestRunner, declared_test_runner
+from coldfix.explorer.registry import Grounds, register
+from coldfix.explorer.stages import (
+    FRAMEWORK_NEUTRAL_PREDICATES,
+    Grounding,
+    Outcome,
+    Predicate,
+    Stage,
+    Verdict,
+)
 from coldfix.explorer.synthesis import SYNTHESIS_TIMEOUT_SECONDS, synthesize
 from coldfix.explorer.work import Drive, Seeder, drive
 from coldfix.primitives.counters import DB_QUERY
@@ -489,3 +498,113 @@ class DjangoAdapter:
             RollbackReset(database=self.database),
             SnapshotRestoreReset(database=self.database),
         )
+
+
+# ------------------------------------------------- grounding: the three that are ours
+#
+# **S-14.6.** `stages.py` held all nine and called them `_DJANGO_PREDICATES`, in
+# core, which is one of the three places ADR 148 §1 said Epic 14 had not
+# finished. Six of the nine turned out to be framework-neutral and stayed there;
+# these are the ones that are actually Django's — two reach for Django's
+# entry-point enumerator and one runs `manage.py check`.
+
+
+def _clone(grounding: Grounding, payload: Mapping[str, Any]) -> Outcome:
+    del payload
+    root = Path(grounding.root)
+    if not root.is_dir():
+        return Outcome(Stage.CLONE, Verdict.FAILS, f"{root} is not a directory")
+
+    parsed = enumerate_entry_points(root)
+    routes = parsed.of_kind(Kind.HTTP_ROUTE)
+    commands = parsed.of_kind(Kind.MANAGEMENT_COMMAND)
+    if not routes and not commands:
+        return Outcome(
+            Stage.CLONE,
+            Verdict.FAILS,
+            f"{parsed.files_read} file(s) read under {root} and no route or management "
+            "command was found in any of them",
+        )
+    return Outcome(
+        Stage.CLONE,
+        Verdict.HOLDS,
+        f"{len(routes)} route(s) and {len(commands)} command(s) read from the checkout",
+    )
+
+
+def _configure(grounding: Grounding, payload: Mapping[str, Any]) -> Outcome:
+    """The framework's own check command, which is the point.
+
+    Django's `check` knows what a misconfigured Django looks like and this module
+    does not. Reimplementing its judgement here would be a second opinion to keep
+    in step with the first, and it is the framework's opinion that decides whether
+    the framework will run.
+    """
+    if not payload.get("imported"):
+        return Outcome(
+            Stage.CONFIGURE,
+            Verdict.UNKNOWN,
+            "the framework does not import, so its check command cannot be run",
+        )
+
+    result = grounding.where().run(
+        [*grounding.python, "manage.py", "check"],
+        timeout=grounding.timeout,
+    )
+    if result.exit_code == 0:
+        return Outcome(Stage.CONFIGURE, Verdict.HOLDS, "manage.py check exited 0")
+    said = (result.stderr or result.stdout).strip()[-400:]
+    return Outcome(
+        Stage.CONFIGURE, Verdict.FAILS, f"manage.py check exited {result.exit_code}: {said}"
+    )
+
+
+def _endpoint(grounding: Grounding, payload: Mapping[str, Any]) -> Outcome:
+    """The route table, and it is claimed complete only when the framework answered.
+
+    S-7.3's distinction reaching here: a parse establishes that a `path()` call
+    appears in a file, and a repository whose routes are all registered by a DRF
+    router has none to read. So the interpreter is used where there is one.
+    """
+    del payload
+    root = Path(grounding.root)
+    found = enumerate_entry_points(root, python=list(grounding.python))
+    routes = found.of_kind(Kind.HTTP_ROUTE)
+    if not routes:
+        return Outcome(
+            Stage.ENDPOINT,
+            Verdict.FAILS,
+            f"no candidate route was enumerated. {found.resolution.describe().splitlines()[0]}",
+        )
+    return Outcome(
+        Stage.ENDPOINT,
+        Verdict.HOLDS,
+        f"{len(routes)} candidate route(s) enumerated; table complete: {found.routes_are_complete}",
+    )
+
+
+DJANGO_PREDICATES: Mapping[Stage, Predicate] = {
+    **FRAMEWORK_NEUTRAL_PREDICATES,
+    Stage.CLONE: _clone,
+    Stage.CONFIGURE: _configure,
+    Stage.ENDPOINT: _endpoint,
+}
+"""ADR 009's nine, six of them core's and three of them this adapter's."""
+
+
+register(
+    Grounds(
+        framework=Framework.DJANGO,
+        enumerate_entry_points=enumerate_entry_points,
+        predicates=DJANGO_PREDICATES,
+    )
+)
+"""**Registered at import, which is what makes Django groundable at all.**
+
+Nothing in `explorer/` names Django any more, so this line is the whole of the
+answer to *can this system ground a Django project*. `adapters/__init__.py`
+imports this module for that reason, and a test reads this directory for
+`register(` to check that every adapter is reachable — ADR 050's construction,
+because a framework whose adapter nobody imported is not withheld, it does not
+exist.
+"""
