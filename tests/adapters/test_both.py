@@ -380,6 +380,36 @@ def test_the_pipeline_names_neither_framework() -> None:
     assert "flask" not in source
 
 
+EXEMPT: frozenset[str] = frozenset({"cli/wiring.py"})
+"""The modules outside `adapters/` permitted to import one. **Exactly one.**
+
+An exemption list is the thing that erodes: each addition is defensible on its
+own and the invariant is gone after four of them. The test below asserts its
+size, so growing it is a deliberate edit to an assertion rather than a line
+appended to a set."""
+
+
+def test_only_one_module_is_exempt_from_the_layering() -> None:
+    """The exemption cannot grow quietly.
+
+    Not a style rule: the value of *the core never imports an adapter* is that a
+    reader can trust it without checking, and a list of exceptions is exactly the
+    thing that has to be checked. One is rememberable; three is a policy.
+    """
+    assert frozenset({"cli/wiring.py"}) == EXEMPT
+
+
+def test_the_exempt_module_is_the_only_one_that_needs_to_be() -> None:
+    """The other half: the exemption is *used*, so it is not a leftover.
+
+    An exemption for a file that no longer imports an adapter would pass the test
+    above for ever while protecting nothing.
+    """
+    wiring = (SOURCE_ROOT / "cli" / "wiring.py").read_text(encoding="utf-8")
+
+    assert "from coldfix.adapters" in wiring
+
+
 def test_no_core_module_imports_an_adapter() -> None:
     """The import direction, checked with `ast` so a docstring is not an import.
 
@@ -391,11 +421,20 @@ def test_no_core_module_imports_an_adapter() -> None:
     `orchestrator/adapters.py` is deliberately in scope despite its name — it is
     the LangGraph node adapters and has nothing to do with this package, which is
     exactly why it is worth checking rather than exempting.
+
+    **`cli/wiring.py` is exempt, and S-17.18 is the story that widened this.**
+    `campaign_for` takes what an adapter supplies rather than the adapter, so
+    something has to do the unpacking, and ADR 148 §1 already named it: *the
+    campaign is the only layer allowed to know both*. `orchestrator/assembly.py`
+    declined to be that layer because widening this invariant as a side effect of
+    another story is too expensive — so the widening happened in the story that
+    was about it, in one file, and `test_only_one_module_is_exempt_from_the_layering`
+    keeps it at one.
     """
     offenders: list[str] = []
     for path in sorted(SOURCE_ROOT.rglob("*.py")):
         relative = path.relative_to(SOURCE_ROOT)
-        if relative.parts[0] == "adapters":
+        if relative.parts[0] == "adapters" or relative.as_posix() in EXEMPT:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
