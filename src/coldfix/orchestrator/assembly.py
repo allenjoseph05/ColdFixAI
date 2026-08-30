@@ -79,10 +79,12 @@ class AssemblyError(Exception):
 
 
 @contextmanager
-def campaign_for(  # noqa: PLR0913 - twenty-three fields from nine owners, and the
+def campaign_for(  # noqa: PLR0913 - twenty-five fields from nine owners, and the
     # signature is the honest form of that. A config object bundling them would be
     # a type whose only purpose is to be unpacked here, which `CLAUDE.md` refuses
-    # until a second caller exists.
+    # until a second caller exists. S-17.18 added the bundling at the *edge* —
+    # `cli/config.py` reads a file — which is a different thing: the caller there
+    # is a file, and a file needs a shape.
     *,
     framework: str,
     reset_candidates: Sequence[ResetMechanism],
