@@ -1,0 +1,58 @@
+# A complete ColdFix configuration. Copy to `coldfix.toml` and edit.
+#
+# Every value here is a fact about the subject that nothing under `src/` will
+# guess: S-7.2's convention is that this tool never chooses an interpreter or a
+# database on its own account, and a default in a config loader is the most
+# invisible way to break it — the file looks complete and the run measures
+# something nobody asked for.
+#
+# `coldfix plan` checks this file and reports what a run would be given. It
+# opens no container, no database and no model client, so it costs nothing and
+# needs neither Docker nor Postgres to answer.
+#
+# `coldfix run --spend` is the paid path. The flag is required and there is no
+# prompt, because prompts get answered by habit.
+
+[project]
+name      = "shop"
+root      = "."
+revision  = "HEAD"
+framework = "Django"
+trust_key = "n-plus-one:uniform"
+
+[subject]
+python        = ["python"]
+database_url  = "postgresql://localhost/shop_test"
+settings      = "config.settings"
+source        = "shop@HEAD"
+suite_command = ["pytest", "-q"]
+entity        = "author"
+path          = "/books/"
+model         = "shop.Book"
+metric        = "db.query"
+
+[workload]
+id          = "books"
+description = "the books list, rendering every row"
+
+[budget]
+ceiling_eur = "25.00"
+rate_eur    = "0.92"
+rate_as_of  = 2026-08-30
+
+[tokens]
+prefix = 2048
+prompt = 12000
+
+[claim]
+metric   = "db.query"
+baseline = 1193.0
+at_most  = 12.0
+guards   = [{ metric = "response_bytes", baseline = 2000.0, at_most = 3000.0 }]
+
+[sandbox]
+image         = "python:3.12"
+worktree_root = ".coldfix/worktrees"
+
+[store]
+url = "postgresql://localhost/coldfix_knowledge"

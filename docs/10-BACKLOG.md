@@ -2067,6 +2067,26 @@ AC:
 
 Notes: **the cache cost of this is zero and the first version of ADR 169 said otherwise.** Caching is a prefix match with render order `tools` → `system` → `messages`, so the system parameter is part of the cached prefix; three steps sending three system prompts have had three cache entries all along, whatever the session count. Do not re-derive `04-cost.md` §12.2 for this story — the correction commit already did, and the figure that moved was §4's *one stable prefix per run*, which for the Diagnostician is one per step.
 
+### S-17.18 — An entry point, and a config file to feed it
+**DONE (2026-08-30, ADR 172).** `coldfix/cli/`, `coldfix.example.toml`, 27 tests in `tests/cli/test_entry_point.py`, and `pyproject.toml` declares the console script. **AC 3 is met in a narrower form than written and the narrowing is the honest one**: `plan` reports what a run *would be given* rather than assembling a `Resources`, because `campaign_for` opens a workbench and a store — Docker and Postgres — and a command whose purpose is *have I configured this correctly* should answer on a laptop with neither. **`run` raises rather than pretending**: everything up to handing the values over is built, the handing over is S-17.1, and wiring an unexecuted path and calling it done is the failure this project records at every epic join. **The layering invariant widened by exactly one module**, `cli/wiring.py`, with `EXEMPT` asserted to have one entry and a second test asserting that module really does import an adapter, so a stale exemption cannot sit there protecting nothing.
+
+Depends: S-17.15, S-14.6
+Why: **the library is finished and the application cannot be started.** `pyproject.toml` declares no `console_scripts`, there is no `__main__`, and `campaign_for` — twenty-five required arguments — is called from exactly two files, both tests. So the only way to run this system is to hand-assemble twenty-five values correctly in Python, which is not a thing to do for the first time on the day the run costs money.
+
+**This is the layer the architecture has been reserving.** `campaign_for` takes adapter-*supplied values* rather than the adapter, because `test_no_core_module_imports_an_adapter` holds that the core must never import one — and S-14.6 made the same point about the grounding registry: *whoever assembles a run populates it*. Nothing has been that whoever. This is it, and it is the one place `coldfix.adapters` may be imported.
+
+**Nothing here may spend money by accident.** The default is an assemble-and-report path that makes no model call at all; a real run takes an explicit flag and refuses without a credential. A tool whose easiest invocation costs money is one that will eventually cost money by mistake.
+
+AC:
+- A `coldfix.toml` supplies every value `campaign_for` needs that is not an object; a test builds a campaign from a file and nothing else
+- The adapter supplies the rest — reset candidates, capabilities, counters and the workload — resolved through S-14.6's registry from the framework named in the file
+- `coldfix plan` assembles a campaign and reports it **without making a model call**; a test asserts the client is never asked for anything
+- `coldfix run` refuses without an explicit opt-in flag, and a test attempts the run without it and asserts nothing was spent
+- A malformed or incomplete config is refused with a message naming the field and the section, not a `KeyError`; a test covers a missing field, an unknown framework, and a value of the wrong type
+- `pyproject.toml` declares the console script, and a test asserts the entry point it names is importable and callable
+
+Notes: **twenty-five arguments is the honest count and the signature is not the problem** — ADR's note on `campaign_for` argues that a config object bundling them would be a type whose only purpose is to be unpacked, and that still holds *inside* core. This story adds the bundling at the edge, where a file is the caller. The `noqa` comment on `campaign_for` says *twenty-three fields*; it is twenty-five, and that is worth correcting while passing.
+
 ### S-17.2 — Documentation
 Depends: S-17.1
 AC:

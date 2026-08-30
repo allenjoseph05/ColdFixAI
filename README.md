@@ -16,8 +16,8 @@ Python 3.12+. Django + Postgres is the first target framework.
 ## Status
 
 **Pre-alpha, and the honest summary is that the machinery is built and has never
-been run against a real subject for real.** 149 of 154 stories are done, across
-171 ADRs. The fast test subset is ~3,300 tests.
+been run against a real subject for real.** 150 of 155 stories are done, across
+172 ADRs. The fast test subset is ~3,300 tests.
 
 The three viability spikes ran on 2026-08-02 and none of them invalidated the
 design — though `S-0.4` and `S-0.5` both changed it, which is what they were for.
@@ -43,9 +43,13 @@ stated is the hit rate — under a replaying client that figure comes from the
 recording, so `docs/04-cost.md` §12.3 is marked reachable rather than quoted as
 achieved. The first real number needs an API, and that is `S-17.1`.
 
-There is no CLI and no configuration file. The entry point is `campaign_for(...)`
-in `src/coldfix/orchestrator/assembly.py`, which takes twenty-five required
-keyword arguments and five optional ones.
+**There is a CLI, and it cannot spend money by accident.** `coldfix plan` reads
+`coldfix.toml` — see `coldfix.example.toml` — resolves the adapter, and reports
+what a run would be given, opening no container, no database and no model client.
+`coldfix run` refuses without an explicit `--spend`, and refuses again without a
+credential, before anything opens. What `run` does *not* yet do is hand those
+values to `campaign_for` and drive the graph: that path has never been executed,
+it is `S-17.1`, and it says so rather than pretending.
 
 ---
 
@@ -75,7 +79,7 @@ uv run mypy .                # types, strict
 ```
 
 Lint, format, types, and the fast subset must all pass before a story is done.
-The fast subset is the gate and currently collects 3,342 tests; a failure in it
+The fast subset is the gate and currently collects 3,371 tests; a failure in it
 is evidence, not noise. `timing` tests are separated because they read a real
 clock — they are excluded from the gate so that a busy machine cannot turn a
 scheduling delay into a red build, not because they are optional.
@@ -99,10 +103,11 @@ scheduling delay into a red build, not because they are optional.
 | `src/coldfix/cost/` | routing, cascade, budgets, token accounting, context assembly |
 | `src/coldfix/llm/` | the model client |
 | `src/coldfix/adapters/` | framework-specific layer (Django first) |
+| `src/coldfix/cli/` | the `coldfix` command — the one layer that knows both |
 | `src/coldfix/eval/` | benchmark runners, agreement harness, cost reporting |
 | `src/coldfix/agents/` | the role index only — each agent's code lives in the four packages above |
 | `docs/` | design documents — start with `docs/00-BRIEF.md` |
-| `docs/adr/` | 171 architecture decision records |
+| `docs/adr/` | 172 architecture decision records |
 | `spikes/` | timeboxed experiments that produce a finding, not shippable code |
 | `tests/fixtures/` | a repository with deliberately planted defects |
 
