@@ -1633,6 +1633,34 @@ Notes: this is genuinely last. Adding a protocol between two components you wrot
 
 **Inherited from S-14.3 (2026-08-26), and it is not MCP work — it is the boundary this epic did not finish.** The *interface* is framework-neutral and two adapters prove it; the **grounding sequence is not**. Three places in core still know Django: `explorer/compose.py` calls `enumerate_entry_points` directly, `stages.PREDICATES` holds one entry, and `Framework.supported` is `self is Framework.DJANGO`. All three are honest today. **Do not fix `supported` alone** — a `fingerprint` that accepts Flask turns an accurate *not a supported framework* into a `KeyError` on `PREDICATES[Framework.FLASK]` one call later, which is a crash where there was a clear refusal. Replacing it properly means *an adapter exists for it*, which needs an adapter registry — and the registry **cannot live in `explorer/`**, because adapters import `explorer.fingerprint`; the decision has to move up to the campaign, the only layer allowed to know both. ADR 148 §1.
 
+
+### S-14.6 — Grounding asks the adapter, not Django
+**DONE (2026-08-30, ADR 171).** `explorer/registry.py`, 15 tests in `tests/explorer/test_grounding_registry.py`. **Two of ADR 148 §1's premises did not hold and both are corrected in that ADR.** The cycle it feared needs the registry to *pull* from adapters — nothing in `explorer/` imports `adapters/`, and a test already enforces that — so a push-based registry in `explorer/` is a tree. And the `KeyError` it warned about is not there: `predicates_for` already read `.get(...)` and raised a typed `StageError`, verified by constructing a `Fingerprint` on `Framework.FLASK`. Allen chose the push design over the campaign-layer one, knowing the import-order cost.
+
+**Six of the nine predicates were never Django's.** `_DJANGO_PREDICATES` was named for a framework and only `_clone`, `_endpoint` and `_configure` are one — two reach for Django's enumerator and one runs `manage.py check`. The other six read a probed payload and stayed in core as `FRAMEWORK_NEUTRAL_PREDICATES`; moving all nine would have made every future adapter restate six identical functions.
+
+**The import-order hazard is real and showed itself immediately**: seven test modules failed the moment the registry landed, each one a genuine instance of *this process never imported an adapter*. Loud rather than silent, which is the property that matters. **Core cannot fix it for them** — `test_no_core_module_imports_an_adapter` holds that the core must never import an adapter, so whoever assembles a run populates the registry, exactly as `campaign_for` already takes adapter-supplied values rather than the adapter. A test pins the `registered so far: none` refusal, because *refuses everything* is a bad state to reach without a diagnosis.
+
+**MCP is untouched and still last** — S-14.5's own AC need a non-Python adapter and this was never that; it is the boundary S-14.5's note said the epic had not finished.
+
+Depends: S-14.3, S-14.4
+Why: **Epic 14's claim is that core is framework-neutral, and three places in core still are not.** ADR 148 §1 names them and says the interface half is proved while the grounding half is not: `explorer/compose.py` calls `enumerate_entry_points` directly, `stages.PREDICATES` holds one entry, and `Framework.supported` is `self is Framework.DJANGO`. `00-BRIEF.md` §5 step 15 makes *runs on SQLAlchemy without core changes* the acceptance, and grounding is the part that cannot.
+
+**The seam already exists for one of the three.** `FrameworkAdapter.discover_workloads` returns an `Enumeration` — the same type `enumerate_entry_points` returns — and both adapters implement it against entirely different mechanisms, a route table asked of the framework versus decorators read off files. `compose.py` reaching past that to the Django enumerator is the leak, not a missing capability.
+
+**Stage predicates are not on the interface and adding them is the substance.** Nine predicates per framework is what ADR 009 asks for and what E14's adapter was supposed to add; `_DJANGO_PREDICATES` is the only set that exists. A ninth interface operation is a real extension and it is what makes `PREDICATES` a lookup on something a framework supplies rather than a constant in core.
+
+**`Framework.supported` becomes *an adapter is registered that can ground it*, and the registry cannot live in `explorer/`** because adapters import `explorer.fingerprint`. The decision moves to the campaign, the only layer allowed to know both. ADR 148 §1.
+
+AC:
+- `explorer/compose.py` obtains its enumeration from the adapter; a test drives grounding with an adapter whose enumeration is not Django's and gets that adapter's answer
+- Stage predicates are supplied by the adapter; `stages.PREDICATES` no longer names a framework, and a test proves a second framework's predicates are reached
+- `Framework.supported` is replaced by a registry lookup at the campaign layer; a test proves a framework with no registered adapter is refused **with a reason naming what is missing**, and one with a registered adapter is not
+- Nothing under `src/coldfix/` outside `adapters/` names `Framework.DJANGO` except the fingerprinter's own detection rules, and a test reads the tree to assert it
+- The refusal stays a refusal at every partial state: a test drives a framework that is detected, has an adapter, and has no predicates, and asserts a typed error naming which of the three is missing
+
+Notes: **the crash ADR 148 warned about is not there and the correction is recorded in that ADR.** `predicates_for` already reads `PREDICATES.get(...)` and raises a typed `StageError` naming the framework, verified by constructing a `Fingerprint` on `Framework.FLASK`. So this is not urgent bug-fixing; it is the boundary Epic 14 claimed and did not finish. **Detection is already framework-neutral** — `_identify_framework` detects Django, Flask and FastAPI — so `supported` is the only gate, which is why replacing it is the whole of AC 3.
+
 ---
 
 # EPIC 15 — Evaluation

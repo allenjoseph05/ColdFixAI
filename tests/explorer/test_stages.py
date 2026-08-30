@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+import coldfix.adapters  # noqa: F401 - registers grounding support; the registry is empty without it
 from coldfix.explorer.auth import (
     AuthProfile,
     Established,
@@ -540,7 +541,10 @@ def test_a_framework_with_no_adapter_is_refused_rather_than_defaulted() -> None:
         test_runner=None,
     )
 
-    with pytest.raises(StageError, match="no stage predicates are registered"):
+    # S-14.6 changed the sentence and not the property: the refusal now says what
+    # is absent — nothing taught this system to ground it — rather than reporting a
+    # missing table, which named the symptom.
+    with pytest.raises(StageError, match="nothing has taught this system to ground Flask"):
         predicates_for(flask)
 
 
