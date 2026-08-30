@@ -2088,6 +2088,14 @@ AC:
 Notes: **twenty-five arguments is the honest count and the signature is not the problem** — ADR's note on `campaign_for` argues that a config object bundling them would be a type whose only purpose is to be unpacked, and that still holds *inside* core. This story adds the bundling at the edge, where a file is the caller. The `noqa` comment on `campaign_for` says *twenty-three fields*; it is twenty-five, and that is worth correcting while passing.
 
 ### S-17.2 — Documentation
+**DONE (2026-08-30) except one AC element that is not achievable, and saying so rather than quietly dropping it.** `docs/11-RUNNING.md` (installation, configuration, running, and where things go wrong), `docs/12-LIMITATIONS.md` (derived from `07-use-cases.md` §10), and `docs/09-adapters.md` §6 rewritten.
+
+**AC 1's *four-line project config* is a fantasy and always was.** `campaign_for` takes twenty-five required arguments; fourteen are facts about the subject that S-7.2 forbids this tool to guess — an interpreter, a database URL, a settings module, a test command. Four lines would mean defaulting ten of them, and a default in a config loader is the most invisible way to measure the wrong program. `coldfix.toml` is about forty lines and every one is a decision somebody has to make. **Recorded as refused, not as met.**
+
+**AC 2 was already met and had rotted.** `docs/09-adapters.md` §6 told adapter authors that `compose.py` calls Django's enumerator, that `stages.py` has predicates for one framework, that `Framework.supported` names Django alone, and that their adapter would be refused at fingerprinting however well it conformed — **every clause of which S-14.6 had made false the day before**, including the crash claim that was never true. The one document written for people outside this project was telling them the opposite of the truth about the thing they most need to know. Now says what to register and how to check it with `coldfix plan`.
+
+**The dependency on S-17.1 was real but not total.** What needed the run is the *honest* part of the limitations page, and §4 of it is written as a dated statement of exactly what has and has not been done, so the run updates one section rather than invalidating the document.
+
 Depends: S-17.1
 AC:
 - Installation, configuration, and the four-line project config
