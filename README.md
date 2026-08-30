@@ -16,7 +16,7 @@ Python 3.12+. Django + Postgres is the first target framework.
 ## Status
 
 **Pre-alpha, and the honest summary is that the machinery is built and has never
-been run against a real subject for real.** 150 of 155 stories are done, across
+been run against a real subject for real.** 151 of 155 stories are done, across
 172 ADRs. The fast test subset is ~3,300 tests.
 
 The three viability spikes ran on 2026-08-02 and none of them invalidated the
@@ -123,7 +123,11 @@ quietly reappears on a handover type fails a test rather than a review.
 
 ## Documentation
 
-Read `docs/00-BRIEF.md` first — it is the entry point and carries the authority
+To **use** it: `docs/11-RUNNING.md` installs and configures it, and
+`docs/12-LIMITATIONS.md` says what it cannot do — read the second one first.
+`docs/09-adapters.md` is for adding a framework.
+
+To **read** it: `docs/00-BRIEF.md` is the entry point and carries the authority
 map. `docs/10-BACKLOG.md` is the execution plan. Where `docs/08-audit.md`
 disagrees with `docs/02-architecture.md` or `docs/03-agents.md`, the audit wins.
 

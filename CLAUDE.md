@@ -25,6 +25,8 @@ Read on demand, not every session:
 | Customer-facing capability claims | `docs/07-use-cases.md` |
 | **Corrections to 02 and 03** | `docs/08-audit.md` |
 | How to write a framework adapter | `docs/09-adapters.md` |
+| How to install, configure and run it | `docs/11-RUNNING.md` |
+| What it cannot do, said plainly | `docs/12-LIMITATIONS.md` |
 
 `docs/08-audit.md` supersedes parts of `02` and `03`. When they disagree, the audit wins.
 
