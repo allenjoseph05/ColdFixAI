@@ -139,6 +139,10 @@ AC:
 
 Notes: the planted-defect fixture repo is the single most useful test asset in the project. Build it early and grow it whenever a real repo surprises you.
 
+**DONE (closed 2026-08-30 by verification, not by new code).** All four AC are met; the three blocked ones were unblocked by their dependencies landing and nobody came back to say so. Checked against the tree rather than from memory: **lab-bench unit tests** — `tests/bench/`, 141 tests across seven modules, driven by `tests/fixtures/planted/loops.py`, whose own first line is *“Synthetic programs with known complexity, for curve fitting”* and which carries O(1), O(n), two O(n²) shapes and an O(n log n) control. **Golden-file evidence-chain serialization** — `tests/diagnosis/test_chain.py::test_the_serialization_matches_the_golden_file` against `tests/diagnosis/golden/evidence_chain.json`. **Mock LLM client** — S-0.7b, done 2026-08-11 (ADR 069). The split this status recommended did happen for the client half and was never needed for the other two.
+
+**The original status, kept because the recommendation in it was right:**
+
 **Status (2026-08-02): partially delivered — one AC of four. The other three are blocked on code that does not exist, and the story should be split.**
 
 Delivered: the planted-defect fixture repository, in `tests/fixtures/`. Six query defects and controls, five complexity functions, a slow/fast import pair, and 25 tests asserting every documented signature. It goes beyond the four defects listed above with two additions the spikes demanded — a **decoy** with a high constant query cost that must *not* be flagged (the netbox shape from S-0.3), and a component whose **downstream** work dominates, which is the case S-0.4 could not test and S-3.4 most needs. Every defect is paired with a control, because a detector that always answers "N+1" passes a fixture that only contains defects.
