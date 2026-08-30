@@ -42,6 +42,17 @@ leaving it.** The refusal would move from an accurate *not a supported framework
 to a `KeyError` on `PREDICATES[Framework.FLASK]` one call later. Partial is not a
 midpoint here; it converts a clear refusal into a crash.
 
+> **Correction (2026-08-30, S-14.6): the crash is not there.** `predicates_for`
+> reads `PREDICATES.get(...)` and raises `StageError` — *"no stage predicates are
+> registered for Flask"* — naming the framework. Checked by constructing a
+> `Fingerprint` on `Framework.FLASK` and calling it, rather than by reading. So
+> fixing `supported` alone would move the refusal *later* and leave it a clear,
+> typed refusal; it would not produce a crash. The paragraph above overstated the
+> risk and the conclusion it argues for still holds for a different reason: a
+> refusal at `predicates_for` says *this framework has no predicates* when the
+> honest answer is *nothing has been taught to ground it*, and the place that
+> knows which is the registry.
+
 What the remaining work is: route `compose.py`'s enumeration and stage
 predicates through the adapter, and replace `Framework.supported` with *an
 adapter exists for it*. That last one needs an adapter registry, and the registry

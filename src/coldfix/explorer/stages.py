@@ -54,8 +54,9 @@ from typing import Any
 
 from coldfix.bench.execute import ExecutionError
 from coldfix.explorer.auth import Resolution as AuthResolution
-from coldfix.explorer.entrypoints import Kind, enumerate_entry_points, settings_module
-from coldfix.explorer.fingerprint import Fingerprint, Framework, Identification
+from coldfix.explorer.entrypoints import settings_module
+from coldfix.explorer.fingerprint import Fingerprint, Identification
+from coldfix.explorer.registry import grounds_for
 from coldfix.explorer.surface import HostSurface, Surface
 from coldfix.explorer.work import Verification
 
@@ -321,29 +322,6 @@ def _said(payload: Mapping[str, Any]) -> str:
 # ================================================================== the nine predicates
 
 
-def _clone(grounding: Grounding, payload: Mapping[str, Any]) -> Outcome:
-    del payload
-    root = Path(grounding.root)
-    if not root.is_dir():
-        return Outcome(Stage.CLONE, Verdict.FAILS, f"{root} is not a directory")
-
-    parsed = enumerate_entry_points(root)
-    routes = parsed.of_kind(Kind.HTTP_ROUTE)
-    commands = parsed.of_kind(Kind.MANAGEMENT_COMMAND)
-    if not routes and not commands:
-        return Outcome(
-            Stage.CLONE,
-            Verdict.FAILS,
-            f"{parsed.files_read} file(s) read under {root} and no route or management "
-            "command was found in any of them",
-        )
-    return Outcome(
-        Stage.CLONE,
-        Verdict.HOLDS,
-        f"{len(routes)} route(s) and {len(commands)} command(s) read from the checkout",
-    )
-
-
 def _dependencies(grounding: Grounding, payload: Mapping[str, Any]) -> Outcome:
     del grounding
     if payload.get("imported"):
@@ -353,33 +331,6 @@ def _dependencies(grounding: Grounding, payload: Mapping[str, Any]) -> Outcome:
             f"the framework imports and reports version {payload.get('version', '?')}",
         )
     return Outcome(Stage.DEPENDENCIES, Verdict.FAILS, _said(payload))
-
-
-def _configure(grounding: Grounding, payload: Mapping[str, Any]) -> Outcome:
-    """The framework's own check command, which is the point.
-
-    Django's `check` knows what a misconfigured Django looks like and this module
-    does not. Reimplementing its judgement here would be a second opinion to keep
-    in step with the first, and it is the framework's opinion that decides whether
-    the framework will run.
-    """
-    if not payload.get("imported"):
-        return Outcome(
-            Stage.CONFIGURE,
-            Verdict.UNKNOWN,
-            "the framework does not import, so its check command cannot be run",
-        )
-
-    result = grounding.where().run(
-        [*grounding.python, "manage.py", "check"],
-        timeout=grounding.timeout,
-    )
-    if result.exit_code == 0:
-        return Outcome(Stage.CONFIGURE, Verdict.HOLDS, "manage.py check exited 0")
-    said = (result.stderr or result.stdout).strip()[-400:]
-    return Outcome(
-        Stage.CONFIGURE, Verdict.FAILS, f"manage.py check exited {result.exit_code}: {said}"
-    )
 
 
 def _connect(grounding: Grounding, payload: Mapping[str, Any]) -> Outcome:
@@ -481,30 +432,6 @@ def _seed(grounding: Grounding, payload: Mapping[str, Any]) -> Outcome:
     )
 
 
-def _endpoint(grounding: Grounding, payload: Mapping[str, Any]) -> Outcome:
-    """The route table, and it is claimed complete only when the framework answered.
-
-    S-7.3's distinction reaching here: a parse establishes that a `path()` call
-    appears in a file, and a repository whose routes are all registered by a DRF
-    router has none to read. So the interpreter is used where there is one.
-    """
-    del payload
-    root = Path(grounding.root)
-    found = enumerate_entry_points(root, python=list(grounding.python))
-    routes = found.of_kind(Kind.HTTP_ROUTE)
-    if not routes:
-        return Outcome(
-            Stage.ENDPOINT,
-            Verdict.FAILS,
-            f"no candidate route was enumerated. {found.resolution.describe().splitlines()[0]}",
-        )
-    return Outcome(
-        Stage.ENDPOINT,
-        Verdict.HOLDS,
-        f"{len(routes)} candidate route(s) enumerated; table complete: {found.routes_are_complete}",
-    )
-
-
 def _work(grounding: Grounding, payload: Mapping[str, Any]) -> Outcome:
     """S-7.8, unchanged, as ADR 009 says. The verdict is read, never recomputed."""
     del payload
@@ -530,19 +457,27 @@ nothing to configure — and because the thing that must not exist is a way to
 The enforcement is that nothing takes a `Predicate` as an argument.
 """
 
-_DJANGO_PREDICATES: Mapping[Stage, Predicate] = {
-    Stage.CLONE: _clone,
+FRAMEWORK_NEUTRAL_PREDICATES: Mapping[Stage, Predicate] = {
     Stage.DEPENDENCIES: _dependencies,
-    Stage.CONFIGURE: _configure,
     Stage.CONNECT: _connect,
     Stage.MIGRATE: _migrate,
     Stage.AUTH: _auth,
     Stage.SEED: _seed,
-    Stage.ENDPOINT: _endpoint,
     Stage.WORK: _work,
 }
+"""Six of ADR 009's nine, and **the surprise this story turned up.**
 
-PREDICATES: Mapping[Framework, Mapping[Stage, Predicate]] = {Framework.DJANGO: _DJANGO_PREDICATES}
+`_DJANGO_PREDICATES` was named for a framework and only three of its members
+were one framework's: `_clone` and `_endpoint` reach for Django's entry-point
+enumerator, and `_configure` runs `manage.py check`. The other six read a
+`payload` the subject was probed for — *did the framework import*, *is there an
+unapplied migration*, *did the credential resolve* — and answer in terms nothing
+Django-specific appears in. So they stay in core and every adapter builds on
+them, rather than each one restating six identical functions and drifting.
+
+An adapter supplies the remaining three and registers the union. `register`
+refuses a table that is missing any of the nine, because `evaluate` measures all
+nine and a partial table is a `KeyError` mid-run rather than partial support."""
 
 
 def predicates_for(identification: Identification) -> Mapping[Stage, Predicate]:
@@ -565,14 +500,15 @@ def predicates_for(identification: Identification) -> Mapping[Stage, Predicate]:
         )
         raise StageError(message)
 
-    known = PREDICATES.get(identification.framework.value)
+    known = grounds_for(identification.framework.value)
     if known is None:
         message = (
-            f"no stage predicates are registered for {identification.framework.value}. "
-            "ADR 009's nine questions are only answerable in a framework's own terms"
+            f"nothing has taught this system to ground {identification.framework.value}. "
+            "ADR 009's nine questions are only answerable in a framework's own terms, and an "
+            "adapter is what supplies them"
         )
         raise StageError(message)
-    return known
+    return known.predicates
 
 
 @dataclass(frozen=True)

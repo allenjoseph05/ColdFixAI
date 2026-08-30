@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 from anthropic.types import MessageParam
 
+import coldfix.adapters  # noqa: F401 - registers grounding support; the registry is empty without it
 from coldfix.cost.accounting import Agent, ExchangeRate, Phase, StepClass
 from coldfix.cost.budget import PHASE_CAPS
 from coldfix.cost.routing import STEP_KINDS, Router, StepType, Tier

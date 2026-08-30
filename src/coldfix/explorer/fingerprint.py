@@ -42,6 +42,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from coldfix.explorer.registry import groundable, registered
+
 # Where a Python project declares what it depends on. Ordered by how much the
 # ecosystem trusts them, because a project with both gets read from both and the
 # evidence should name the authoritative one first.
@@ -62,18 +64,18 @@ _REQUIREMENT_NAME = re.compile(r"^\s*([A-Za-z0-9._-]+)")
 
 
 class Framework(StrEnum):
-    """Web frameworks this system can name. Naming is not supporting."""
+    """Web frameworks this system can name. Naming is not supporting.
+
+    **Whether one can be *grounded* is not a property of this enum. S-14.6.**
+    It used to be — `supported` returned `self is Framework.DJANGO`, which stated
+    a fact about this project's history rather than about the repository in front
+    of it, and left the Django name in core. `explorer/registry.groundable` reads
+    what an adapter registered instead.
+    """
 
     DJANGO = "Django"
     FLASK = "Flask"
     FASTAPI = "FastAPI"
-
-    @property
-    def supported(self) -> bool:
-        """Django only, for now. `CLAUDE.md`: *Django + Postgres is the first
-        target framework* — and the adapter, the reset strategies and the query
-        counter are all Django-specific."""
-        return self is Framework.DJANGO
 
 
 class Orm(StrEnum):
@@ -196,10 +198,18 @@ class Unsupported:
     @property
     def reason(self) -> str:
         if self.identified is not None:
+            # **Names what is absent rather than which framework this is. S-14.6.**
+            # This used to say the adapter and the reset strategies were
+            # Django-specific and point at S-14.3 as the story that would add a
+            # second — which landed in August, so the sentence was telling readers
+            # to wait for something that had already happened. What is actually
+            # missing is grounding support registered for *this* framework, and
+            # the registry can say which ones have it.
+            have = ", ".join(registered()) or "none"
             return (
-                f"{self.identified.value} is not a framework this system supports yet. The "
-                "adapter, the reset strategies and the query counter are Django-specific "
-                "(S-14.3 is the story that adds a second)."
+                f"{self.identified.value} was identified and nothing has taught this system to "
+                f"ground it. Grounding needs an adapter supplying ADR 009's nine stage "
+                f"predicates and an entry-point enumerator; registered so far: {have}."
             )
         return (
             "nothing here identifies a web framework this system knows. Either this is not the "
@@ -414,7 +424,7 @@ def fingerprint(root: Path) -> Identification:
     read = tuple(name for name in MANIFESTS if (root / name).is_file())
 
     identified = _identify_framework(root, requirements)
-    if identified is None or not identified.value.supported:
+    if identified is None or not groundable(identified.value):
         return Unsupported(root=root, identified=identified, looked_in=read)
 
     return Fingerprint(

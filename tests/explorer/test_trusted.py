@@ -27,6 +27,7 @@ from typing import cast
 
 import pytest
 
+import coldfix.adapters  # noqa: F401 - registers grounding support; the registry is empty without it
 from coldfix.explorer import auth as auth_module
 from coldfix.explorer import compose
 from coldfix.explorer.anchor import Anchor
@@ -51,6 +52,7 @@ from coldfix.explorer.playbook import (
     learned_from_auth,
     remembered_requirement,
 )
+from coldfix.explorer.registry import Grounds, grounds_for
 from coldfix.explorer.work import WorkVerificationError
 from coldfix.sandbox.verification import VerifiedReset
 
@@ -391,7 +393,18 @@ def wire_sequence(
     monkeypatch.setattr(compose, "fingerprint", lambda _root: a_fingerprint())
     monkeypatch.setattr(compose, "anchor_for", lambda _root: an_anchor())
     monkeypatch.setattr(compose, "interpreter_for", lambda _root: None)
-    monkeypatch.setattr(compose, "enumerate_entry_points", lambda _r, **_k: an_enumeration())
+    # **The enumerator is the registry's now, not this module's. S-14.6.**
+    # `compose` asks `grounds_for(...)` and calls what comes back, so patching
+    # the name here would patch something that is no longer read.
+    monkeypatch.setattr(
+        compose,
+        "grounds_for",
+        lambda _framework: Grounds(
+            framework="Django",
+            enumerate_entry_points=lambda _r, **_k: an_enumeration(),
+            predicates=grounds_for("Django").predicates,  # type: ignore[union-attr]
+        ),
+    )
     monkeypatch.setattr(compose, "resolve_auth", lambda _root, **_k: resolution)
     monkeypatch.setattr(compose, "verify_work", fake_verify)
     monkeypatch.setattr(compose, "emit", lambda *_a, **_k: object())
@@ -464,7 +477,18 @@ def test_the_sequence_hands_the_trusted_lookup_to_the_auth_stage(
     monkeypatch.setattr(compose, "fingerprint", lambda _root: a_fingerprint())
     monkeypatch.setattr(compose, "anchor_for", lambda _root: an_anchor())
     monkeypatch.setattr(compose, "interpreter_for", lambda _root: None)
-    monkeypatch.setattr(compose, "enumerate_entry_points", lambda _r, **_k: an_enumeration())
+    # **The enumerator is the registry's now, not this module's. S-14.6.**
+    # `compose` asks `grounds_for(...)` and calls what comes back, so patching
+    # the name here would patch something that is no longer read.
+    monkeypatch.setattr(
+        compose,
+        "grounds_for",
+        lambda _framework: Grounds(
+            framework="Django",
+            enumerate_entry_points=lambda _r, **_k: an_enumeration(),
+            predicates=grounds_for("Django").predicates,  # type: ignore[union-attr]
+        ),
+    )
     monkeypatch.setattr(compose, "resolve_auth", fake_resolve_auth)
     monkeypatch.setattr(compose, "verify_work", lambda *_a, **_k: object())
     monkeypatch.setattr(compose, "emit", lambda *_a, **_k: object())
