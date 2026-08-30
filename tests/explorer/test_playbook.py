@@ -22,6 +22,7 @@ from typing import cast
 
 import pytest
 
+import coldfix.adapters  # noqa: F401 - registers grounding support; the registry is empty without it
 from coldfix.explorer import compose
 from coldfix.explorer.anchor import Anchor
 from coldfix.explorer.auth import (
@@ -53,6 +54,7 @@ from coldfix.explorer.playbook import (
     from_entry,
     learned_from_auth,
 )
+from coldfix.explorer.registry import Grounds, grounds_for
 from coldfix.sandbox.verification import VerifiedReset
 
 
@@ -171,7 +173,18 @@ def test_grounding_consults_the_playbook_under_the_fingerprints_own_key(
     monkeypatch.setattr(compose, "fingerprint", lambda _root: _a_fingerprint())
     monkeypatch.setattr(compose, "anchor_for", lambda _root: _an_anchor())
     monkeypatch.setattr(compose, "interpreter_for", lambda _root: None)
-    monkeypatch.setattr(compose, "enumerate_entry_points", lambda _r, **_k: _an_enumeration())
+    # **The enumerator is the registry's now, not this module's. S-14.6.**
+    # `compose` asks `grounds_for(...)` and calls what comes back, so patching
+    # the name here would patch something that is no longer read.
+    monkeypatch.setattr(
+        compose,
+        "grounds_for",
+        lambda _framework: Grounds(
+            framework="Django",
+            enumerate_entry_points=lambda _r, **_k: _an_enumeration(),
+            predicates=grounds_for("Django").predicates,  # type: ignore[union-attr]
+        ),
+    )
     monkeypatch.setattr(compose, "resolve_auth", fake_resolve_auth)
 
     with pytest.raises(ReachedAuthError):
@@ -203,7 +216,18 @@ def test_grounding_without_a_playbook_still_consults_one(
     monkeypatch.setattr(compose, "fingerprint", lambda _root: _a_fingerprint())
     monkeypatch.setattr(compose, "anchor_for", lambda _root: _an_anchor())
     monkeypatch.setattr(compose, "interpreter_for", lambda _root: None)
-    monkeypatch.setattr(compose, "enumerate_entry_points", lambda _r, **_k: _an_enumeration())
+    # **The enumerator is the registry's now, not this module's. S-14.6.**
+    # `compose` asks `grounds_for(...)` and calls what comes back, so patching
+    # the name here would patch something that is no longer read.
+    monkeypatch.setattr(
+        compose,
+        "grounds_for",
+        lambda _framework: Grounds(
+            framework="Django",
+            enumerate_entry_points=lambda _r, **_k: _an_enumeration(),
+            predicates=grounds_for("Django").predicates,  # type: ignore[union-attr]
+        ),
+    )
     monkeypatch.setattr(compose, "resolve_auth", fake_resolve_auth)
 
     with pytest.raises(ReachedAuthError):
@@ -384,7 +408,18 @@ def test_grounding_records_what_the_auth_stage_learned(monkeypatch: pytest.Monke
     monkeypatch.setattr(compose, "fingerprint", lambda _root: _a_fingerprint())
     monkeypatch.setattr(compose, "anchor_for", lambda _root: _an_anchor())
     monkeypatch.setattr(compose, "interpreter_for", lambda _root: None)
-    monkeypatch.setattr(compose, "enumerate_entry_points", lambda _r, **_k: _an_enumeration())
+    # **The enumerator is the registry's now, not this module's. S-14.6.**
+    # `compose` asks `grounds_for(...)` and calls what comes back, so patching
+    # the name here would patch something that is no longer read.
+    monkeypatch.setattr(
+        compose,
+        "grounds_for",
+        lambda _framework: Grounds(
+            framework="Django",
+            enumerate_entry_points=lambda _r, **_k: _an_enumeration(),
+            predicates=grounds_for("Django").predicates,  # type: ignore[union-attr]
+        ),
+    )
     monkeypatch.setattr(compose, "resolve_auth", fake_resolve_auth)
     monkeypatch.setattr(compose, "carried", lambda *_a: (_ for _ in ()).throw(ReachedAuthError))
 

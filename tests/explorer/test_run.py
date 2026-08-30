@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+import coldfix.adapters  # noqa: F401 - registers grounding support; the registry is empty without it
 from coldfix.cost.accounting import ExchangeRate, Ledger, Phase
 from coldfix.cost.budget import Budget, CapRaisedError
 from coldfix.explorer.auth import (
