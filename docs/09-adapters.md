@@ -212,20 +212,72 @@ per run.
 
 ---
 
-## 6. What is not yet framework-neutral
+## 6. Registering your adapter
 
-The *interface* is neutral and two adapters demonstrate it. **The grounding
-sequence is not.** `explorer/compose.py` calls Django's entry-point enumeration
-directly, `explorer/stages.py` has stage predicates for one framework, and
-`Framework.supported` names Django alone. An adapter for a third framework can be
-written, checked and driven through every operation above — and the *end-to-end
-campaign* will still refuse the repository at fingerprinting.
+Implementing the eight operations makes an adapter that **conforms**. Three more
+lines make it one the campaign can actually select, and until S-14.6 they did not
+exist — the grounding sequence knew Django by name in three places and an adapter
+for a third framework was refused at fingerprinting however well it conformed.
 
-That is honest rather than accidental, and it is filed on S-14.5 with the reason
-that fixing the last of those three on its own makes things worse: a fingerprint
-that accepts your framework turns an accurate refusal into a crash one call
-later.
+**Supply what grounding needs.** ADR 009 asks nine questions of a repository, and
+six of them are answered from a payload the subject is probed for — those are
+`FRAMEWORK_NEUTRAL_PREDICATES` in `explorer/stages.py` and you inherit them. The
+other three are yours: `CLONE` and `ENDPOINT` need your entry-point enumerator,
+and `CONFIGURE` runs whatever your framework's own check command is. Register the
+union at module scope:
 
-If you are writing an adapter today, that is what you are getting: an
-implementation that conforms, that can be driven operation by operation, and that
-the campaign entry point does not yet know how to select.
+```python
+from coldfix.explorer.registry import Grounds, register
+from coldfix.explorer.stages import FRAMEWORK_NEUTRAL_PREDICATES, Stage
+
+MY_PREDICATES = {
+    **FRAMEWORK_NEUTRAL_PREDICATES,
+    Stage.CLONE: _clone,
+    Stage.CONFIGURE: _configure,
+    Stage.ENDPOINT: _endpoint,
+}
+
+register(
+    Grounds(
+        framework=Framework.MYFRAMEWORK,
+        enumerate_entry_points=my_enumerator,
+        predicates=MY_PREDICATES,
+    )
+)
+```
+
+`register` refuses a table missing any of the nine, because `evaluate` measures
+all nine and a partial mapping is a `KeyError` in the middle of a run rather than
+a framework that is partly supported. It also refuses a second registration for
+one framework: whichever import ran last would win, silently.
+
+**Be imported.** Registration is an import side effect, so the registry holds
+what a process happened to import. Add your module to `adapters/__init__.py`; a
+test reads that directory for `register(` and fails if anything registers and
+nothing imports it. A framework whose adapter nobody imported is not *withheld* —
+it does not exist, and *absent* reads exactly like *unsupported*.
+
+**Be wired.** Add your class to `ADAPTERS` in `cli/wiring.py`, which is how
+`coldfix.toml`'s `[project].framework` reaches an implementation. That module is
+the only one outside `adapters/` permitted to import an adapter, and the
+exemption is asserted to have exactly one entry.
+
+Note that these are two different questions. The registry answers *can this
+framework be grounded*; the wiring answers *which class implements it*. A
+framework can have an adapter and no grounding support — Flask does, today — and
+`coldfix plan` reports the difference rather than letting you find out at the
+fingerprint.
+
+## 7. Checking it
+
+```bash
+coldfix plan --config your.toml
+```
+
+reports the adapter it resolved, the counters read off your declarations, how
+many capabilities you claimed, and whether your framework is groundable at all.
+It opens no container, no database and no model client, so it costs nothing and
+answers on a laptop with neither.
+
+If `groundable` says no, you have an adapter and no `register(...)` — the run
+would be refused at fingerprinting with a message naming what is missing.
