@@ -1,0 +1,326 @@
+"""E19 — the scan loop, with no API call anywhere.
+
+Two doubles, and the difference matters. `Scripted` returns replies in order, so
+the loop's behaviour can be driven from the test. `ReplayingClient` is the
+project's own double, and one test uses it to assert what a real unrecorded
+request does: it is refused, never answered. Nothing here can reach the network,
+and the last test says so about the module rather than about itself.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any
+
+import pytest
+
+from coldfix.agent.prompt import SYSTEM
+from coldfix.agent.protocol import Action, JsonReader, UnreadableReplyError
+from coldfix.agent.scan import (
+    EXPLORING_TOOLS,
+    MEASURING_TOOLS,
+    Bounds,
+    MalformedSubmissionError,
+    Outcome,
+    Phase,
+    ToolResult,
+    scan,
+)
+from coldfix.collect.measurement import BareMeasurement, Mode, Spread
+from coldfix.cost.accounting import TokenUsage
+from coldfix.evidence.ledger import FabricatedValueError, Ledger
+from coldfix.llm.client import ModelResponse, NoRecordingError, ReplayingClient
+
+MODEL = "claude-opus-5"
+
+
+@dataclass
+class Scripted:
+    """Replies in order. Runs out rather than repeating."""
+
+    replies: list[str]
+    asked: list[Sequence[Mapping[str, Any]]] = field(default_factory=list)
+    stop_reason: str = "end_turn"
+
+    def complete(self, **kwargs: Any) -> ModelResponse:
+        self.asked.append(list(kwargs["messages"]))
+        text = self.replies.pop(0) if self.replies else '{"tool": "submit", "arguments": {}}'
+        return ModelResponse(
+            model=MODEL,
+            text=text,
+            usage=TokenUsage(input_tokens=10, output_tokens=5),
+            stop_reason=self.stop_reason,
+        )
+
+
+@dataclass
+class FakeTools:
+    """Records what was asked and answers however the test needs."""
+
+    results: dict[str, ToolResult] = field(default_factory=dict)
+    called: list[str] = field(default_factory=list)
+
+    def call(self, tool: str, arguments: Mapping[str, Any]) -> ToolResult:
+        self.called.append(tool)
+        return self.results.get(tool, ToolResult(content=f"{tool} ran"))
+
+
+def act(tool: str, **arguments: Any) -> str:
+    return json.dumps({"tool": tool, "arguments": arguments, "reason": "because"})
+
+
+def measured(identifier: str = "m-1", value: float = 2.41) -> BareMeasurement:
+    return BareMeasurement(
+        measurement_id=identifier,
+        command=("python", "app.py"),
+        repeats=5,
+        output_digest="0" * 64,
+        output_bytes=161,
+        wall=Spread(median=value, low=value, high=value),
+        cpu_s=value,
+        mode=Mode.COMPUTING,
+        peak_rss_bytes=1024,
+        read_bytes=0,
+        write_bytes=0,
+    )
+
+
+def run(replies: list[str], tools: FakeTools | None = None, **kwargs: Any) -> Outcome:
+    ledger = kwargs.pop("ledger", None) or Ledger()
+    return scan(
+        Scripted(replies),
+        toolbox=tools or FakeTools(),
+        ledger=ledger,
+        system=SYSTEM,
+        model=MODEL,
+        **kwargs,
+    )
+
+
+# --------------------------------------------------------- the phase gate
+
+
+def test_profile_and_ablate_are_absent_until_a_measurement_verifies() -> None:
+    """Not discouraged -- absent. A profile of a workload that will not run the
+    same way twice is a profile of the machine."""
+    assert "profile" not in EXPLORING_TOOLS
+    assert "ablate" not in EXPLORING_TOOLS
+    assert "measure" in EXPLORING_TOOLS, "verifying is how the phase ends"
+    assert set(MEASURING_TOOLS) > set(EXPLORING_TOOLS)
+
+
+def test_asking_for_a_locked_tool_is_refused_and_says_why() -> None:
+    tools = FakeTools()
+    outcome = run([act("profile", command=["python", "x.py"]), act("submit", findings=[])], tools)
+    assert tools.called == [], "the toolbox was never reached"
+    assert "not available yet" in outcome.transcript.turns[0][1].content
+    assert outcome.stopped_by == "submitted"
+
+
+def test_a_verified_measurement_opens_the_second_phase() -> None:
+    tools = FakeTools(
+        results={"measure": ToolResult(content="ok", measurement_id="m-1", verified=True)}
+    )
+    outcome = run([act("measure"), act("profile"), act("submit", findings=[])], tools)
+    assert outcome.transcript.phase is Phase.MEASURING
+    assert tools.called == ["measure", "profile"]
+
+
+def test_only_measure_can_open_the_phase() -> None:
+    """A tool that could set `verified` itself would be a tool that could unlock
+    the instruments without anything having proved repeatable."""
+    tools = FakeTools(results={"bash": ToolResult(content="ok", measurement_id="m-1")})
+    outcome = run([act("bash", command="ls"), act("submit", findings=[])], tools)
+    assert outcome.transcript.phase is Phase.EXPLORING
+
+
+def test_the_agent_is_told_what_is_available_every_turn() -> None:
+    """The list changes. Being told twice is cheaper than a turn spent asking for
+    something that is not there yet."""
+    tools = FakeTools(
+        results={"measure": ToolResult(content="ok", measurement_id="m-1", verified=True)}
+    )
+    client = Scripted([act("measure"), act("submit", findings=[])])
+    scan(
+        client,
+        toolbox=tools,
+        ledger=Ledger(),
+        system=SYSTEM,
+        model=MODEL,
+    )
+    last = client.asked[-1][-1]["content"]
+    assert "profile" in last and "ablate" in last
+
+
+# ------------------------------------------------------------- the bounds
+
+
+def test_the_turn_cap_ends_the_run_and_keeps_what_it_learned() -> None:
+    """A scan that ran out of turns still knows things. Throwing them away to
+    signal how it stopped would be the expensive kind of tidy."""
+    outcome = run([act("bash", command="ls")] * 20, bounds=Bounds(turns=3, stall_turns=99))
+    assert outcome.stopped_by == "turns"
+    assert len(outcome.transcript.turns) == 3
+
+
+def test_a_run_that_stops_measuring_is_stopped() -> None:
+    """A loop reading files and thinking is a loop spending money on a decision
+    it already had the evidence for."""
+    outcome = run([act("read_file", path="a.py")] * 10, bounds=Bounds(turns=20, stall_turns=3))
+    assert outcome.stopped_by == "stalled"
+    assert len(outcome.transcript.turns) == 3
+
+
+def test_a_measurement_resets_the_stall_counter() -> None:
+    tools = FakeTools(results={"measure": ToolResult(content="ok", measurement_id="m-1")})
+    replies = [act("read_file"), act("read_file"), act("measure"), act("read_file")]
+    outcome = run([*replies, act("submit", findings=[])], tools, bounds=Bounds(stall_turns=3))
+    assert outcome.stopped_by == "submitted"
+
+
+def test_the_wall_clock_stops_a_run_that_will_not_finish() -> None:
+    ticks = iter([0.0, 0.0, 5000.0])
+    outcome = run(
+        [act("bash", command="ls")] * 5,
+        bounds=Bounds(wall_seconds=10.0),
+        clock=lambda: next(ticks, 9999.0),
+    )
+    assert outcome.stopped_by == "wall_clock"
+
+
+UNSPENT = "nothing should have been spent once the budget refused"
+
+
+def test_the_budget_is_checked_before_the_call_not_after() -> None:
+    """After would mean the call that broke the budget was already paid for."""
+
+    @dataclass
+    class Broke:
+        checks: int = 0
+
+        def affordable(self) -> bool:
+            self.checks += 1
+            return False
+
+        def spend(self, tokens: int) -> None:
+            raise AssertionError(UNSPENT)
+
+    budget = Broke()
+    outcome = run([act("bash")], budget=budget)
+    assert outcome.stopped_by == "budget"
+    assert budget.checks == 1
+
+
+# ------------------------------------------------------ reading the reply
+
+
+def test_a_reply_that_is_not_an_action_is_handed_back_rather_than_guessed_at() -> None:
+    """A parser that guessed would turn a misunderstanding into a run that did
+    something nobody asked for, and the guess would be invisible."""
+    outcome = run(["I think I should look at the models file.", act("submit", findings=[])])
+    assert outcome.stopped_by == "submitted"
+    assert outcome.transcript.turns == [], "nothing was executed from an unreadable reply"
+
+
+def test_a_fenced_reply_is_read_because_a_fence_is_not_a_misunderstanding() -> None:
+    reader = JsonReader()
+    assert reader.read('```json\n{"tool": "bash", "arguments": {}}\n```') == Action(tool="bash")
+
+
+def test_a_reply_missing_the_tool_is_refused() -> None:
+    with pytest.raises(UnreadableReplyError):
+        JsonReader().read('{"arguments": {"command": "ls"}}')
+
+
+def test_a_refusal_ends_the_run_rather_than_being_read_as_an_answer() -> None:
+    client = Scripted([""], stop_reason="refusal")
+    outcome = scan(
+        client,
+        toolbox=FakeTools(),
+        ledger=Ledger(),
+        system=SYSTEM,
+        model=MODEL,
+    )
+    assert outcome.stopped_by == "refused"
+
+
+# ----------------------------------------------- the submission goes to the ledger
+
+
+def test_a_submission_citing_an_unmeasured_number_fails_the_whole_run() -> None:
+    """Not caught and softened into a partial result. A submission citing a
+    number nobody measured is the failure this system is built to prevent, and
+    swallowing it here would be the one place that could."""
+    ledger = Ledger()
+    ledger.record(measured("m-1", 2.41))
+    claim = {
+        "kind": "repeated_query",
+        "summary": "s",
+        "location": {"file": "a.py", "line": 1},
+        "evidence": [{"measurement_id": "m-1", "field": "cpu_s", "value": 2.40}],
+    }
+    with pytest.raises(FabricatedValueError):
+        run([act("submit", findings=[claim])], ledger=ledger)
+
+
+def test_a_submission_whose_numbers_are_real_becomes_findings() -> None:
+    ledger = Ledger()
+    ledger.record(measured("m-1", 2.41))
+    claim = {
+        "kind": "repeated_query",
+        "summary": "s",
+        "location": {"file": "a.py", "line": 1},
+        "evidence": [{"measurement_id": "m-1", "field": "cpu_s", "value": 2.41}],
+    }
+    outcome = run([act("submit", findings=[claim])], ledger=ledger)
+    assert outcome.stopped_by == "submitted"
+    assert len(outcome.findings) == 1
+    assert not outcome.findings[0].proven, "no ablation, so suspected"
+
+
+def test_a_submission_that_is_not_a_list_of_claims_is_refused() -> None:
+    with pytest.raises(MalformedSubmissionError):
+        run([act("submit", findings="everything is fine")])
+
+
+def test_submitting_nothing_is_a_valid_ending() -> None:
+    """Finding nothing is a result. It is not an error and not a failure."""
+    outcome = run([act("submit", findings=[])])
+    assert outcome.stopped_by == "submitted"
+    assert outcome.findings == ()
+
+
+# ------------------------------------------------------- nothing reaches a network
+
+
+def test_the_projects_own_double_refuses_a_request_it_has_no_recording_for() -> None:
+    """`ReplayingClient` holds no vendor client at all, so there is nothing here
+    to call with. An unrecorded request is refused, never answered -- a double
+    that answered anyway would make every agent test pass while testing the
+    default."""
+    with pytest.raises(NoRecordingError, match="no recording"):
+        scan(
+            ReplayingClient(),
+            toolbox=FakeTools(),
+            ledger=Ledger(),
+            system=SYSTEM,
+            model=MODEL,
+            bounds=Bounds(turns=1),
+        )
+
+
+def test_the_prompt_states_the_two_traps_as_reasons_not_prohibitions() -> None:
+    """A rule is argued with; an explanation is used.
+
+    Whitespace is normalised because the assertion is about what the prompt says,
+    not where the lines happen to wrap -- a test that broke on rewrapping would
+    make the prompt harder to edit for no gain.
+    """
+    prose = " ".join(SYSTEM.split())
+    assert "A profiler tells you where time is SPENT" in prose
+    assert "does not tell you where time can be SAVED" in prose
+    assert "A zero is not an absence" in prose
+    assert "Finding nothing is a valid answer" in prose
+    assert "Do not manufacture a finding to have one" in prose
