@@ -265,7 +265,7 @@ class CheckpointedState(BaseModel):
 def check_update(
     update: Mapping[str, object],
     *,
-    schema: type[CheckpointedState] = CheckpointedState,
+    schema: type[BaseModel] = CheckpointedState,
 ) -> Mapping[str, object]:
     """Refuse a node's return value that the schema cannot accept. AC 3.
 
@@ -307,6 +307,8 @@ def check_update(
 
 def node[NodeFunction: Callable[..., Mapping[str, object]]](
     function: NodeFunction,
+    *,
+    schema: type[BaseModel] = CheckpointedState,
 ) -> NodeFunction:
     """Wrap a graph node so its write is validated on every transition. AC 3.
 
@@ -314,6 +316,11 @@ def node[NodeFunction: Callable[..., Mapping[str, object]]](
     a caller has to remember to make is one that holds until somebody adds a
     node. `assemble` in S-12.1 should register nodes through this and nothing
     else.
+
+    `schema` defaults to `CheckpointedState` so every existing caller is
+    unchanged, and the v3 pipeline passes its own -- the check is about *a* set of
+    channels, not one particular set, and hardcoding which meant a second
+    pipeline could only have validated writes by duplicating this.
 
     **The decorated function keeps its own type**, which is not cosmetic:
     LangGraph's node protocol declares `__call__(self, state: ...)` with a
@@ -324,6 +331,6 @@ def node[NodeFunction: Callable[..., Mapping[str, object]]](
 
     @wraps(function)
     def validated(*args: object, **kwargs: object) -> Mapping[str, object]:
-        return check_update(function(*args, **kwargs))
+        return check_update(function(*args, **kwargs), schema=schema)
 
     return cast("NodeFunction", validated)

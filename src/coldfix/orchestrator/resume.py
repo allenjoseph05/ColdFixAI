@@ -47,7 +47,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -55,7 +55,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from coldfix.orchestrator.checkpointing import thread
 from coldfix.state.checkpoint import CheckpointedState
 
-DURABILITY = "sync"
+DURABILITY: Literal["sync", "async", "exit"] = "sync"
 """Write each checkpoint before the next node starts.
 
 LangGraph's default submits the write to a background executor and carries on,
