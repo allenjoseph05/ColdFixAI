@@ -6,6 +6,30 @@ Python 3.12+. Django + Postgres is the first target framework.
 
 ---
 
+## The scope widened — read this first
+
+**September 2026: this project is no longer only about backends and databases.**
+The goal is finding wasted work in *any* program, in any language, by running it.
+The data-scale question this document describes is one probe among many.
+
+**Read `docs/walkthrough/` first.** Fifteen documents, and they are **untracked**,
+so git history will not reveal them:
+
+| | |
+|---|---|
+| `12-v3-scoped.md` | what is actually being built, and what was cut |
+| `15-full-architecture.md` | six nodes, three agents — supersedes `09` |
+| `16-v3-backlog.md` | E18–E25, four epics complete |
+| `13-v3-collection.md` | how each number is collected, and what was verified |
+
+**Everything below this line is still true of the system that runs today.** v1 is
+the only end-to-end path that exists: the v3 scan agent's loop is complete and
+tested against doubles, and **no live model call has ever been made from this
+repository**. Nothing in `explorer/` or `adapters/` has been removed, and E25
+records why the cut is blocked.
+
+---
+
 ## Start of every work session
 
 1. Read `docs/00-BRIEF.md` — scope, refusals, authority map.

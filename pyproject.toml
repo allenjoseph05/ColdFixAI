@@ -168,7 +168,7 @@ plugins = ["pydantic.mypy"]
 # `.gitignore` does not help here: mypy does not read it. Spike scaffolding is
 # not product code and imports frameworks this project does not depend on, so it
 # is out of scope for strict checking by intent, not just by convenience.
-exclude = ["^spikes/"]
+exclude = ["^spikes/", "^tools/"]
 
 # Django ships no `py.typed` and no bundled stubs, so `from django.db import
 # connections` is an `import-untyped` error under strict. Silenced for Django
@@ -191,6 +191,17 @@ warn_required_dynamic_aliases = true
 # ---------------------------------------------------------------------------
 # pytest
 # ---------------------------------------------------------------------------
+
+# `os.wait4` is POSIX-only. On a Windows developer machine mypy reports it as
+# missing from `os` entirely. Declaring
+# `platform = "linux"` globally would fix it and break three deliberate
+# Windows-only ignores in `bench/execute.py`, so the silence is scoped to the
+# one module that touches `resource` -- fifteen lines that do nothing but call
+# `getrusage`, split out from `measurement.py` precisely so this override cannot
+# hide a real mistake in the arithmetic.
+[[tool.mypy.overrides]]
+module = "coldfix.collect._child_posix"
+disable_error_code = ["attr-defined"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
