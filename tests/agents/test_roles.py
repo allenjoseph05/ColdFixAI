@@ -53,6 +53,12 @@ def defined_prompts() -> dict[str, str]:
     """
     found: dict[str, str] = {}
     for path in sorted(SOURCE.rglob("*.py")):
+        # The v3 pipeline keeps its own registry, complete over its own tree,
+        # and `tests/agent/test_roles.py` enforces it. Listing a v3 role against
+        # a v1 phase here would be a row that reads as true and describes
+        # nothing. Neither tree can quietly acquire an unowned prompt.
+        if path.relative_to(SOURCE).parts[0] == "agent":
+            continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for statement in tree.body:
             if not isinstance(statement, ast.Assign):
