@@ -10,9 +10,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from coldfix.agent.roles import ROLES
+from coldfix.agent.roles import ROLES, V3_PACKAGES
 
-TREE = Path("src/coldfix/agent")
+ROOT = Path("src/coldfix")
 
 
 def defined_prompts() -> dict[str, str]:
@@ -22,7 +22,14 @@ def defined_prompts() -> dict[str, str]:
     prompt in a module nobody imports is exactly the one that would slip through.
     """
     found: dict[str, str] = {}
-    for path in sorted(TREE.rglob("*.py")):
+    for package in V3_PACKAGES:
+        found.update(_in(ROOT / package))
+    return found
+
+
+def _in(tree: Path) -> dict[str, str]:
+    found: dict[str, str] = {}
+    for path in sorted(tree.rglob("*.py")):
         for statement in ast.parse(path.read_text(encoding="utf-8")).body:
             if not isinstance(statement, ast.Assign):
                 continue
@@ -30,8 +37,15 @@ def defined_prompts() -> dict[str, str]:
             if not any(name in ("SYSTEM", "_SYSTEM") for name in names):
                 continue
             if isinstance(statement.value, ast.Constant) and isinstance(statement.value.value, str):
-                found[path.relative_to(TREE).as_posix()] = statement.value.value
+                found[path.relative_to(ROOT).as_posix()] = statement.value.value
     return found
+
+
+def test_the_two_registries_cover_the_whole_tree_between_them() -> None:
+    """Whatever v1's test excludes is exactly what this one covers. Two hardcoded
+    lists would agree until somebody added a package to one of them."""
+    for package in V3_PACKAGES:
+        assert (ROOT / package).is_dir(), f"{package} is named but does not exist"
 
 
 def test_every_prompt_in_the_tree_is_claimed_by_a_role() -> None:

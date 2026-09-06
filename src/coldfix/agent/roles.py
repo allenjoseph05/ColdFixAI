@@ -18,12 +18,22 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from coldfix.agent import prompt
+from coldfix.evidence import auditor
+
+V3_PACKAGES = ("agent", "collect", "evidence", "pipeline")
+"""The packages this registry is complete over.
+
+Named once and imported by both role tests, so the boundary between the two
+registries cannot drift: whatever v1's test excludes is exactly what this one
+covers. Two hardcoded lists would agree until somebody added a package to one.
+"""
 
 
 class Agent(StrEnum):
-    """The v3 roles. Three more arrive with E21 to E23."""
+    """The v3 roles. Two more arrive with E22 and E23."""
 
     SCAN = "scan"
+    FINDING_AUDITOR = "finding_auditor"
 
 
 @dataclass(frozen=True)
@@ -53,6 +63,22 @@ ROLES: Mapping[Agent, Role] = {
             "profile or ablate before a measurement has proved the workload repeatable -- those "
             "tools are absent from what it is offered, not discouraged",
             "write a fix -- no tool it has applies a patch",
+        ),
+    ),
+    Agent.FINDING_AUDITOR: Role(
+        agent=Agent.FINDING_AUDITOR,
+        purpose="attack one finding before any repair money is spent on it",
+        prompts=(auditor.SYSTEM,),
+        receives=(
+            "one finding, every part of it, at once",
+            "which arithmetic attacks already held, so it does not redo them",
+        ),
+        cannot=(
+            "go and look at anything -- it is given no tools, so there is nothing to call, and "
+            "pre-loading everything is what makes that the isolation rather than an instruction",
+            "see the reasoning that produced the finding -- `Presented` has no field for it, the "
+            "same way the Adversary will have none for the Surgeon's",
+            "be reached at all by a finding the four code attacks already rejected",
         ),
     ),
 }

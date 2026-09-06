@@ -209,6 +209,17 @@ class Ledger:
     def known(self) -> tuple[str, ...]:
         return tuple(sorted(self._records))
 
+    def recorded(self, measurement_id: str) -> Mapping[str, Any] | None:
+        """What was stored against an id, flattened, or `None`.
+
+        For the audit, which needs to read the two runs an ablation compared
+        rather than only check a number against them. Read-only: a caller cannot
+        write through it, because the record is what claims are checked against
+        and something that could edit it could edit the answer.
+        """
+        record = self._records.get(measurement_id)
+        return None if record is None else dict(record)
+
     def attest(self, claim: Claim) -> Finding:
         """Check every cited number, or raise. There is no third outcome."""
         for citation in claim.evidence:

@@ -1,0 +1,267 @@
+"""E22 — repair as a measured search.
+
+Nothing here calls a model. `propose` is a callable, so the search is exercised
+with lists of candidates and the thing under test is the selection, never the
+generation.
+"""
+
+from __future__ import annotations
+
+import inspect
+from collections.abc import Sequence
+
+import pytest
+
+from coldfix.evidence.repair import (
+    MAX_CANDIDATES,
+    Archive,
+    Candidate,
+    Falsified,
+    ForgedTokenError,
+    NoFailingTestError,
+    Outcome,
+    Scored,
+    must_fail,
+    search,
+)
+
+FAILED = (1, "AssertionError: expected 1 query, got 161")
+
+
+def gate(result: tuple[int, str] = FAILED) -> Falsified:
+    return must_fail("def test_books_prefetched(): ...", lambda _: result)
+
+
+def candidate(name: str) -> Candidate:
+    return Candidate(identifier=f"c-{name}", approach=name, diff=f"--- {name}")
+
+
+def scored(
+    name: str,
+    wall: float,
+    *,
+    peak: int | None = 1024,
+    outputs_match: bool = True,
+    tests_pass: bool = True,
+) -> Scored:
+    return Scored(
+        candidate=candidate(name),
+        measurement_id=f"m-{name}",
+        wall_s=wall,
+        peak_rss_bytes=peak,
+        outputs_match=outputs_match,
+        tests_pass=tests_pass,
+    )
+
+
+BASELINE = scored("baseline", 8.42)
+
+
+def archive_of(*entries: Scored) -> Archive:
+    archive = Archive(baseline=BASELINE)
+    for entry in entries:
+        archive = archive.record(entry)
+    return archive
+
+
+# --------------------------------------------- S-22.1, the failing-test gate
+
+
+def test_a_test_that_passes_first_mints_nothing() -> None:
+    """A test that passes before you change anything proves the problem is
+    absent, not that a fix works."""
+    with pytest.raises(NoFailingTestError, match="it passed"):
+        gate((0, "1 passed"))
+
+
+def test_a_broken_test_does_not_authorise_patching() -> None:
+    """The gate inverted. A script with a syntax error also exits non-zero, and
+    under *non-zero means it failed* it would open the door."""
+    for broken in ("SyntaxError: invalid syntax", "ModuleNotFoundError: no module named x"):
+        with pytest.raises(NoFailingTestError, match="did not run"):
+            gate((2, broken))
+
+
+def test_a_test_that_really_failed_mints_a_token() -> None:
+    token = gate()
+    assert token.exit_code == 1
+    assert "161" in token.detail
+
+
+def test_a_token_cannot_be_written_by_hand() -> None:
+    """The whole point of making it a value rather than a flag. Proof that can be
+    constructed is an assertion."""
+    with pytest.raises(ForgedTokenError, match="proof that can be written"):
+        Falsified(test="t", exit_code=1, detail="d", minted="trust me")
+
+
+def test_the_search_cannot_be_entered_without_a_token() -> None:
+    """`apply` takes a `Falsified`, so a candidate cannot be measured -- let alone
+    applied -- without a failing test having been proved first."""
+    assert "falsified" in inspect.signature(search).parameters
+
+
+# ------------------------------------------------- S-22.2, the measured search
+
+
+def test_every_candidate_is_measured_not_only_the_promising_ones() -> None:
+    """Selection is from the archive. A candidate is not skipped for looking
+    unlikely, because looking unlikely is not a measurement."""
+    measured: list[str] = []
+
+    def apply(_: Falsified, c: Candidate) -> Scored:
+        measured.append(c.approach)
+        return scored(c.approach, 4.0)
+
+    search(
+        falsified=gate(),
+        baseline=BASELINE,
+        propose=lambda _: [candidate("cache"), candidate("hoist"), candidate("batch")],
+        apply=apply,
+    )
+    assert measured == ["cache", "hoist", "batch"]
+
+
+def test_the_winner_is_the_fastest_that_broke_nothing() -> None:
+    archive = archive_of(scored("cache", 6.8), scored("hoist", 5.1), scored("batch", 7.9))
+    winner = archive.winner
+    assert winner is not None
+    assert winner.candidate.approach == "hoist"
+    assert winner.share_removed(BASELINE) == pytest.approx(0.394, abs=0.001)
+
+
+def test_a_candidate_that_reads_well_and_measured_slower_is_a_loser() -> None:
+    """Nothing is selected for being plausible."""
+    archive = archive_of(scored("elegant_rewrite", 9.9), scored("ugly_hack", 5.0))
+    winner = archive.winner
+    assert winner is not None
+    assert winner.candidate.approach == "ugly_hack"
+    assert archive.losers[0].candidate.approach == "elegant_rewrite"
+
+
+def test_faster_but_paid_for_in_memory_is_a_trade_not_a_win() -> None:
+    """A candidate that saves a second and costs 300MB is shown as a trade.
+    Shipping it silently would be the guard-counter failure this project refuses
+    everywhere else."""
+    archive = archive_of(scored("lookup_table", 4.0, peak=4096), scored("hoist", 6.0))
+    winner = archive.winner
+    assert winner is not None
+    assert winner.candidate.approach == "hoist", "the trade must not win by being fastest"
+    assert [t.candidate.approach for t in archive.trades] == ["lookup_table"]
+
+
+def test_a_trade_is_reported_rather_than_discarded() -> None:
+    """Somebody may want it. What they must not have is it chosen for them."""
+    archive = archive_of(scored("lookup_table", 4.0, peak=4096))
+    assert archive.winner is None
+    assert len(archive.trades) == 1
+    assert "nothing beat the baseline" in archive.summary()
+
+
+def test_a_candidate_that_changes_the_output_is_rejected_however_fast() -> None:
+    archive = archive_of(scored("wrong", 0.1, outputs_match=False), scored("right", 8.0))
+    winner = archive.winner
+    assert winner is not None
+    assert winner.candidate.approach == "right"
+    assert archive.losers[0].outcome(baseline=BASELINE) is Outcome.BROKE_OUTPUT
+
+
+def test_a_candidate_that_breaks_the_suite_is_rejected_however_fast() -> None:
+    archive = archive_of(scored("fast_and_broken", 0.1, tests_pass=False))
+    assert archive.winner is None
+    assert archive.losers[0].outcome(baseline=BASELINE) is Outcome.BROKE_TESTS
+
+
+def test_nothing_beating_the_baseline_is_an_outcome_not_an_error() -> None:
+    archive = archive_of(scored("a", 9.0), scored("b", 8.5))
+    assert archive.winner is None
+    assert "nothing beat the baseline" in archive.summary()
+
+
+# ---------------------------------------------------- losers persist
+
+
+def test_a_losing_approach_is_not_proposed_twice() -> None:
+    """A search that forgets its failures repeats them, and every repeat is paid
+    for twice: once to generate and once to measure."""
+    applied: list[str] = []
+
+    def apply(_: Falsified, c: Candidate) -> Scored:
+        applied.append(c.approach)
+        return scored(c.approach, 9.9)
+
+    def propose(archive: Archive) -> Sequence[Candidate]:
+        # Offers the same thing every time, as a tiring model would.
+        return [candidate("cache")]
+
+    archive = search(falsified=gate(), baseline=BASELINE, propose=propose, apply=apply)
+    assert applied == ["cache"], "the loser was measured a second time"
+    assert len(archive.scored) == 1
+
+
+def test_the_proposer_is_shown_what_already_lost() -> None:
+    """So a later round can do something different rather than guess again."""
+    seen: list[int] = []
+
+    def propose(archive: Archive) -> Sequence[Candidate]:
+        seen.append(len(archive.losers))
+        return [candidate(f"try{len(archive.scored)}")] if len(archive.scored) < 3 else []
+
+    search(
+        falsified=gate(),
+        baseline=BASELINE,
+        propose=propose,
+        apply=lambda _, c: scored(c.approach, 9.9),
+    )
+    assert seen == [0, 1, 2, 3]
+
+
+def test_the_search_stops_at_the_limit() -> None:
+    """Beyond it the cost of measuring grows faster than the chance that attempt
+    nine is the one."""
+    calls = {"n": 0}
+
+    def propose(archive: Archive) -> Sequence[Candidate]:
+        calls["n"] += 1
+        return [candidate(f"a{calls['n']}-{i}") for i in range(5)]
+
+    archive = search(
+        falsified=gate(),
+        baseline=BASELINE,
+        propose=propose,
+        apply=lambda _, c: scored(c.approach, 9.9),
+        limit=6,
+    )
+    assert len(archive.scored) == 6
+    assert MAX_CANDIDATES == 8
+
+
+def test_a_proposer_with_nothing_new_ends_the_search() -> None:
+    archive = search(
+        falsified=gate(),
+        baseline=BASELINE,
+        propose=lambda _: [],
+        apply=lambda _, c: scored(c.approach, 1.0),
+    )
+    assert archive.scored == ()
+    assert archive.winner is None
+
+
+# ------------------------------------------- S-22.3, output equivalence
+
+
+def test_output_equivalence_is_byte_for_byte_and_not_a_judgement() -> None:
+    """`outputs_match` comes from a digest comparison upstream. There is no
+    threshold here and no similarity -- the only definition that needs nobody's
+    opinion."""
+    assert scored("x", 1.0, outputs_match=False).outcome(baseline=BASELINE) is Outcome.BROKE_OUTPUT
+    assert scored("x", 1.0, outputs_match=True).outcome(baseline=BASELINE) is Outcome.WON
+
+
+def test_the_archive_survives_a_checkpoint() -> None:
+    """It goes in run state, so it serializes like everything else -- and the
+    losers have to come back, or the next round re-proposes them."""
+    archive = archive_of(scored("a", 9.0), scored("b", 4.0))
+    revived = Archive.model_validate_json(archive.model_dump_json())
+    assert revived.summary() == archive.summary()
+    assert revived.already_tried("a")
