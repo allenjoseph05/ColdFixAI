@@ -32,3 +32,7 @@ runs.db
 .idea/
 .DS_Store
 Thumbs.db
+
+# Project documentation is kept local, never published.
+# Root-anchored: tests/fixtures/realtime/flight_controller/docs/ is a fixture and stays tracked.
+/docs/
