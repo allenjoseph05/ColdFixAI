@@ -12,8 +12,10 @@ Python 3.12+. Django + Postgres is the first target framework.
 The goal is finding wasted work in *any* program, in any language, by running it.
 The data-scale question this document describes is one probe among many.
 
-**Read `docs/walkthrough/` first.** Fifteen documents, and they are **untracked**,
-so git history will not reveal them:
+**Read `docs/walkthrough/` first.** Nineteen documents and a README. All of
+`docs/` is now **local-only** — gitignored, absent from the published
+repository, and absent from its history — so git will not reveal them. If your
+checkout has no `docs/`, ask for it rather than reconstructing it from here:
 
 | | |
 |---|---|

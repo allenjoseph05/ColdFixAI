@@ -40,7 +40,7 @@ prompt is deliberately not among them: the investigate loop runs three steps on
 one session, so its system string is not every step's prompt, and shaping it into
 the request would have handed two of the three the wrong instructions. What still cannot be
 stated is the hit rate — under a replaying client that figure comes from the
-recording, so `docs/04-cost.md` §12.3 is marked reachable rather than quoted as
+recording, so the cost document's §12.3 is marked reachable rather than quoted as
 achieved. The first real number needs an API, and that is `S-17.1`.
 
 **There is a CLI, and it cannot spend money by accident.** `coldfix plan` reads
@@ -106,8 +106,6 @@ scheduling delay into a red build, not because they are optional.
 | `src/coldfix/cli/` | the `coldfix` command — the one layer that knows both |
 | `src/coldfix/eval/` | benchmark runners, agreement harness, cost reporting |
 | `src/coldfix/agents/` | the role index only — each agent's code lives in the four packages above |
-| `docs/` | design documents — start with `docs/00-BRIEF.md` |
-| `docs/adr/` | 172 architecture decision records |
 | `spikes/` | timeboxed experiments that produce a finding, not shippable code |
 | `tests/fixtures/` | a repository with deliberately planted defects |
 
@@ -123,13 +121,13 @@ quietly reappears on a handover type fails a test rather than a review.
 
 ## Documentation
 
-To **use** it: `docs/11-RUNNING.md` installs and configures it, and
-`docs/12-LIMITATIONS.md` says what it cannot do — read the second one first.
-`docs/09-adapters.md` is for adding a framework.
+The design record — the brief, the backlog, the architecture and cost papers,
+the limitations, the adapter guide and 173 architecture decision records — is
+kept local and is not published with this repository.
 
-To **read** it: `docs/00-BRIEF.md` is the entry point and carries the authority
-map. `docs/10-BACKLOG.md` is the execution plan. Where `docs/08-audit.md`
-disagrees with `docs/02-architecture.md` or `docs/03-agents.md`, the audit wins.
+Nothing in the source tree depends on it. Where a module's docstring cites a
+document, it is recording where a decision was argued, not pointing at a file
+you can open here.
 
 ---
 
