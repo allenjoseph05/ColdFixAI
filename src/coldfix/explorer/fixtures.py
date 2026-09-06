@@ -54,10 +54,10 @@ from pathlib import Path
 from typing import Any
 
 from coldfix.bench.execute import ExecutionError
+from coldfix.contracts.surface import HostSurface, Surface
+from coldfix.contracts.workload import FixtureRecipe
 from coldfix.explorer.entrypoints import SKIP_DIRECTORIES, settings_module
-from coldfix.explorer.surface import HostSurface, Surface
 from coldfix.primitives.scaling import Distribution
-from coldfix.screening.workload import FixtureRecipe
 
 EXERCISE_TIMEOUT_SECONDS = 300.0
 """Longer than S-7.3's and S-7.4's, because this one *writes*. Seeding a hundred

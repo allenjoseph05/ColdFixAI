@@ -27,7 +27,6 @@ from typing import Any
 import pytest
 
 from coldfix.audit import testquality as module
-from coldfix.audit.invocation import AUDIT_TEMPERATURE, AuditError
 from coldfix.audit.patchaudit import Candidate, candidate_from
 from coldfix.audit.testquality import (
     QUESTION,
@@ -42,6 +41,7 @@ from coldfix.audit.testquality import (
     render,
 )
 from coldfix.bench.stats import Growth
+from coldfix.contracts.auditing import AUDIT_TEMPERATURE, AuditError
 from coldfix.cost.accounting import Agent, ExchangeRate, Phase, StepClass
 from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session

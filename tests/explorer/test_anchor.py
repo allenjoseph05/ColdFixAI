@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from coldfix.contracts.workload import EnvironmentAnchor, FixtureRecipe, Workload
 from coldfix.explorer.anchor import (
     AnchorError,
     Basis,
@@ -27,7 +28,6 @@ from coldfix.explorer.anchor import (
 )
 from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetStrategy
-from coldfix.screening.workload import EnvironmentAnchor, FixtureRecipe, Workload
 
 
 def git(root: Path, *arguments: str) -> None:

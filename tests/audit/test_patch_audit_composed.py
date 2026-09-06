@@ -38,7 +38,6 @@ import pytest
 from coldfix.audit import testquality
 from coldfix.audit.cheating import Measure, Metrics, Reading, Revision
 from coldfix.audit.equivalence import Probe
-from coldfix.audit.invocation import AUDIT_TEMPERATURE
 from coldfix.audit.patchaudit import SYSTEM as PATCH_SYSTEM
 from coldfix.audit.patchaudit import Candidate, candidate_from, patch_audit_session
 from coldfix.audit.patchcompose import (
@@ -58,6 +57,7 @@ from coldfix.audit.testquality import SYSTEM as TQ_SYSTEM
 from coldfix.audit.testquality import render as tq_render
 from coldfix.bench.execute import ExecutionResult, execute
 from coldfix.bench.stats import Growth
+from coldfix.contracts.auditing import AUDIT_TEMPERATURE
 from coldfix.cost.accounting import ExchangeRate, Ledger, Phase
 from coldfix.cost.budget import PHASE_CAPS, Budget, BudgetExhaustedError
 from coldfix.cost.routing import StepType

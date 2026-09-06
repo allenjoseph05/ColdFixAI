@@ -23,11 +23,11 @@ from coldfix.audit.fixtures import (
     ReseedRequest,
     assess_fixture,
 )
+from coldfix.contracts.workload import FixtureRecipe
 from coldfix.diagnosis.exclusions import Conditions
 from coldfix.diagnosis.reseed import conditions_after
 from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetStrategy  # noqa: F401 - kept for parity with workloads
-from coldfix.screening.workload import FixtureRecipe
 
 PLATFORM = "x86_64-linux"
 SCALES = [10, 100, 1000]

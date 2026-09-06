@@ -25,11 +25,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from coldfix.contracts.workload import BoundWorkload
 from coldfix.screening.budget import DEFAULT_FINDINGS_CAP, Plan, plan
 from coldfix.screening.flagging import rank
 from coldfix.screening.growth import SCREENING_SCALES, ScreenedWorkload, screen
 from coldfix.screening.null import NullResult, null_result
-from coldfix.screening.workload import BoundWorkload
 
 Assessment = Plan | NullResult
 """What a screen concludes: what to investigate, or why there is nothing to.

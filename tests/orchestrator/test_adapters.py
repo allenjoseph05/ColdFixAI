@@ -33,6 +33,7 @@ from coldfix.audit.patchverdict import Attack, AttackResult, PatchVerdict, Route
 from coldfix.audit.patchverdict import Outcome as AttackOutcome
 from coldfix.audit.patchverdict import Verdict as AuditVerdict
 from coldfix.bench.stats import Growth
+from coldfix.contracts.workload import Workload
 from coldfix.cost.accounting import Agent
 from coldfix.diagnosis.log import Experiment, ExperimentLog, Verdict
 from coldfix.explorer import proposal
@@ -60,7 +61,6 @@ from coldfix.repair.mustfail import Falsified
 from coldfix.repair.patch import Attempt, Patch
 from coldfix.repair.slack import Classification
 from coldfix.sandbox.modes import CandidateSession, DiagnosticSession, ExecutionMode
-from coldfix.screening.workload import Workload
 from coldfix.state.checkpoint import CheckpointedState
 from coldfix.state.persistent import Collection
 from coldfix.state.persistent import Entry as PersistentEntry

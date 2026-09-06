@@ -34,14 +34,14 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from coldfix.explorer.surface import Surface
+from coldfix.contracts.surface import Surface
+from coldfix.contracts.workload import RESPONSE_BYTES, BoundWorkload, Workload
 from coldfix.explorer.synthesis import synthesize
 from coldfix.explorer.work import Drive, drive
 from coldfix.primitives.counters import DB_QUERY
 from coldfix.primitives.measurement import SECONDS, Reported
 from coldfix.primitives.scaling import BASELINE_SCALE
 from coldfix.sandbox.verification import VerifiedReset
-from coldfix.screening.workload import RESPONSE_BYTES, BoundWorkload, Workload
 
 
 class BindingError(Exception):

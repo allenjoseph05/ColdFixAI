@@ -24,6 +24,7 @@ from typing import cast
 import pytest
 
 from coldfix.bench.execute import ExecutionResult, execute
+from coldfix.contracts.surface import HostSurface, Surface
 from coldfix.explorer import compose
 from coldfix.explorer.auth import Reply
 from coldfix.explorer.binding import (
@@ -33,7 +34,6 @@ from coldfix.explorer.binding import (
     probe_through,
 )
 from coldfix.explorer.compose import NotGroundableError, Plan, ground_workload
-from coldfix.explorer.surface import HostSurface, Surface
 from coldfix.orchestrator.adapters import Grounder
 from coldfix.sandbox.reset import ResetMechanism, ResetStrategy
 from coldfix.sandbox.verification import VerificationReport, VerifiedReset

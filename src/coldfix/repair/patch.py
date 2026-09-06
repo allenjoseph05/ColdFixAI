@@ -48,6 +48,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from coldfix.contracts.sessions import refuse_foreign_session
 from coldfix.cost.accounting import Agent, Phase, TokenUsage
 from coldfix.cost.context import Block
 from coldfix.cost.routing import StepType
@@ -57,7 +58,6 @@ from coldfix.diagnosis.replies import read_object
 from coldfix.llm.client import ModelClient
 from coldfix.llm.request import as_request
 from coldfix.repair.mustfail import Falsified
-from coldfix.repair.sessions import refuse_foreign_session
 from coldfix.sandbox.modes import CandidateSession
 from coldfix.sandbox.patching import touched_paths
 

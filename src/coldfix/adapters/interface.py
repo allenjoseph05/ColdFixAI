@@ -82,6 +82,7 @@ from typing import Protocol
 
 from coldfix.bench.counting import Hook, unregister_hook
 from coldfix.bench.execute import ExecutionResult
+from coldfix.contracts.workload import FixtureRecipe
 from coldfix.explorer.entrypoints import Enumeration
 from coldfix.explorer.fingerprint import Framework, Orm
 from coldfix.explorer.work import Drive
@@ -91,7 +92,6 @@ from coldfix.primitives.registry import Capability
 from coldfix.sandbox.modes import CandidateSession, Session
 from coldfix.sandbox.patching import DEFAULT_PROTECTED_PATTERNS, PatchPolicy
 from coldfix.sandbox.reset import ResetMechanism
-from coldfix.screening.workload import FixtureRecipe
 
 ROW_COUNTING_VENDORS: frozenset[str] = frozenset({"postgresql"})
 """Database backends measured to report `cursor.rowcount` for a `SELECT`.

@@ -53,11 +53,11 @@ from pathlib import Path
 from typing import Any
 
 from coldfix.bench.execute import ExecutionError
+from coldfix.contracts.surface import HostSurface, Surface
 from coldfix.explorer.auth import Resolution as AuthResolution
 from coldfix.explorer.entrypoints import settings_module
 from coldfix.explorer.fingerprint import Fingerprint, Identification
 from coldfix.explorer.registry import grounds_for
-from coldfix.explorer.surface import HostSurface, Surface
 from coldfix.explorer.work import Verification
 
 STAGE_TIMEOUT_SECONDS = 300.0

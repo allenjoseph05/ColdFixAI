@@ -51,7 +51,6 @@ from coldfix.audit.compose import (
     key_experiment,
     reproducibility_result,
 )
-from coldfix.audit.invocation import AuditError
 from coldfix.audit.reproducibility import Rerun
 from coldfix.audit.verdict import (
     AUDIT_CALL_CEILING,
@@ -62,6 +61,9 @@ from coldfix.audit.verdict import (
     VerdictError,
 )
 from coldfix.bench.stats import CONSTANT_BELOW, SUPERLINEAR_ABOVE, Fit, Growth
+from coldfix.contracts import auditing as auditing_module
+from coldfix.contracts.auditing import AuditError
+from coldfix.contracts.workload import FixtureRecipe, Observation, Workload
 from coldfix.cost.accounting import Phase
 from coldfix.cost.budget import PHASE_CAPS, BudgetExhaustedError
 from coldfix.cost.routing import StepType
@@ -78,7 +80,6 @@ from coldfix.orchestrator.adapters import _log_of, _stored
 from coldfix.primitives.measurement import SECONDS, MetricKind, metric_kind
 from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetStrategy
-from coldfix.screening.workload import FixtureRecipe, Observation, Workload
 from coldfix.state.checkpoint import CheckpointedState
 from fixtures.thesis import (  # the subject and its harness, not a second copy
     CONDITIONS,
@@ -201,7 +202,7 @@ def audit_recorded(session: Session, *, question: str, reply: str) -> Recording:
         system=invocation_module._SYSTEM,
         messages=[{"role": "user", "content": question}],
         max_tokens=invocation_module.MAX_OUTPUT_TOKENS,
-        temperature=invocation_module.AUDIT_TEMPERATURE,
+        temperature=auditing_module.AUDIT_TEMPERATURE,
         response=payload(reply, model=model),
     )
 

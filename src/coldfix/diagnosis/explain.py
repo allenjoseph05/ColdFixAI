@@ -34,6 +34,7 @@ from collections.abc import Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from coldfix.contracts.sessions import refuse_foreign_session
 from coldfix.cost.accounting import Agent, Phase, TokenUsage
 from coldfix.cost.cascade import NoDearerTierError
 from coldfix.cost.context import Block
@@ -45,7 +46,6 @@ from coldfix.diagnosis.replies import Attempted, read_object
 from coldfix.llm.client import ModelClient
 from coldfix.llm.request import as_request, with_question
 from coldfix.primitives.ablation import share_metric
-from coldfix.repair.sessions import refuse_foreign_session
 
 EXPLANATION_TEMPERATURE = 0.0
 """The same 0.0 `interpret` uses and for the same reason. `00-BRIEF.md` §6 makes

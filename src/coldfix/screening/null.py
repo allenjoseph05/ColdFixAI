@@ -37,6 +37,7 @@ from collections.abc import Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict
 
+from coldfix.contracts.workload import MINIMUM_SCALE_RATIO
 from coldfix.primitives.counters import CATALOGUE, Reading
 from coldfix.primitives.measurement import MATERIALIZED
 from coldfix.screening.flagging import (
@@ -47,7 +48,6 @@ from coldfix.screening.flagging import (
     withheld_reason,
 )
 from coldfix.screening.growth import MetricGrowth, ScreenedWorkload
-from coldfix.screening.workload import MINIMUM_SCALE_RATIO
 
 _STRICT = ConfigDict(frozen=True, extra="forbid")
 

@@ -32,10 +32,10 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from coldfix.contracts.surface import Surface
 from coldfix.explorer.auth import PlaybookLookup, Reply, TrustedLookup
 from coldfix.explorer.compose import Grounded, Plan, ground_workload
 from coldfix.explorer.playbook import PlaybookWriter, UseRecorder
-from coldfix.explorer.surface import Surface
 from coldfix.sandbox.verification import VerifiedReset
 
 PROBE_TIMEOUT_SECONDS = 120.0

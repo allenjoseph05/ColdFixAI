@@ -52,19 +52,18 @@ from __future__ import annotations
 from collections.abc import Sequence
 from decimal import Decimal
 
-from anthropic.types import MessageParam
-
+from coldfix.contracts.auditing import (
+    AUDIT_TEMPERATURE,
+    AuditError,
+    audit_messages,
+    refuse_shared_session,
+)
 from coldfix.cost.accounting import Agent, ExchangeRate, Phase, TokenUsage
 from coldfix.cost.context import Block
 from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step, StepOutcome
 from coldfix.diagnosis.log import Experiment, ExperimentLog
 from coldfix.llm.client import ModelClient
-
-AUDIT_TEMPERATURE = 0.8
-"""An audit is an attack, and `04-cost.md` §3 records that no deterministic
-validator exists for designing one. Diversity is the point for the same reason
-S-8.1 has it: an objection nobody thought of is the one worth paying for."""
 
 MAX_OUTPUT_TOKENS = 2_000
 
@@ -96,10 +95,6 @@ really ruled out, or a scale or fixture that could have hidden the real answer.
 
 Quote the measurements you are reasoning from. An objection with no measurement \
 under it is an opinion."""
-
-
-class AuditError(Exception):
-    """The audit could not be invoked in isolation."""
 
 
 def render_evidence(log: ExperimentLog) -> str:
@@ -134,29 +129,6 @@ def _describe(experiment: Experiment) -> str:
         f"   measured: {measured}\n"
         f"   verdict: {experiment.verdict.value}"
     )
-
-
-def audit_messages(evidence: str, question: str) -> list[MessageParam]:
-    """A **fresh** list, constructed here and shared with nothing.
-
-    The non-negotiable in one function: there is no accumulated conversation to
-    append to, no prior turn to carry forward, and no parameter through which
-    either could arrive. A caller holding the Diagnostician's message history
-    cannot pass it, because there is nowhere to put it.
-
-    Returns a new `list` on every call rather than a cached or module-level one,
-    so that a caller mutating what it got back cannot reach the next audit.
-
-    **This is why no adversarial call site takes S-17.16's cached blocks.**
-    `Session.run` renders a prompt and hands it to every `call`, and the seven
-    investigation and repair sites shape their request from it — cheaply, because
-    the prefix then caches. The four audit sites drop it and build their request
-    here instead. Blocks assembled by the session are a prompt assembled
-    somewhere else, and accepting one would make this function's guarantee
-    depend on what that somewhere else happened to put in it. The caching
-    forgone is the audit's ten calls, not investigation's hundred and twenty.
-    """
-    return [{"role": "user", "content": f"{evidence}\n\n{question}"}]
 
 
 def audit_session(
@@ -195,29 +167,6 @@ def audit_session(
     )
 
 
-def refuse_shared_session(session: Session, *, expected: str = _SYSTEM) -> None:
-    """Refuse a session that belongs to some other agent.
-
-    `expected` is the prompt this particular auditor should own — the finding
-    auditor's by default, S-10.3's when a falsification test is the subject. Two
-    audits with two prompts is still one rule: **a session whose prefix belongs to
-    somebody else undoes the isolation silently.**
-
-    Raises:
-        AuditError: its system prompt is not the auditor's, so its cached prefix
-            is somebody else's and running the audit through it would inherit
-            what this module spent the rest of its length removing.
-    """
-    if session.system != expected:
-        message = (
-            "this session's prompt is not the auditor's, so its cached prefix belongs to another "
-            "agent and every call billed through it would carry that agent's system text and "
-            "source. Build one with `audit_session`: the isolation is the fresh message list "
-            "*and* the fresh prompt, and a shared session undoes the second silently"
-        )
-        raise AuditError(message)
-
-
 def invoke(  # noqa: PLR0913 - the log, the question and the measured token counts
     # are four different facts, plus the session and the client. There is
     # deliberately no parameter for prior turns or for a chain — see the module
@@ -247,7 +196,7 @@ def invoke(  # noqa: PLR0913 - the log, the question and the measured token coun
             or was cut off.
         BudgetExhaustedError: the audit's round cap is spent.
     """
-    refuse_shared_session(session)
+    refuse_shared_session(session, expected=_SYSTEM)
 
     evidence = render_evidence(log)
     step = Step(

@@ -41,11 +41,12 @@ from coldfix.adapters.interface import (
 from coldfix.bench.counting import Record
 from coldfix.bench.execute import ExecutionResult, execute
 from coldfix.bench.stats import Growth
+from coldfix.contracts.surface import HostSurface
+from coldfix.contracts.workload import FixtureRecipe, Workload
 from coldfix.cost.accounting import ExchangeRate
 from coldfix.explorer.compose import Plan
 from coldfix.explorer.entrypoints import Enumeration
 from coldfix.explorer.fingerprint import Framework, Orm
-from coldfix.explorer.surface import HostSurface
 from coldfix.explorer.work import Drive, drive
 from coldfix.orchestrator import assembly as assembly_module
 from coldfix.orchestrator.adapters import Tokens, bind
@@ -66,7 +67,6 @@ from coldfix.sandbox.verification import VerificationReport, VerifiedReset
 from coldfix.screening.assess import conclude
 from coldfix.screening.growth import screen
 from coldfix.screening.null import NullResult
-from coldfix.screening.workload import FixtureRecipe, Workload
 from coldfix.state.persistent import PersistentStore
 from coldfix.state.trust import Level
 

@@ -21,6 +21,7 @@ import pytest
 
 from coldfix.bench.counting import calls_to, register_hook, unregister_hook
 from coldfix.bench.stats import Growth
+from coldfix.contracts.workload import RESPONSE_BYTES, FixtureRecipe, Workload
 from coldfix.explorer import work as work_module
 from coldfix.explorer.work import Drive
 from coldfix.orchestrator.adapters import Binder
@@ -31,7 +32,6 @@ from coldfix.sandbox.reset import ResetMechanism, ResetStrategy
 from coldfix.sandbox.verification import VerificationReport, VerifiedReset
 from coldfix.screening.binding import BindingError, bind_workload, binder_for
 from coldfix.screening.growth import ScreeningError, screen_growth
-from coldfix.screening.workload import RESPONSE_BYTES, FixtureRecipe, Workload
 
 
 class NoReset(ResetMechanism):

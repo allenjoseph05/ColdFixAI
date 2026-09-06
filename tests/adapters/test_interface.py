@@ -37,6 +37,7 @@ from coldfix.adapters import (
 )
 from coldfix.bench.counting import Hook, calls_to, count, registered_hooks
 from coldfix.bench.execute import ExecutionResult
+from coldfix.contracts.workload import FixtureRecipe
 from coldfix.explorer.entrypoints import Enumeration
 from coldfix.explorer.fingerprint import Framework, Orm
 from coldfix.explorer.work import Drive
@@ -54,7 +55,6 @@ from coldfix.primitives.registry import Capability
 from coldfix.sandbox.modes import CandidateSession, DiagnosticSession, Session
 from coldfix.sandbox.patching import DEFAULT_PROTECTED_PATTERNS
 from coldfix.sandbox.reset import ResetMechanism
-from coldfix.screening.workload import FixtureRecipe
 
 # The eight operations S-14.1 names, and the two declarations. Written out
 # rather than derived from the class, because a test that reads the interface to

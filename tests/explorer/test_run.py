@@ -25,6 +25,12 @@ from pathlib import Path
 import pytest
 
 import coldfix.adapters  # noqa: F401 - registers grounding support; the registry is empty without it
+from coldfix.contracts.workload import (
+    RESPONSE_BYTES,
+    FixtureRecipe,
+    Observation,
+    Workload,
+)
 from coldfix.cost.accounting import ExchangeRate, Ledger, Phase
 from coldfix.cost.budget import Budget, CapRaisedError
 from coldfix.explorer.auth import (
@@ -50,12 +56,6 @@ from coldfix.primitives.measurement import SECONDS
 from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetMechanism, ResetStrategy
 from coldfix.sandbox.verification import VerificationReport, VerifiedReset
-from coldfix.screening.workload import (
-    RESPONSE_BYTES,
-    FixtureRecipe,
-    Observation,
-    Workload,
-)
 
 pytestmark = pytest.mark.slow
 """Every attempt evaluates all nine predicates against a real subject."""

@@ -55,6 +55,7 @@ from coldfix.audit.patchcompose import audit_patch as compose_audit_patch
 from coldfix.audit.patchverdict import PatchVerdict
 from coldfix.audit.verdict import Route as FindingRoute
 from coldfix.bench.stats import Growth
+from coldfix.contracts.workload import BoundWorkload, Workload
 from coldfix.cost.budget import Budget
 from coldfix.cost.session import Session
 from coldfix.diagnosis import explain, hypothesis
@@ -92,7 +93,6 @@ from coldfix.screening.assess import conclude
 from coldfix.screening.flagging import flag
 from coldfix.screening.growth import screen as screen_workloads
 from coldfix.screening.null import NullResult
-from coldfix.screening.workload import BoundWorkload, Workload
 from coldfix.state.checkpoint import CheckpointedState
 from coldfix.state.persistent import PersistentStore
 from coldfix.state.staleness import Coverage, ScreeningAction, screening_plan

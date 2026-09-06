@@ -32,6 +32,7 @@ from coldfix.adapters.interface import (
 from coldfix.audit import measuring, probing
 from coldfix.bench.counting import Record
 from coldfix.bench.execute import ExecutionResult
+from coldfix.contracts.workload import FixtureRecipe
 from coldfix.cost.accounting import ExchangeRate, Ledger
 from coldfix.diagnosis import execution
 from coldfix.explorer import binding, hands
@@ -50,7 +51,6 @@ from coldfix.sandbox.production import ProductionDatabaseError
 from coldfix.sandbox.reset import ResetMechanism, ResetStrategy
 from coldfix.sandbox.verification import VerificationReport, VerifiedReset
 from coldfix.screening import binding as rebinding
-from coldfix.screening.workload import FixtureRecipe
 
 
 class _FailedError(RuntimeError):

@@ -54,7 +54,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from coldfix.bench.execute import ExecutionError, execute
-from coldfix.screening.workload import EnvironmentAnchor
+from coldfix.contracts.workload import EnvironmentAnchor
 
 ANCHOR_TIMEOUT_SECONDS = 300.0
 """A resolution against a package index, not a local computation."""

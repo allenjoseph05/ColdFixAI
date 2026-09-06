@@ -32,6 +32,12 @@ from typing import Any
 import pytest
 
 from coldfix.bench.counting import calls_to, register_hook, unregister_hook
+from coldfix.contracts.workload import (
+    RESPONSE_BYTES,
+    BoundWorkload,
+    FixtureRecipe,
+    Workload,
+)
 from coldfix.primitives.counters import DB_QUERY, DB_ROWS
 from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetMechanism, ResetNotPreparedError, ResetStrategy
@@ -40,12 +46,6 @@ from coldfix.screening.assess import Assessment, assess
 from coldfix.screening.budget import DEFAULT_FINDINGS_CAP, Plan
 from coldfix.screening.growth import screen
 from coldfix.screening.null import NullResult
-from coldfix.screening.workload import (
-    RESPONSE_BYTES,
-    BoundWorkload,
-    FixtureRecipe,
-    Workload,
-)
 from fixtures.planted.queries import (
     list_books_batched,
     list_books_n_plus_one,

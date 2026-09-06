@@ -18,7 +18,7 @@ thing and never were.
 `orchestrator/adapters.py` opens **one** session for the whole investigate loop,
 with `_INVESTIGATION_PROMPT = hypothesis._SYSTEM`, and all three Diagnostician
 steps run on it. While each agent sent its own `_SYSTEM` explicitly, that was a
-billing and caching mismatch — the thing `repair/sessions.refuse_foreign_session`
+billing and caching mismatch — the thing `contracts/sessions.refuse_foreign_session`
 was written for, and which nobody ever applied to the Diagnostician. Had the
 session's string become what is sent, `design` and `interpret` would have been
 handed the *hypothesis* prompt: told to answer with a statement, a primitive and

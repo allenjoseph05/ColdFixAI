@@ -33,13 +33,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from coldfix.bench.stats import Growth
+from coldfix.contracts.workload import Workload
 from coldfix.cost.session import Session
 from coldfix.diagnosis.chain import EvidenceChain, Symptom
 from coldfix.diagnosis.emit import chain_from, symptom_for
 from coldfix.diagnosis.explain import Explanation, explain, shares_from
 from coldfix.diagnosis.loop import Investigation, confirming_links
 from coldfix.llm.client import ModelClient
-from coldfix.screening.workload import Workload
 
 
 def chain_of(  # noqa: PLR0913 - the investigation, the workload, the metric, the

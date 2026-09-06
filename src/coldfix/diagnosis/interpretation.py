@@ -56,6 +56,7 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from coldfix.contracts.sessions import refuse_foreign_session
 from coldfix.cost.accounting import Agent, Phase, TokenUsage
 from coldfix.cost.cascade import NoDearerTierError
 from coldfix.cost.context import Block
@@ -68,7 +69,6 @@ from coldfix.diagnosis.log import Verdict
 from coldfix.diagnosis.replies import Attempted, read_object
 from coldfix.llm.client import ModelClient
 from coldfix.llm.request import as_request, with_question
-from coldfix.repair.sessions import refuse_foreign_session
 
 INTERPRETATION_TEMPERATURE = 0.0
 """`03-agents.md` §2.4. 8.24 seconds means the same thing every time, and a

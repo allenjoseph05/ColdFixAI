@@ -50,11 +50,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
-from coldfix.audit.invocation import (
+from coldfix.audit.invocation import audit_session
+from coldfix.contracts.auditing import (
     AUDIT_TEMPERATURE,
     AuditError,
     audit_messages,
-    audit_session,
     refuse_shared_session,
 )
 from coldfix.cost.accounting import Agent, ExchangeRate, Phase, TokenUsage

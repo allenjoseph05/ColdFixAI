@@ -45,9 +45,9 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from coldfix.contracts.surface import Surface
 from coldfix.explorer.loop import Effect, Hands
 from coldfix.explorer.proposal import Move
-from coldfix.explorer.surface import Surface
 
 REFUSED_EXIT_CODE = 126
 """What a refused move reports. **Never 0, and deliberately not 1.**

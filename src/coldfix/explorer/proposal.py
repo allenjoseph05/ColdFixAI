@@ -49,6 +49,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from coldfix.contracts.sessions import refuse_foreign_session
 from coldfix.cost.accounting import Agent, Phase, TokenUsage
 from coldfix.cost.context import Block
 from coldfix.cost.routing import StepType
@@ -56,7 +57,6 @@ from coldfix.cost.session import Session, Step, StepOutcome
 from coldfix.explorer.stages import Outcome, Progress, Stage
 from coldfix.llm.client import ModelClient
 from coldfix.llm.request import as_request
-from coldfix.repair.sessions import refuse_foreign_session
 
 EXPLORER_TEMPERATURE = 0.3
 """`03-agents.md` §2.1. Between the Diagnostician's two: standing a project up is

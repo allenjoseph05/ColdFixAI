@@ -61,8 +61,8 @@ from pathlib import Path
 from typing import Any
 
 from coldfix.bench.execute import ExecutionError
+from coldfix.contracts.surface import HostSurface, Surface
 from coldfix.explorer.fingerprint import Detected
-from coldfix.explorer.surface import HostSurface, Surface
 
 RESOLVE_TIMEOUT_SECONDS = 120.0
 """Long enough for a cold `django.setup()` on an unfamiliar project, which

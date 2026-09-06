@@ -43,10 +43,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from coldfix.contracts.workload import Workload
 from coldfix.explorer.work import Verification, WorkVerificationError, accept
 from coldfix.sandbox.reset import ResetStrategy
 from coldfix.sandbox.verification import VerifiedReset
-from coldfix.screening.workload import Workload
 
 
 class EmissionError(Exception):

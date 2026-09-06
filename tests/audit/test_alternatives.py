@@ -27,19 +27,17 @@ from coldfix.audit.alternatives import (
     AlternativeError,
     attack,
     check_against_log,
-    measured_pairs,
     parse,
 )
-from coldfix.audit.invocation import (
-    AUDIT_TEMPERATURE,
-    MAX_OUTPUT_TOKENS,
-    audit_messages,
-    audit_session,
-    render_evidence,
-)
+from coldfix.audit.invocation import MAX_OUTPUT_TOKENS, audit_session, render_evidence
+from coldfix.contracts.auditing import AUDIT_TEMPERATURE, audit_messages
 from coldfix.cost.accounting import ExchangeRate
 from coldfix.cost.routing import STEP_KINDS, StepType
-from coldfix.diagnosis.log import ExperimentLog, Verdict
+from coldfix.diagnosis.log import (
+    ExperimentLog,
+    Verdict,
+    measured_pairs,  # moved: it reads an Experiment
+)
 from coldfix.llm.client import Recording, ReplayingClient
 
 RATE = ExchangeRate(Decimal("0.92"), date(2026, 8, 17))

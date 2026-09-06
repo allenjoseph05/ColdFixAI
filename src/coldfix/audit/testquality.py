@@ -52,14 +52,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
-from coldfix.audit.invocation import (
+from coldfix.audit.invocation import audit_session
+from coldfix.audit.patchaudit import Candidate
+from coldfix.contracts.auditing import (
     AUDIT_TEMPERATURE,
     AuditError,
     audit_messages,
-    audit_session,
     refuse_shared_session,
 )
-from coldfix.audit.patchaudit import Candidate
 from coldfix.cost.accounting import Agent, ExchangeRate, Phase, TokenUsage
 from coldfix.cost.context import Block
 from coldfix.cost.routing import StepType

@@ -78,6 +78,7 @@ from typing import Any
 from coldfix.adapters.interface import ROW_COUNTING_VENDORS, Declarations, Subject
 from coldfix.bench.counting import Hook, HookError, Record
 from coldfix.bench.execute import ExecutionResult
+from coldfix.contracts.workload import FixtureRecipe
 from coldfix.explorer.entrypoints import Enumeration, Kind, enumerate_entry_points
 from coldfix.explorer.fingerprint import Framework, Orm, TestRunner, declared_test_runner
 from coldfix.explorer.registry import Grounds, register
@@ -97,7 +98,6 @@ from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.modes import CandidateSession, Session
 from coldfix.sandbox.production import VerifiedDatabase
 from coldfix.sandbox.reset import ResetMechanism, RollbackReset, SnapshotRestoreReset
-from coldfix.screening.workload import FixtureRecipe
 
 DJANGO_INTERNAL_FRAMES: tuple[str, ...] = (
     # The framework itself, and the two paths a stack through the ORM spends most

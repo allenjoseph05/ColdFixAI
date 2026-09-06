@@ -24,6 +24,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from coldfix.contracts.workload import (
+    RESPONSE_BYTES,
+    FixtureRecipe,
+    Observation,
+    Workload,
+)
 from coldfix.explorer.work import (
     DEFAULT_SCALES,
     Verification,
@@ -36,12 +42,6 @@ from coldfix.primitives.counters import DB_QUERY
 from coldfix.primitives.measurement import SECONDS
 from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetStrategy
-from coldfix.screening.workload import (
-    RESPONSE_BYTES,
-    FixtureRecipe,
-    Observation,
-    Workload,
-)
 
 pytestmark = pytest.mark.slow
 """Every test here migrates a project, seeds it twice and drives it six times."""

@@ -28,6 +28,13 @@ import pytest
 
 from coldfix.bench.counting import calls_to, register_hook, unregister_hook
 from coldfix.bench.stats import Growth
+from coldfix.contracts.workload import (
+    RESPONSE_BYTES,
+    BoundWorkload,
+    FixtureRecipe,
+    Observation,
+    Workload,
+)
 from coldfix.primitives.counters import DB_QUERY, DB_ROWS
 from coldfix.primitives.measurement import SECONDS
 from coldfix.primitives.scaling import Distribution
@@ -45,13 +52,6 @@ from coldfix.screening.flagging import (
     withheld_reason,
 )
 from coldfix.screening.growth import MetricGrowth, screen_growth
-from coldfix.screening.workload import (
-    RESPONSE_BYTES,
-    BoundWorkload,
-    FixtureRecipe,
-    Observation,
-    Workload,
-)
 from fixtures.planted.queries import (
     list_books_batched,
     list_books_n_plus_one,

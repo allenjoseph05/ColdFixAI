@@ -51,14 +51,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from coldfix.bench.execute import ExecutionError
-from coldfix.explorer.entrypoints import settings_module
-from coldfix.explorer.surface import HostSurface, Surface
-from coldfix.explorer.synthesis import SYNTHESIS_TIMEOUT_SECONDS, synthesize
-from coldfix.primitives.counters import DB_QUERY
-from coldfix.primitives.measurement import SECONDS
-from coldfix.primitives.scaling import Distribution
-from coldfix.sandbox.reset import ResetStrategy
-from coldfix.screening.workload import (
+from coldfix.contracts.surface import HostSurface, Surface
+from coldfix.contracts.workload import (
     MINIMUM_SCALE_RATIO,
     RESPONSE_BYTES,
     EnvironmentAnchor,
@@ -66,6 +60,12 @@ from coldfix.screening.workload import (
     Observation,
     Workload,
 )
+from coldfix.explorer.entrypoints import settings_module
+from coldfix.explorer.synthesis import SYNTHESIS_TIMEOUT_SECONDS, synthesize
+from coldfix.primitives.counters import DB_QUERY
+from coldfix.primitives.measurement import SECONDS
+from coldfix.primitives.scaling import Distribution
+from coldfix.sandbox.reset import ResetStrategy
 
 DEFAULT_SCALES: tuple[int, int] = (10, 100)
 """F6's own numbers. Ten and a hundred are what the thresholds were written

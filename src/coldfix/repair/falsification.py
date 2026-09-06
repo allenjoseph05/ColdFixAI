@@ -53,17 +53,16 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from coldfix.audit.alternatives import measured_pairs
+from coldfix.contracts.sessions import refuse_foreign_session
 from coldfix.cost.accounting import Agent, Phase, TokenUsage
 from coldfix.cost.context import Block
 from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step, StepOutcome
 from coldfix.diagnosis.chain import EvidenceChain
-from coldfix.diagnosis.log import Experiment
+from coldfix.diagnosis.log import Experiment, measured_pairs
 from coldfix.diagnosis.replies import read_object
 from coldfix.llm.client import ModelClient
 from coldfix.llm.request import as_request
-from coldfix.repair.sessions import refuse_foreign_session
 
 SURGEON_TEMPERATURE = 0.2
 """`03-agents.md` §5.1: 0.2 on the first attempt, 0.6 on retries. S-10.5 owns the

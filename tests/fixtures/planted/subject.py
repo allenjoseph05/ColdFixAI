@@ -22,9 +22,9 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
+from coldfix.contracts.workload import RESPONSE_BYTES
 from coldfix.primitives.counters import DB_ROWS
 from coldfix.sandbox.reset import ResetMechanism, ResetNotPreparedError, ResetStrategy
-from coldfix.screening.workload import RESPONSE_BYTES
 from fixtures.planted.store import Store, build_store
 
 CELLS = "cells_returned"

@@ -93,7 +93,7 @@ from pydantic import (
     field_validator,
 )
 
-from coldfix.screening.workload import Workload
+from coldfix.contracts.workload import Workload
 
 # Frozen and closed for S-4.1's reason, and it matters more here than usual: a
 # key with a misspelled field would otherwise construct fine, silently drop the

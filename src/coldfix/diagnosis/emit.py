@@ -39,6 +39,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from coldfix.bench.stats import Growth
+from coldfix.contracts.workload import Observation, Workload
 from coldfix.diagnosis.chain import (
     ChainError,
     EvidenceChain,
@@ -50,7 +51,6 @@ from coldfix.diagnosis.chain import (
 from coldfix.diagnosis.exclusions import Conditions, current_platform
 from coldfix.diagnosis.log import Verdict
 from coldfix.diagnosis.loop import Investigation
-from coldfix.screening.workload import Observation, Workload
 
 DEFAULT_CONCURRENCY = 1.0
 """What a workload is driven at unless a load primitive says otherwise.

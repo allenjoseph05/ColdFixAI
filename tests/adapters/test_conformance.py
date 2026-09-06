@@ -44,6 +44,7 @@ from coldfix.adapters.django import DjangoAdapter
 from coldfix.adapters.flask import FlaskAdapter
 from coldfix.bench.counting import Hook, Record, calls_to
 from coldfix.bench.execute import DEFAULT_MAX_OUTPUT_CHARS, ExecutionResult
+from coldfix.contracts.workload import FixtureRecipe
 from coldfix.explorer.entrypoints import Enumeration
 from coldfix.explorer.fingerprint import Framework, Orm
 from coldfix.explorer.work import Drive
@@ -53,7 +54,6 @@ from coldfix.sandbox.modes import CandidateSession, Session
 from coldfix.sandbox.patching import DEFAULT_PATCH_POLICY, PatchPolicy
 from coldfix.sandbox.reset import ResetMechanism
 from coldfix.sandbox.worktrees import Worktree
-from coldfix.screening.workload import FixtureRecipe
 
 FLASK_APPLICATION = """
 from flask import Flask

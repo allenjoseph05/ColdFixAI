@@ -61,7 +61,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from coldfix.audit.invocation import (
+from coldfix.contracts.auditing import (
     AUDIT_TEMPERATURE,
     AuditError,
     audit_messages,

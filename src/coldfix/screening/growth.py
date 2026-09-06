@@ -36,10 +36,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from coldfix.bench.stats import Fit, Growth
+from coldfix.contracts.workload import BoundWorkload, Observation, Workload
 from coldfix.primitives.measurement import CacheControl, MetricKind, Vantage
 from coldfix.primitives.scaling import Distribution, ScalingResult, scale_volume
 from coldfix.sandbox.reset import ResetStrategy
-from coldfix.screening.workload import BoundWorkload, Observation, Workload
 
 # Three points because `fit_growth` needs three, geometric because the power fit
 # runs over logarithms and evenly spaced points in log space are what it can use.

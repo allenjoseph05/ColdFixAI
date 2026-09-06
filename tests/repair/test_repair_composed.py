@@ -33,6 +33,7 @@ import pytest
 
 from coldfix.bench.execute import ExecutionTimeoutError, execute
 from coldfix.bench.stats import Growth
+from coldfix.contracts.sessions import refuse_foreign_session
 from coldfix.cost.accounting import ExchangeRate, Phase
 from coldfix.cost.session import Session
 from coldfix.diagnosis.chain import (
@@ -61,7 +62,6 @@ from coldfix.repair.mustfail import (
 )
 from coldfix.repair.patch import Attempt, Patch, PatchError
 from coldfix.repair.retry import Escalation
-from coldfix.repair.sessions import refuse_foreign_session
 from coldfix.sandbox.modes import CandidateSession, DiagnosticSession
 from coldfix.sandbox.patching import touched_paths
 

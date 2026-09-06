@@ -16,16 +16,16 @@ behaviour `08-audit.md` F6 asks for, seen on the project's own target.
 
 from __future__ import annotations
 
-from coldfix.primitives.counters import DB_QUERY
-from coldfix.primitives.measurement import SECONDS
-from coldfix.primitives.scaling import Distribution
-from coldfix.sandbox.reset import ResetStrategy
-from coldfix.screening.workload import (
+from coldfix.contracts.workload import (
     RESPONSE_BYTES,
     FixtureRecipe,
     Observation,
     Workload,
 )
+from coldfix.primitives.counters import DB_QUERY
+from coldfix.primitives.measurement import SECONDS
+from coldfix.primitives.scaling import Distribution
+from coldfix.sandbox.reset import ResetStrategy
 
 # ADR 011, measured on the scaled dataset: 503 tickets / 3004 followups / 3002
 # attachments, produced deterministically by `seeds/scale_helpdesk.py`. The

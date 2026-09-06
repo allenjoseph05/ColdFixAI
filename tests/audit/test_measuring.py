@@ -24,7 +24,7 @@ import pytest
 from coldfix.audit import measuring
 from coldfix.audit.cheating import Metrics, Revision
 from coldfix.audit.measuring import MeasuringError, measurer_for, reading_of, sample_of
-from coldfix.explorer.surface import HostSurface
+from coldfix.contracts.surface import HostSurface
 from coldfix.explorer.work import Drive, drive
 from coldfix.orchestrator.adapters import Measurer
 from coldfix.primitives.envelope import ENVELOPE, EnvelopeSample

@@ -23,12 +23,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from coldfix.primitives.counters import DB_QUERY
-from coldfix.primitives.measurement import BLOCKED_SECONDS, SECONDS
-from coldfix.primitives.scaling import Distribution
-from coldfix.sandbox.reset import ResetMechanism, ResetNotPreparedError, ResetStrategy
-from coldfix.sandbox.verification import VerificationReport, VerifiedReset
-from coldfix.screening.workload import (
+from coldfix.contracts.workload import (
     MINIMUM_SCALE_RATIO,
     RESPONSE_BYTES,
     BoundWorkload,
@@ -37,6 +32,11 @@ from coldfix.screening.workload import (
     Workload,
     WorkloadError,
 )
+from coldfix.primitives.counters import DB_QUERY
+from coldfix.primitives.measurement import BLOCKED_SECONDS, SECONDS
+from coldfix.primitives.scaling import Distribution
+from coldfix.sandbox.reset import ResetMechanism, ResetNotPreparedError, ResetStrategy
+from coldfix.sandbox.verification import VerificationReport, VerifiedReset
 from fixtures.workloads import HELPDESK_TICKETS
 
 RECIPE = FixtureRecipe(
@@ -278,7 +278,7 @@ def test_the_recipe_hashes_identically_in_a_fresh_interpreter() -> None:
     """
     script = (
         "from coldfix.primitives.scaling import Distribution\n"
-        "from coldfix.screening.workload import FixtureRecipe\n"
+        "from coldfix.contracts.workload import FixtureRecipe\n"
         "print(FixtureRecipe(entity='ticket', per_parent=6, "
         "distribution=Distribution.UNIFORM, source='a factory', seed=7).digest())\n"
     )

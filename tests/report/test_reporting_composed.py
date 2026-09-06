@@ -26,6 +26,7 @@ from typing import Any, cast
 import pytest
 
 from coldfix.bench.counting import calls_to, register_hook, unregister_hook
+from coldfix.contracts.workload import BoundWorkload, FixtureRecipe, Workload
 from coldfix.orchestrator.adapters import Resources, Tokens, screen
 from coldfix.primitives.counters import DB_QUERY
 from coldfix.primitives.scaling import Distribution
@@ -35,7 +36,6 @@ from coldfix.screening.assess import conclude
 from coldfix.screening.flagging import flag
 from coldfix.screening.growth import screen as screen_workloads
 from coldfix.screening.null import NullResult
-from coldfix.screening.workload import BoundWorkload, FixtureRecipe, Workload
 from coldfix.state.checkpoint import CheckpointedState
 from fixtures.planted.queries import (
     list_books_batched,

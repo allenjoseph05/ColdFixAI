@@ -39,7 +39,7 @@ from collections.abc import Mapping, Sequence
 
 from coldfix.audit.cheating import Metrics, Reading, Revision
 from coldfix.audit.patchcompose import Measurements
-from coldfix.explorer.surface import SessionSurface, Surface
+from coldfix.contracts.surface import SessionSurface, Surface
 from coldfix.explorer.synthesis import synthesize
 from coldfix.explorer.work import Drive, drive
 from coldfix.primitives.envelope import ENVELOPE, Availability, EnvelopeSample

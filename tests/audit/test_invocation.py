@@ -22,16 +22,18 @@ import pytest
 
 from coldfix.audit import invocation as invocation_module
 from coldfix.audit.invocation import (
-    AUDIT_TEMPERATURE,
     MAX_OUTPUT_TOKENS,
     RESIDUE,
     WITHHELD,
-    AuditError,
-    audit_messages,
     audit_session,
     invoke,
-    refuse_shared_session,
     render_evidence,
+)
+from coldfix.contracts.auditing import (
+    AUDIT_TEMPERATURE,
+    AuditError,
+    audit_messages,
+    refuse_shared_session,
 )
 from coldfix.cost.accounting import ExchangeRate, Phase
 from coldfix.cost.budget import PHASE_CAPS
@@ -219,13 +221,13 @@ def test_running_an_audit_through_the_diagnosticians_session_is_refused() -> Non
     )
 
     with pytest.raises(AuditError, match="not the auditor's"):
-        refuse_shared_session(diagnostician)
+        refuse_shared_session(diagnostician, expected=invocation_module._SYSTEM)
 
 
 def test_the_auditors_own_session_is_accepted() -> None:
     """The control. A check that refused every session would pass the test above
     and make the audit impossible to run at all."""
-    refuse_shared_session(a_session())  # must not raise
+    refuse_shared_session(a_session(), expected=invocation_module._SYSTEM)  # must not raise
 
 
 def test_invoke_refuses_a_shared_session_before_it_spends_anything() -> None:

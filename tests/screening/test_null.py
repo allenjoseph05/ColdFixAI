@@ -25,6 +25,13 @@ from typing import Any
 import pytest
 
 from coldfix.bench.counting import calls_to, register_hook, unregister_hook
+from coldfix.contracts.workload import (
+    RESPONSE_BYTES,
+    BoundWorkload,
+    FixtureRecipe,
+    Observation,
+    Workload,
+)
 from coldfix.primitives.counters import DB_QUERY, DB_ROWS
 from coldfix.primitives.measurement import MATERIALIZED, SECONDS, Reported, Vantage
 from coldfix.primitives.scaling import Distribution
@@ -33,13 +40,6 @@ from coldfix.sandbox.verification import VerificationReport, VerifiedReset
 from coldfix.screening.flagging import Ranking, rank
 from coldfix.screening.growth import screen_growth
 from coldfix.screening.null import NullResult, NullResultError, null_result
-from coldfix.screening.workload import (
-    RESPONSE_BYTES,
-    BoundWorkload,
-    FixtureRecipe,
-    Observation,
-    Workload,
-)
 from fixtures.planted.queries import (
     list_books_batched,
     list_books_n_plus_one,

@@ -21,6 +21,12 @@ from typing import ClassVar
 
 import pytest
 
+from coldfix.contracts.workload import (
+    RESPONSE_BYTES,
+    FixtureRecipe,
+    Observation,
+    Workload,
+)
 from coldfix.explorer.emission import EmissionError, EmittedWorkload, emit, read_document
 from coldfix.explorer.work import Verification, verify_work
 from coldfix.primitives.counters import DB_QUERY
@@ -32,12 +38,6 @@ from coldfix.sandbox.verification import (
     VerificationError,
     VerificationReport,
     VerifiedReset,
-)
-from coldfix.screening.workload import (
-    RESPONSE_BYTES,
-    FixtureRecipe,
-    Observation,
-    Workload,
 )
 
 MANAGE_PY = """\

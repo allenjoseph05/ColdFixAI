@@ -23,12 +23,7 @@ from decimal import Decimal
 import pytest
 
 from coldfix.audit import patchaudit as patchaudit_module
-from coldfix.audit.invocation import (
-    AUDIT_TEMPERATURE,
-    AuditError,
-    audit_messages,
-    audit_session,
-)
+from coldfix.audit.invocation import audit_session
 from coldfix.audit.patchaudit import (
     MAX_OUTPUT_TOKENS,
     RESIDUE,
@@ -44,6 +39,7 @@ from coldfix.audit.patchaudit import (
     render_candidate,
 )
 from coldfix.bench.stats import Growth
+from coldfix.contracts.auditing import AUDIT_TEMPERATURE, AuditError, audit_messages
 from coldfix.cost.accounting import Agent, ExchangeRate, Phase
 from coldfix.cost.budget import (
     PHASE_CAPS,

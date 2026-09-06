@@ -47,10 +47,10 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from coldfix.contracts.workload import FixtureRecipe
 from coldfix.cost.accounting import Phase
 from coldfix.cost.budget import Budget
 from coldfix.diagnosis.exclusions import Conditions, Dimension, Exclusion, ExclusionRegister
-from coldfix.screening.workload import FixtureRecipe
 
 # What the harness does with a recipe: build the fixture and leave the subject
 # holding it. **This module seeds nothing itself** — S-7.6 and S-7.7 own that,

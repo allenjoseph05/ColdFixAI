@@ -22,22 +22,39 @@ from pathlib import Path
 
 import pytest
 
+from coldfix import explorer as explorer_package
 from coldfix.bench.execute import execute
-from coldfix.explorer import surface as surface_module
-from coldfix.explorer.surface import HostSurface, SessionSurface, Surface
+from coldfix.contracts import surface as surface_module
+from coldfix.contracts.surface import HostSurface, SessionSurface, Surface
 from coldfix.sandbox.modes import ExecutionMode, Workbench
 from coldfix.sandbox.runner import docker_available
 from coldfix.sandbox.worktrees import Repository
 
-EXPLORER = Path(surface_module.__file__).parent
+EXPLORER = Path(explorer_package.__file__).parent
+CONTRACTS = Path(surface_module.__file__).parent
+
+
+def _call_sites() -> dict[str, int]:
+    """Every module the partition covers, keyed by package so the two trees cannot
+    hide a call site from each other."""
+    return {
+        f"{d.name}/{path.name}": _execute_calls(path)
+        for d in (EXPLORER, CONTRACTS)
+        for path in sorted(d.glob("*.py"))
+    }
+
 
 # The seven harness control-plane call sites, by module. **Named individually so
 # that adding one is a decision.** Four are `docker` — containerising those is
 # docker-in-docker — and `anchor`'s two are `git -C root log` and `uv pip
 # compile`, the harness's own tools reasoning *about* the repository rather than
 # the subject's interpreter running *in* it.
-CONTROL_PLANE = {"standup.py": 4, "anchor.py": 2, "surface.py": 1}
-"""`surface.py`'s own is `HostSurface.run`, which is where the host call now lives."""
+CONTROL_PLANE = {"explorer/standup.py": 4, "explorer/anchor.py": 2, "contracts/surface.py": 1}
+"""`surface.py`'s own is `HostSurface.run`, which is where the host call now lives.
+
+Keyed by package since `surface.py` moved to `contracts/`: a bare module name
+would have let the file leave `explorer/` and quietly leave the accounting with
+it, which is the drift the third test exists to catch."""
 
 
 def _execute_calls(path: Path) -> int:
@@ -76,7 +93,8 @@ def test_the_control_plane_deliberately_still_does() -> None:
     either onto the subject's surface breaks only on a machine where Docker is
     running, which is not the machine the fast subset runs on.
     """
-    counted = {name: _execute_calls(EXPLORER / name) for name in CONTROL_PLANE}
+    sites = _call_sites()
+    counted = {name: sites[name] for name in CONTROL_PLANE}
 
     assert counted == CONTROL_PLANE
 
@@ -89,7 +107,7 @@ def test_the_two_sets_partition_every_call_site_in_the_package() -> None:
     direct `execute` in `explorer/` is accounted for by `CONTROL_PLANE`, and
     everything else is zero.
     """
-    everywhere = {path.name: _execute_calls(path) for path in sorted(EXPLORER.glob("*.py"))}
+    everywhere = _call_sites()
 
     assert {name: n for name, n in everywhere.items() if n} == CONTROL_PLANE
 

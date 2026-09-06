@@ -43,12 +43,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from coldfix.audit.invocation import AuditError, invoke
+from coldfix.audit.invocation import invoke
+from coldfix.contracts.auditing import AuditError
+from coldfix.contracts.workload import Workload
 from coldfix.cost.session import Session, StepOutcome
 from coldfix.diagnosis.log import ExperimentLog
 from coldfix.diagnosis.replies import read_object
 from coldfix.llm.client import ModelClient
-from coldfix.screening.workload import Workload
 
 SYNTHESIS_MARKERS = ("synthesized from schema", "synthesis from schema")
 """How S-7.6 spells a fixture it invented. Matched rather than inferred, because

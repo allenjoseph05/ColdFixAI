@@ -20,8 +20,9 @@ from typing import Any
 
 import pytest
 
-from coldfix.audit.invocation import AUDIT_TEMPERATURE, AuditError, audit_session
+from coldfix.audit.invocation import audit_session
 from coldfix.bench.stats import Growth
+from coldfix.contracts.auditing import AUDIT_TEMPERATURE, AuditError
 from coldfix.cost.accounting import Agent, ExchangeRate, ModelCall, Phase, StepClass, TokenUsage
 from coldfix.cost.budget import (
     PHASE_CAPS,

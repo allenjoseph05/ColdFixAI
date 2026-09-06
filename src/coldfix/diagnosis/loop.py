@@ -46,6 +46,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from coldfix.bench.stats import Fit
+from coldfix.contracts.workload import FixtureRecipe
 from coldfix.cost.accounting import Phase
 from coldfix.cost.budget import BudgetExhaustedError, Disposition, ProgressStalledError
 from coldfix.cost.session import Session
@@ -70,7 +71,6 @@ from coldfix.diagnosis.reseed import Reseeding, Seeder, reseed
 from coldfix.llm.client import ModelClient
 from coldfix.primitives.measurement import MetricKind
 from coldfix.primitives.registry import Selection
-from coldfix.screening.workload import FixtureRecipe
 
 RETRIES_PER_HYPOTHESIS = 3
 """How often the loop will re-ask before calling a repeated proposal a stall.

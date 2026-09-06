@@ -53,10 +53,10 @@ from pathlib import Path
 from typing import Any
 
 from coldfix.bench.execute import ExecutionError
+from coldfix.contracts.surface import HostSurface, Surface
+from coldfix.contracts.workload import FixtureRecipe
 from coldfix.explorer.entrypoints import settings_module
-from coldfix.explorer.surface import HostSurface, Surface
 from coldfix.primitives.scaling import Allocation, Distribution, allocate
-from coldfix.screening.workload import FixtureRecipe
 
 SYNTHESIS_TIMEOUT_SECONDS = 300.0
 """Inherited from S-7.5's exercising budget: this writes rows through the ORM,

@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from coldfix.contracts.workload import FixtureRecipe
 from coldfix.explorer.synthesis import (
     SchemaField,
     SchemaModel,
@@ -30,7 +31,6 @@ from coldfix.explorer.synthesis import (
     synthesize,
 )
 from coldfix.primitives.scaling import Distribution, allocate
-from coldfix.screening.workload import FixtureRecipe
 
 MANAGE_PY = """import os
 import sys

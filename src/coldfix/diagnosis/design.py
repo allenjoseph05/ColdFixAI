@@ -48,6 +48,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from coldfix.contracts.sessions import refuse_foreign_session
 from coldfix.cost.accounting import Agent, Phase, TokenUsage
 from coldfix.cost.cascade import NoDearerTierError
 from coldfix.cost.context import Block
@@ -60,7 +61,6 @@ from coldfix.diagnosis.schema import PrimitiveSchema, schema_of
 from coldfix.llm.client import ModelClient
 from coldfix.llm.request import as_request, with_question
 from coldfix.primitives.registry import Selection
-from coldfix.repair.sessions import refuse_foreign_session
 
 DESIGN_TEMPERATURE = 0.0
 """A translation, not an invention.

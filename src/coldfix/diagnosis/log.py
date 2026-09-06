@@ -392,3 +392,27 @@ class ExperimentLog:
             for experiment in self.experiments
         )
         return "\n".join(lines)
+
+
+# `measured_pairs` lives here rather than in `audit/` because it reads an
+# `Experiment` and nothing else. It was written for two callers — the finding
+# audit and S-10.1's falsification check — and filing it under one of them made
+# `repair` import `audit`, which was half of the last package cycle.
+def measured_pairs(experiments: Sequence[Experiment]) -> Mapping[str, set[float]]:
+    """Every value each metric took, across every experiment.
+
+    A set per metric rather than one value, because the same metric legitimately
+    differs between experiments — `db.query` is 7 in the sweep that ruled the
+    database out and 1004 in the ablation that found the cause. Collapsing them
+    would make one of the two real numbers look fabricated.
+
+    Takes the experiments rather than the log so that S-10.1 can ask the same
+    question of an `EvidenceChain`, whose experiments live inside its
+    localization links and its exclusions. One loop, two artifacts — the
+    alternative was a second copy differing only in how it reached the records.
+    """
+    values: dict[str, set[float]] = {}
+    for experiment in experiments:
+        for name, value in experiment.measurement.items():
+            values.setdefault(name, set()).add(float(value))
+    return values

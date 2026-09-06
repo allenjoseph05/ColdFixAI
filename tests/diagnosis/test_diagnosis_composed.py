@@ -35,6 +35,7 @@ from collections.abc import Callable
 import pytest
 
 from coldfix.bench.stats import Growth
+from coldfix.contracts.workload import FixtureRecipe, Observation, Workload
 from coldfix.cost.session import Session
 from coldfix.diagnosis import design as design_module
 from coldfix.diagnosis import hypothesis as hypothesis_module
@@ -56,7 +57,6 @@ from coldfix.diagnosis.progress import ProgressError, Stopped
 from coldfix.llm.client import ReplayingClient
 from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetStrategy
-from coldfix.screening.workload import FixtureRecipe, Observation, Workload
 from fixtures.thesis import (  # the subject and its harness, not a second copy
     A_HYPOTHESIS,
     A_SPEC,

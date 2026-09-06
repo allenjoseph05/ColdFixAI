@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from coldfix.audit.invocation import audit_messages
+from coldfix.contracts.auditing import audit_messages
 from coldfix.cost.accounting import Agent, ExchangeRate, Phase, TokenUsage
 from coldfix.cost.context import Block, Segment, labelled
 from coldfix.cost.pruning import PrunedLog
@@ -128,7 +128,7 @@ def test_the_session_system_string_never_reaches_the_request() -> None:
     `orchestrator/adapters.py:492` opens one session for the whole investigate
     loop with `_INVESTIGATION_PROMPT = hypothesis._SYSTEM`, and all three
     Diagnostician steps run on it. While each agent sends its own `_SYSTEM` that
-    is a billing mismatch — what `repair/sessions.refuse_foreign_session` exists
+    is a billing mismatch — what `contracts/sessions.refuse_foreign_session` exists
     for, and which was never applied to the Diagnostician. The moment the
     session's string becomes what is *sent*, `design` and `interpret` are handed
     the hypothesis prompt: told to answer with a statement, a primitive and a

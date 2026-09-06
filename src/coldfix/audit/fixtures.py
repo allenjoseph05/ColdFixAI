@@ -41,9 +41,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
+from coldfix.contracts.workload import FixtureRecipe
 from coldfix.diagnosis.exclusions import Conditions, Dimension
 from coldfix.primitives.scaling import Distribution
-from coldfix.screening.workload import FixtureRecipe
 
 PREFERRED_ORDER = (Distribution.LONG_TAIL, Distribution.POWER_LAW, Distribution.UNIFORM)
 """Which shape to ask for first, and why that order.

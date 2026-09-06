@@ -56,6 +56,7 @@ from typing import Any
 from coldfix.adapters.interface import ROW_COUNTING_VENDORS, Declarations, Subject
 from coldfix.bench.counting import Hook, HookError, Record
 from coldfix.bench.execute import ExecutionError, ExecutionResult, execute
+from coldfix.contracts.workload import FixtureRecipe
 from coldfix.explorer.entrypoints import (
     Candidate,
     Discovery,
@@ -71,7 +72,6 @@ from coldfix.primitives.registry import Capability
 from coldfix.sandbox.modes import CandidateSession, Session
 from coldfix.sandbox.production import VerifiedDatabase
 from coldfix.sandbox.reset import ResetMechanism, RollbackReset, SnapshotRestoreReset
-from coldfix.screening.workload import FixtureRecipe
 
 FLASK_INTERNAL_FRAMES: tuple[str, ...] = (
     # The framework and the WSGI layer under it. A stack through a Flask view is

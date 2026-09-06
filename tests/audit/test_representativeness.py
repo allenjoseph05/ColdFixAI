@@ -16,13 +16,7 @@ from decimal import Decimal
 import pytest
 
 from coldfix.audit import invocation as invocation_module
-from coldfix.audit.invocation import (
-    AUDIT_TEMPERATURE,
-    MAX_OUTPUT_TOKENS,
-    audit_messages,
-    audit_session,
-    render_evidence,
-)
+from coldfix.audit.invocation import MAX_OUTPUT_TOKENS, audit_session, render_evidence
 from coldfix.audit.representativeness import (
     QUESTION,
     RESIDUE,
@@ -32,12 +26,13 @@ from coldfix.audit.representativeness import (
     parse,
     synthesized,
 )
+from coldfix.contracts.auditing import AUDIT_TEMPERATURE, audit_messages
+from coldfix.contracts.workload import FixtureRecipe, Observation, Workload
 from coldfix.cost.accounting import ExchangeRate
 from coldfix.diagnosis.log import ExperimentLog, Verdict
 from coldfix.llm.client import Recording, ReplayingClient
 from coldfix.primitives.scaling import Distribution
 from coldfix.sandbox.reset import ResetStrategy
-from coldfix.screening.workload import FixtureRecipe, Observation, Workload
 
 RATE = ExchangeRate(Decimal("0.92"), date(2026, 8, 17))
 SOURCE = "shop/views.py::book_list"

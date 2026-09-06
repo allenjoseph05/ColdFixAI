@@ -44,6 +44,8 @@ from pathlib import Path
 
 from pydantic import JsonValue
 
+from coldfix.contracts.surface import HostSurface, Surface
+from coldfix.contracts.workload import EnvironmentAnchor, Workload
 from coldfix.explorer.anchor import Anchor, Interpreter, anchor_for, interpreter_for, resolve
 from coldfix.explorer.auth import (
     Credential,
@@ -69,11 +71,9 @@ from coldfix.explorer.playbook import (
 )
 from coldfix.explorer.registry import grounds_for
 from coldfix.explorer.stages import Grounding, Progress, evaluate
-from coldfix.explorer.surface import HostSurface, Surface
 from coldfix.explorer.work import Seeder, Verification, WorkVerificationError, verify_work
 from coldfix.sandbox.reset import ResetStrategy
 from coldfix.sandbox.verification import VerifiedReset
-from coldfix.screening.workload import EnvironmentAnchor, Workload
 
 
 class CompositionError(Exception):

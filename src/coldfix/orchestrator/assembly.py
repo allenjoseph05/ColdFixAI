@@ -50,13 +50,13 @@ from typing import TYPE_CHECKING
 from coldfix.audit.cheating import Metrics
 from coldfix.audit.measuring import measurer_for
 from coldfix.audit.probing import probe_for
+from coldfix.contracts.surface import SessionSurface
 from coldfix.cost.accounting import ExchangeRate, Ledger
 from coldfix.cost.budget import Budget
 from coldfix.diagnosis.execution import executor_for
 from coldfix.explorer.binding import grounder_for
 from coldfix.explorer.compose import Plan
 from coldfix.explorer.hands import hands_on
-from coldfix.explorer.surface import SessionSurface
 from coldfix.orchestrator.adapters import Resources, Tokens
 from coldfix.orchestrator.campaign import sessions_for
 from coldfix.primitives.measurement import MetricKind, metric_kind

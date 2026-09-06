@@ -84,6 +84,7 @@ from coldfix.audit.verdict import (
     verdict_for,
 )
 from coldfix.bench.stats import Fit
+from coldfix.contracts.workload import Workload
 from coldfix.cost.accounting import ExchangeRate, ModelCall
 from coldfix.cost.session import Session
 from coldfix.diagnosis.exclusions import Conditions, Exclusion
@@ -91,7 +92,6 @@ from coldfix.diagnosis.log import Experiment, ExperimentLog, Verdict
 from coldfix.diagnosis.progress import PartialChain
 from coldfix.llm.client import ModelClient
 from coldfix.primitives.measurement import MetricKind
-from coldfix.screening.workload import Workload
 
 NO_KINDS = (
     "the experiment log does not record which metrics are counts and which are durations. "

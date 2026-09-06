@@ -35,6 +35,12 @@ from pydantic import TypeAdapter
 
 from coldfix.bench.counting import calls_to, register_hook, unregister_hook
 from coldfix.bench.stats import Fit, Growth
+from coldfix.contracts.workload import (
+    RESPONSE_BYTES,
+    BoundWorkload,
+    FixtureRecipe,
+    Workload,
+)
 from coldfix.primitives.counters import DB_QUERY, DB_ROWS
 from coldfix.primitives.measurement import CacheControl, MetricKind
 from coldfix.primitives.scaling import Distribution, ScalePoint, ScalingResult
@@ -53,12 +59,6 @@ from coldfix.sandbox.verification import VerificationReport, VerifiedReset
 from coldfix.screening.assess import conclude
 from coldfix.screening.budget import Plan
 from coldfix.screening.growth import SCREENING_SCALES, ScreenedWorkload, screen_growth
-from coldfix.screening.workload import (
-    RESPONSE_BYTES,
-    BoundWorkload,
-    FixtureRecipe,
-    Workload,
-)
 from fixtures.planted.queries import (
     list_books_batched,
     list_books_n_plus_one,

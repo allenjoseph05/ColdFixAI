@@ -71,10 +71,10 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from coldfix.bench.execute import ExecutionError
+from coldfix.contracts.surface import HostSurface, Surface
 from coldfix.explorer.entrypoints import settings_module
 from coldfix.explorer.fingerprint import Detected
 from coldfix.explorer.playbook import PlaybookEntry, remembered_requirement, trusted
-from coldfix.explorer.surface import HostSurface, Surface
 from coldfix.state.persistent import Collection, PersistentStore
 
 PROFILE_TIMEOUT_SECONDS = 120.0

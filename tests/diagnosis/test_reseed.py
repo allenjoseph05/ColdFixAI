@@ -20,6 +20,7 @@ from decimal import Decimal
 
 import pytest
 
+from coldfix.contracts.workload import FixtureRecipe
 from coldfix.cost.accounting import ExchangeRate, Ledger, Phase
 from coldfix.cost.budget import (
     DEFAULT_STALL_AFTER,
@@ -40,7 +41,6 @@ from coldfix.diagnosis.reseed import (
 from coldfix.llm.client import ReplayingClient
 from coldfix.primitives.registry import ProjectProfile, Selection
 from coldfix.primitives.scaling import Distribution
-from coldfix.screening.workload import FixtureRecipe
 
 SCALES = [10, 100, 1000]
 PLATFORM = "x86_64-linux"

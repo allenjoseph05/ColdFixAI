@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from coldfix.contracts.surface import HostSurface
 from coldfix.explorer.hands import (
     DEFAULT_TIMEOUT_SECONDS,
     DENIED,
@@ -24,7 +25,6 @@ from coldfix.explorer.hands import (
 )
 from coldfix.explorer.loop import explore
 from coldfix.explorer.proposal import Move
-from coldfix.explorer.surface import HostSurface
 
 TOUCH = "import pathlib; pathlib.Path('installed').touch()"
 
