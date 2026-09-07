@@ -109,7 +109,8 @@ scheduling delay into a red build, not because they are optional.
 | `spikes/` | timeboxed experiments that produce a finding, not shippable code |
 | `tests/fixtures/` | a repository with deliberately planted defects |
 
-`agents/` is named for the four agents and contains one module. That is not a
+`agents/` is named for the five agents — Explorer, Diagnostician, Surgeon,
+finding auditor and Adversary — and contains one module. That is not a
 leftover. Which agent may see what is enforced structurally in six separate
 places, each argued for on its own merits and none of them persuadable — and
 somebody verifying the system has to find all six and know that six is all there
