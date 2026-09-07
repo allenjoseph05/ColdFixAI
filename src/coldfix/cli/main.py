@@ -22,12 +22,25 @@ from __future__ import annotations
 
 import argparse
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from coldfix.cli.config import Config, ConfigError, load
 from coldfix.cli.wiring import WiringError, adapter_for, supplied_by
+from coldfix.cost.accounting import ExchangeRate
+from coldfix.explorer.compose import Plan
 from coldfix.explorer.registry import groundable, registered
+from coldfix.llm.client import ModelClient, connect
+from coldfix.orchestrator.adapters import Tokens
+from coldfix.orchestrator.assembly import campaign_for
+from coldfix.orchestrator.campaign import gated_graph
+from coldfix.orchestrator.checkpointing import for_development
+from coldfix.orchestrator.resume import start
+from coldfix.repair.falsification import CostClaim, Guard
+from coldfix.sandbox.modes import Workbench
+from coldfix.sandbox.production import VerifiedDatabase
+from coldfix.sandbox.worktrees import Repository
+from coldfix.state.persistent import PersistentStore
 
 DEFAULT_CONFIG = Path("coldfix.toml")
 
@@ -102,8 +115,86 @@ def plan(config: Config) -> list[str]:
     return lines
 
 
+def run_id_for(config: Config) -> str:
+    """The thread a run checkpoints under.
+
+    Stable across invocations on purpose: `resume` continues a thread and
+    `start` opens one, and an id containing a timestamp would make every
+    interrupted campaign unresumable while looking like it had merely started
+    again.
+    """
+    return f"{config.project}@{config.revision}"
+
+
+def campaign_arguments(
+    config: Config,
+    supplied: Mapping[str, object],
+    *,
+    client: ModelClient,
+    workbench: Workbench,
+    store: PersistentStore,
+) -> dict[str, object]:
+    """`Config` and an adapter, translated into what `campaign_for` takes.
+
+    Kept separate from `run` because this is the half that can be tested: it
+    opens nothing, so every field can be checked without Docker, without
+    Postgres and without a key. What is left in `run` is three constructors and a
+    call, which is as small as the untested surface can be made.
+
+    **`target` is the model, `entity` is the route's entity.** They are different
+    strings — `coldfix.example.toml` has `entity = "author"` against
+    `model = "shop.Book"` — and `Plan` uses them for different things: `entity`
+    breaks a tie between factories, `target` is what synthesis seeds. Passing the
+    entity as the target seeds the wrong table, which `Plan`'s own docstring names
+    as the failure that measures an empty list.
+    """
+    return {
+        **supplied,
+        "client": client,
+        "project": config.project,
+        "trust_key": config.trust_key,
+        "revision": config.revision,
+        "root": config.root,
+        "python": config.python,
+        "database_url": config.database_url,
+        "workbench": workbench,
+        "store": store,
+        "plan": Plan(
+            workload_id=config.workload_id,
+            description=config.workload_description,
+            entity=config.entity,
+            target=config.model,
+        ),
+        "entity": config.entity,
+        "path": config.path,
+        "model": config.model,
+        "settings": config.settings,
+        "source": config.source,
+        "suite_command": config.suite_command,
+        "metric": config.metric,
+        "tokens": Tokens(prefix=config.prefix_tokens, prompt=config.prompt_tokens),
+        "claim": CostClaim(
+            metric=config.claim.metric,
+            baseline=config.claim.baseline,
+            at_most=config.claim.at_most,
+            guards=tuple(
+                Guard(metric=metric, baseline=baseline, at_most=at_most)
+                for metric, baseline, at_most in config.claim.guards
+            ),
+        ),
+        "rate": ExchangeRate(euros_per_dollar=config.rate_eur, as_of=config.rate_as_of),
+        "ceiling_eur": config.ceiling_eur,
+    }
+
+
 def run(config: Config, *, spend: bool, credential: str | None) -> list[str]:
-    """Start a real investigation.
+    """Start a real investigation. **S-17.1.**
+
+    **This has never been executed against a real subject.** Every piece below is
+    covered by a test — the translation directly, the assembly by S-17.15, the
+    compile by Epic 17's composition check, the invoke by S-12.2 — and no test
+    has run all four in one process with a live client, because that costs money.
+    Read the sequence as four verified steps in an order nobody has walked.
 
     Raises:
         CommandError: `--spend` was not given, or no credential is set. Both are
@@ -124,18 +215,44 @@ def run(config: Config, *, spend: bool, credential: str | None) -> list[str]:
         )
         raise CommandError(message)
 
-    # **Deliberately not implemented here yet, and saying so is the honest state.**
-    # Everything above this line is what makes the run one command; what is below
-    # it is S-17.1, which is a run against the holdout repository that has never
-    # happened. Wiring an unrun path and calling it done is how a system arrives
-    # at its first real invocation with the confidence of code nobody has
-    # executed — which is the failure this project keeps recording.
-    message = (
-        "assembling a live campaign is S-17.1 and has never been executed. `coldfix plan` "
-        "reports what this configuration would supply; the remaining step is to hand those "
-        "values to `campaign_for` and drive the graph, under the ceiling this file sets"
+    adapter = adapter_for(config.framework)
+    supplied = supplied_by(adapter, root=config.root, python=config.python, path=config.path)
+
+    # Built before the workbench and the store so an unusable key is refused
+    # while nothing is open. `connect` opens no connection; the first `complete`
+    # is what bills.
+    client = connect(credential)
+
+    workbench = Workbench(
+        repository=Repository(root=config.root),
+        image=config.image,
+        worktree_root=config.worktree_root,
     )
-    raise CommandError(message)
+    store = PersistentStore(
+        database=VerifiedDatabase(config.store_url),
+        # Derived rather than configured: the replay cache belongs beside the
+        # worktrees it is keyed against, and a second setting for it would be one
+        # more thing to get inconsistent with `worktree_root`.
+        replay_root=config.worktree_root / "recordings",
+    )
+
+    run_id = run_id_for(config)
+    arguments = campaign_arguments(
+        config, supplied, client=client, workbench=workbench, store=store
+    )
+
+    with (
+        campaign_for(**arguments) as resources,  # type: ignore[arg-type]
+        for_development(config.worktree_root / "checkpoints.sqlite") as checkpointer,
+    ):
+        graph = gated_graph(resources, checkpointer)
+        final = start(graph, run_id)
+
+    return [
+        f"run          {run_id}",
+        f"checkpoints  {config.worktree_root / 'checkpoints.sqlite'}",
+        f"channels     {', '.join(sorted(final)) or 'none written'}",
+    ]
 
 
 def main(argv: Sequence[str] | None = None) -> int:

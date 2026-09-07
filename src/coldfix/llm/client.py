@@ -44,14 +44,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
+from anthropic import Anthropic
 from anthropic.types import Message, MessageParam
 
 from coldfix.cost.accounting import TokenUsage
-
-if TYPE_CHECKING:  # pragma: no cover - import cycle only matters to type checkers
-    from anthropic import Anthropic
 
 # `stop_reason` values this system has to behave differently for. The rest —
 # `end_turn`, `stop_sequence`, `tool_use`, `pause_turn` — are ordinary outcomes.
@@ -241,6 +239,40 @@ class AnthropicClient:
             temperature=temperature,
         )
         return translate(message, cache_ttl=cache_ttl)
+
+
+def connect(api_key: str) -> AnthropicClient:
+    """The only place a live client is built. **S-17.1.**
+
+    `AnthropicClient` has existed since S-0.7b and nothing in the tree ever
+    constructed one — it appeared in two docstrings and no call site. A class that
+    is never instantiated is not a seam, it is a description of one, and the gap
+    is invisible from inside every test because `ReplayingClient` satisfies the
+    same protocol.
+
+    **The key is a parameter, never read from the environment here.** `cli/main.py`
+    owns `ANTHROPIC_API_KEY` and says why: a library that reached for an
+    environment variable is one that can start spending because of a shell
+    profile. This function cannot spend on its own either — it opens no
+    connection; the SDK client is lazy and the first call is what bills.
+
+    `Anthropic` is now imported at module scope. It had been under `TYPE_CHECKING`,
+    and moving it costs nothing measurable: `from anthropic.types import Message`
+    two lines up already loads the `anthropic` package and binds `Anthropic` on
+    it, so the deferred import was buying an import that had already happened.
+
+    Raises:
+        ModelClientError: the key is empty. Refused here rather than at the first
+            call, which would be after a container and a database were standing.
+    """
+    if not api_key.strip():
+        message = (
+            "an empty API key would fail at the first model call, which is after the "
+            "workbench and the store are open. Refused before anything is built"
+        )
+        raise ModelClientError(message)
+
+    return AnthropicClient(client=Anthropic(api_key=api_key))
 
 
 @dataclass(frozen=True)
