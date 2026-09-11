@@ -53,11 +53,13 @@ class Scripted:
     replies: list[str]
     asked: list[Sequence[Mapping[str, Any]]] = field(default_factory=list)
     models: list[str] = field(default_factory=list)
+    ttls: list[str] = field(default_factory=list)
     stop_reason: str = "end_turn"
 
     def complete(self, **kwargs: Any) -> ModelResponse:
         self.asked.append(list(kwargs["messages"]))
         self.models.append(str(kwargs["model"]))
+        self.ttls.append(str(kwargs.get("cache_ttl")))
         text = self.replies.pop(0) if self.replies else '{"tool": "submit", "arguments": {}}'
         return ModelResponse(
             model=MODEL,
@@ -77,6 +79,38 @@ class FakeTools:
     def call(self, tool: str, arguments: Mapping[str, Any]) -> ToolResult:
         self.called.append(tool)
         return self.results.get(tool, ToolResult(content=f"{tool} ran"))
+
+
+def text_of(message: Mapping[str, Any]) -> str:
+    """What a message says, whatever blocks it is carried in."""
+    return "".join(str(block["text"]) for block in message["content"])
+
+
+def markers(request: Sequence[Mapping[str, Any]]) -> list[tuple[int, int, Any]]:
+    """Every cache breakpoint in a request, with where it sits."""
+    return [
+        (m, b, block["cache_control"])
+        for m, message in enumerate(request)
+        for b, block in enumerate(message["content"])
+        if "cache_control" in block
+    ]
+
+
+def unmarked(request: Sequence[Mapping[str, Any]]) -> list[str]:
+    """A request as the cache compares it: every marker removed, one line a message."""
+    return [
+        json.dumps(
+            {
+                "role": message["role"],
+                "content": [
+                    {k: v for k, v in block.items() if k != "cache_control"}
+                    for block in message["content"]
+                ],
+            },
+            sort_keys=True,
+        )
+        for message in request
+    ]
 
 
 def act(tool: str, **arguments: Any) -> str:
@@ -156,7 +190,7 @@ def test_the_agent_is_told_what_is_available_every_turn() -> None:
     something that is not there yet."""
     client = Scripted([act("measure"), act("submit", findings=[])])
     scan(metered(client), toolbox=verifying(), ledger=Ledger(), system=SYSTEM)
-    last = client.asked[-1][-1]["content"]
+    last = text_of(client.asked[-1][-1])
     assert "profile" in last and "ablate" in last
 
 
@@ -178,6 +212,64 @@ def test_every_turn_is_billed_to_the_scan_agent() -> None:
     scan(metered(client, ledger=bill), toolbox=verifying(), ledger=Ledger(), system=SYSTEM)
     assert [call.agent for call in bill.calls] == [Agent.SCAN, Agent.SCAN]
     assert [call.phase for call in bill.calls] == [Spending.GROUND, Spending.INVESTIGATE]
+
+
+# ------------------------------------------------ the cache breakpoint, S-26.2
+
+
+def test_every_request_carries_one_breakpoint_on_its_newest_block() -> None:
+    """One marker, moved forward each turn. A marker left behind on every turn
+    would pass four -- the most a request may carry -- by the fourth turn."""
+    client = Scripted([act("measure"), act("profile"), act("bash"), act("submit", findings=[])])
+    scan(metered(client), toolbox=verifying(), ledger=Ledger(), system=SYSTEM)
+    assert len(client.asked) == 4
+    for request in client.asked:
+        [(message, block, marker)] = markers(request)
+        assert message == len(request) - 1, "on the newest message"
+        assert block == len(request[-1]["content"]) - 1, "on its last block"
+        assert marker == {"type": "ephemeral", "ttl": "1h"}
+
+
+def test_each_request_begins_with_the_one_before_it() -> None:
+    """The property caching rests on. With the markers removed, every request is
+    the previous request plus what the turn added, byte for byte -- a message
+    sent as a block on one request and as a string on the next would break it."""
+    client = Scripted([act("measure"), act("profile"), act("bash"), act("submit", findings=[])])
+    scan(metered(client), toolbox=verifying(), ledger=Ledger(), system=SYSTEM)
+    for earlier, later in zip(client.asked, client.asked[1:], strict=False):
+        before, after = unmarked(earlier), unmarked(later)
+        assert after[: len(before)] == before
+        assert len(after) == len(before) + 2, "one reply and one observation"
+
+
+def test_the_ledger_is_told_the_hour_rate() -> None:
+    """A 1-hour write bills at twice the input rate, and the ledger prices it from
+    what the request asked for -- the response does not say."""
+    client = Scripted([act("bash"), act("submit", findings=[])])
+    scan(metered(client), toolbox=FakeTools(), ledger=Ledger(), system=SYSTEM)
+    assert client.ttls == ["1h", "1h"]
+
+
+def test_the_gap_between_requests_is_recorded() -> None:
+    """So the first live run can say how often a gap outlives five minutes,
+    instead of anyone assuming it (ADR 177)."""
+    ticks = iter([0.0, 0.0, 30.0, 400.0])
+    outcome = run(
+        [act("bash"), act("bash"), act("submit", findings=[])],
+        clock=lambda: next(ticks, 400.0),
+    )
+    assert outcome.transcript.gaps() == (30.0, 370.0)
+
+
+def test_a_turn_the_budget_refused_is_not_a_request() -> None:
+    client = Scripted([act("bash")])
+    outcome = scan(
+        metered(client, ceiling_eur=Decimal("0.000001")),
+        toolbox=FakeTools(),
+        ledger=Ledger(),
+        system=SYSTEM,
+    )
+    assert outcome.transcript.requested_at == []
 
 
 # ------------------------------------------------------------- the bounds

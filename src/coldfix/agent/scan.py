@@ -22,6 +22,13 @@ The loop used to take a model from its caller and a budget that defaulted to
 counting nothing. Now each turn is a `Call` whose step type is fixed by the phase
 -- see `STEPS` -- so the router, not the caller, picks the tier, and the budget
 refuses a turn before it is sent rather than noticing it afterwards.
+
+**The conversation is cached, one breakpoint at a time.** S-26.2, ADR 177. The
+conversation only grows by appending, so each request is the previous one plus
+two messages, and a single marker on the newest block lets it read everything
+before it from the cache. The marker lives on the *request*, never on the stored
+conversation -- see `_marked` -- so no request carries more than one and the
+bytes of every earlier turn are identical from one request to the next.
 """
 
 from __future__ import annotations
@@ -30,6 +37,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from itertools import pairwise
 from typing import Any, Protocol
 
 from pydantic import BaseModel
@@ -45,6 +53,21 @@ from coldfix.llm.metered import Call, Meter
 TEMPERATURE = 0.0
 """The loop proposes experiments and the harness judges them. Variety in what is
 proposed buys nothing that a second turn does not."""
+
+CACHE_TTL = "1h"
+"""How long the conversation's cache entry lives. **ADR 177.**
+
+Not five minutes, although most turns start well within five minutes of the last.
+The two lifetimes fail in different currencies: an hour costs an extra 0.75x on
+what a turn *adds*, while five minutes costs an extra 1.15x on the *whole
+conversation* every time a gap runs long -- and installs, image builds and
+ablations of slow workloads make long gaps ordinary. One late miss costs about as
+much as a whole run of the hour's premium. The gaps are recorded (`Transcript.
+gaps`), so the first live run can overturn this with data."""
+
+BREAKPOINT: Mapping[str, str] = {"type": "ephemeral", "ttl": CACHE_TTL}
+"""The marker the newest block carries. The API allows four per request; this
+loop uses one, and moves it."""
 
 
 class ScanError(Exception):
@@ -147,6 +170,12 @@ class Transcript:
     turns: list[tuple[Action, ToolResult]] = field(default_factory=list)
     measurement_ids: list[str] = field(default_factory=list)
     phase: Phase = Phase.EXPLORING
+    requested_at: list[float] = field(default_factory=list)
+    """When each request that was actually sent began, by the loop's clock.
+
+    Recorded for ADR 177: the cache lifetime was chosen on the argument that long
+    gaps between turns are ordinary here, and this is what lets a live run say how
+    ordinary. A turn the budget refused was never sent, so it is not here."""
 
     def record(self, action: Action, result: ToolResult) -> None:
         self.turns.append((action, result))
@@ -163,6 +192,14 @@ class Transcript:
             if result.measurement_id:
                 return distance
         return len(self.turns)
+
+    def gaps(self) -> tuple[float, ...]:
+        """Seconds between the starts of consecutive requests.
+
+        Start to start, because that is what a cache entry's lifetime is measured
+        against: the timer runs from the start of the request that last wrote or
+        read the entry."""
+        return tuple(later - earlier for earlier, later in pairwise(self.requested_at))
 
 
 @dataclass(frozen=True)
@@ -200,10 +237,11 @@ def scan(  # noqa: PLR0913 - what pays for the calls, what it may do, what to ch
     reader = reader or JsonReader()
     transcript = Transcript()
     started = clock()
-    messages: list[dict[str, Any]] = [{"role": "user", "content": _opening(transcript)}]
+    conversation: list[dict[str, Any]] = [_turn("user", _opening(transcript))]
 
     for turn in range(bounds.turns):
-        exceeded = _exceeded(turn, transcript, bounds, started, clock)
+        now = clock()
+        exceeded = _exceeded(turn, transcript, bounds, started, now)
         if exceeded:
             return Outcome((), transcript, exceeded)
 
@@ -212,21 +250,23 @@ def scan(  # noqa: PLR0913 - what pays for the calls, what it may do, what to ch
             response = meter.complete(
                 Call(step=step, phase=spending, agent=Agent.SCAN, max_tokens=bounds.max_tokens),
                 system=system,
-                messages=messages,  # type: ignore[arg-type]
+                messages=_marked(conversation),  # type: ignore[arg-type]
                 temperature=TEMPERATURE,
+                cache_ttl=CACHE_TTL,
             )
         except BudgetExhaustedError:
             return Outcome((), transcript, "budget")
+        transcript.requested_at.append(now)
         if response.refused:
             return Outcome((), transcript, "refused")
 
         try:
             action = reader.read(response.text)
         except ProtocolError as unreadable:
-            messages.extend(
+            conversation.extend(
                 [
-                    {"role": "assistant", "content": response.text},
-                    {"role": "user", "content": f"{unreadable}\nReply with one JSON object."},
+                    _turn("assistant", response.text),
+                    _turn("user", f"{unreadable}\nReply with one JSON object."),
                 ]
             )
             continue
@@ -241,14 +281,40 @@ def scan(  # noqa: PLR0913 - what pays for the calls, what it may do, what to ch
             result = toolbox.call(action.tool, action.arguments)
 
         transcript.record(action, result)
-        messages.extend(
+        conversation.extend(
             [
-                {"role": "assistant", "content": response.text},
-                {"role": "user", "content": _observation(result, transcript)},
+                _turn("assistant", response.text),
+                _turn("user", _observation(result, transcript)),
             ]
         )
 
     return Outcome((), transcript, "turns")
+
+
+def _turn(role: str, text: str) -> dict[str, Any]:
+    """One message, always as a list of blocks.
+
+    Never as a bare string, even though the API accepts one. The newest turn has
+    to be a block to carry the marker, and a message sent as a block on one request
+    and as a string on the next is a change in the prefix nobody meant to make. One
+    shape for every message keeps the only difference between two requests the
+    marker itself, which the cache does not count as a change.
+    """
+    return {"role": role, "content": [{"type": "text", "text": text}]}
+
+
+def _marked(conversation: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """The request to send: the conversation, with one breakpoint on its newest block.
+
+    Built fresh each turn and never written back. A marker stored in the
+    conversation would stay on that turn for every later request, so they would
+    accumulate past the four a request may carry, and the stored bytes of a turn
+    would depend on whether it had once been the newest.
+    """
+    *earlier, newest = conversation
+    blocks = [dict(block) for block in newest["content"]]
+    blocks[-1] = {**blocks[-1], "cache_control": dict(BREAKPOINT)}
+    return [*(dict(message) for message in earlier), {"role": newest["role"], "content": blocks}]
 
 
 def _attest(action: Action, ledger: Ledger) -> tuple[Finding, ...]:
@@ -269,15 +335,16 @@ def _exceeded(
     transcript: Transcript,
     bounds: Bounds,
     started: float,
-    clock: Callable[[], float],
+    now: float,
 ) -> str | None:
     """The bounds that can be read before a turn. The budget is the meter's.
 
     Checked here, before the meter is asked, because none of them costs anything
     to read -- and a turn refused for the wall clock should not first have been
-    counted by the API.
+    counted by the API. `now` is read once per turn by the caller, so the time a
+    bound is judged at and the time the request is recorded at are the same.
     """
-    if clock() - started > bounds.wall_seconds:
+    if now - started > bounds.wall_seconds:
         return "wall_clock"
     if turn and transcript.since_last_measurement() >= bounds.stall_turns:
         return "stalled"
