@@ -28,13 +28,15 @@ money rather than about prompt shape -- `Router`, `Budget`, `Ledger` and
   therefore shares one bill, which is ADR 170's rule: a ceiling that sees only
   part of the spend is not a ceiling.
 
-**There is no cascade here, deliberately.** A cascade retries a step on a dearer
-model when a deterministic check rejects the answer. None of v3's current calls
-has a check that can run before a side effect: the scan agent's answer is a tool
-call whose check *is* running the tool, and the auditor's is a judgement. The
-optimizer (S-27.1) is the first v3 step with a real validator -- the test passes
-and the candidate measurably beats the baseline -- and it will be the first to
-cascade.
+**Escalation is the one way off the routed tier, and it only goes up.** S-27.1,
+ADR 180. A cascade retries a step on a dearer model when a deterministic check
+rejected the cheaper one's work. The Optimizer is the first v3 step with such a
+check -- the harness measures whether each candidate's tests pass -- and its
+check runs after the search has applied a round, so it cannot use
+`cost.cascade.cascade`, whose validator runs inside the call. What it asks for
+instead is `escalation=n`: *n rungs dearer than the router chose*. The caller
+still names no model, cannot go cheaper, and cannot escalate a step that §3's
+table gives no check -- the same refusal `cascade` makes, for the same reason.
 """
 
 from __future__ import annotations
@@ -48,7 +50,8 @@ from anthropic.types import MessageParam
 
 from coldfix.cost.accounting import Agent, ModelCall, Phase
 from coldfix.cost.budget import Budget, worst_case_usd
-from coldfix.cost.routing import Router, StepType, classify
+from coldfix.cost.cascade import NoDearerTierError, NoValidatorError, dearer_than
+from coldfix.cost.routing import STEP_KINDS, Router, StepType, UnsafeRoutingError, classify
 from coldfix.llm.client import ModelClient, ModelResponse
 
 
@@ -94,11 +97,49 @@ class Meter:
     budget: Budget
     clock: Callable[[], datetime] = _now
 
-    def model_for(self, call: Call) -> str:
-        """The model this call will run on, derived and never chosen."""
-        return self.router.route(call.step, call.phase)
+    def model_for(self, call: Call, *, escalation: int = 0) -> str:
+        """The model this call will run on, derived and never chosen.
 
-    def complete(
+        `escalation` moves it that many tiers dearer than the router's choice.
+
+        Raises:
+            UnsafeRoutingError: a negative escalation, which would route cheaper.
+            NoValidatorError: an escalation of a step §3 gives no deterministic
+                check -- a dearer retry there is a second guess nothing verifies.
+            NoDearerTierError: the escalation runs past the dearest tier.
+        """
+        if escalation < 0:
+            message = (
+                f"an escalation of {escalation} would route {call.step.value} below the tier the "
+                "router chose. Escalation exists to retry dearer after a check failed; the "
+                "router's choice is the floor"
+            )
+            raise UnsafeRoutingError(message)
+
+        kind = STEP_KINDS[call.step]
+        if escalation and not kind.cascade_safe:
+            message = (
+                f"{call.step.value} has no deterministic check (`04-cost.md` §3), so there is no "
+                "failed check to escalate on. A dearer retry of it is a second guess that nothing "
+                "verifies, which is what `cascade` refuses too"
+            )
+            raise NoValidatorError(message)
+
+        tier = self.router.tier_for(kind.step_class, call.phase)
+        for _ in range(escalation):
+            dearer = dearer_than(tier)
+            if dearer is None:
+                message = (
+                    f"{call.step.value} is already on the {tier.value} tier, the dearest "
+                    f"configured, so an escalation of {escalation} has nowhere to go"
+                )
+                raise NoDearerTierError(message)
+            tier = dearer
+        return self.router.tier_models[tier]
+
+    def complete(  # noqa: PLR0913 - the call, the prompt's three parts, the cache
+        # lifetime the bill depends on, and the escalation. Each is decided by the
+        # caller and none has a default a caller could safely forget.
         self,
         call: Call,
         *,
@@ -106,6 +147,7 @@ class Meter:
         messages: Sequence[MessageParam],
         temperature: float,
         cache_ttl: str = "5m",
+        escalation: int = 0,
     ) -> ModelResponse:
         """Make the call if the budget allows it, and bill it.
 
@@ -114,8 +156,10 @@ class Meter:
                 worst case of this call. Nothing was sent.
             UnknownModelError: the routed model has no published price, so the
                 worst case cannot be computed and the call is not made.
+            UnsafeRoutingError, NoValidatorError, NoDearerTierError: the
+                escalation was refused. Nothing was sent. See `model_for`.
         """
-        model = self.model_for(call)
+        model = self.model_for(call, escalation=escalation)
         prompt_tokens = self.counter.count_tokens(model=model, system=system, messages=messages)
         self.budget.authorize(
             call.phase,
@@ -132,9 +176,10 @@ class Meter:
             cache_ttl=cache_ttl,
         )
 
-        # Billed at the routed model, which is the one the price book and the
-        # router agree on. A refusal is billed too: the API reports its usage,
-        # and a ledger that dropped declined calls would under-report the run.
+        # Billed at the model the call ran on, escalated or not, which is the one
+        # the price book and the router agree on. A refusal is billed too: the API
+        # reports its usage, and a ledger that dropped declined calls would
+        # under-report the run.
         self.budget.ledger.record(
             ModelCall(
                 phase=call.phase,
