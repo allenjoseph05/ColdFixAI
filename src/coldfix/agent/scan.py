@@ -48,6 +48,7 @@ from coldfix.cost.accounting import Phase as Spending
 from coldfix.cost.budget import BudgetExhaustedError
 from coldfix.cost.routing import StepType
 from coldfix.evidence.ledger import Claim, Finding, Ledger
+from coldfix.llm.client import NON_STREAMING_MAX_TOKENS
 from coldfix.llm.metered import Call, Meter
 
 TEMPERATURE = 0.0
@@ -144,7 +145,9 @@ class Bounds:
     """Turns with no new measurement. A loop reading files and thinking is a loop
     spending money on a decision it already had the evidence for."""
 
-    max_tokens: int = 2048
+    max_tokens: int = NON_STREAMING_MAX_TOKENS
+    """Thinking and the reply together (ADR 179). Opus 5 thinks unless told not to,
+    and 2,048 -- sized for one JSON action -- could be spent before the action."""
 
 
 class ToolResult(BaseModel, frozen=True):
@@ -259,6 +262,11 @@ def scan(  # noqa: PLR0913 - what pays for the calls, what it may do, what to ch
         transcript.requested_at.append(now)
         if response.refused:
             return Outcome((), transcript, "refused")
+        if response.truncated:
+            # Never read and never sent back (ADR 179): a retry runs at the same cap
+            # on the same prefix, and half a reply would sit in the cached prefix
+            # of every later turn.
+            return Outcome((), transcript, "truncated")
 
         try:
             action = reader.read(response.text)

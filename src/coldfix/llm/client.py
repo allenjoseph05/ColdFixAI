@@ -56,6 +56,20 @@ from coldfix.cost.accounting import TokenUsage
 REFUSAL = "refusal"
 TRUNCATED = "max_tokens"
 
+NON_STREAMING_MAX_TOKENS = 16_000
+"""The output cap for v3's calls. **S-26.4, ADR 179.**
+
+On Opus 5 and Sonnet 5 a request that does not mention `thinking` thinks, and
+`max_tokens` caps the thinking and the answer together -- so a cap sized for the
+answer alone comes back cut off, with empty text when the thinking used all of it.
+The cap is therefore the largest this client can safely wait for: it does not
+stream, the SDK holds a non-streaming request open for its 10-minute default, and
+the API guidance puts the safe ceiling at about 16K. Above that is streaming's job.
+
+A larger cap reserves more headroom before each call (`worst_case_usd` assumes all
+of it comes back) and bills nothing extra: the ledger records what was used.
+"""
+
 ACCEPTS_SAMPLING: Mapping[str, bool] = {
     "claude-opus-5": False,
     "claude-opus-5/fast": False,

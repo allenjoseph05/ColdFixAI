@@ -31,10 +31,13 @@ from coldfix.cost.accounting import Agent, Phase
 from coldfix.cost.routing import StepType
 from coldfix.evidence.audit import Attack, Audit, Verdict
 from coldfix.evidence.ledger import Finding
+from coldfix.llm.client import NON_STREAMING_MAX_TOKENS
 from coldfix.llm.metered import Call, Meter
 
 TEMPERATURE = 0.0
-MAX_TOKENS = 1024
+MAX_TOKENS = NON_STREAMING_MAX_TOKENS
+"""Room to think as well as answer (ADR 179). The verdict is a few lines, but on
+Opus 5 the thinking before it counts against the same cap."""
 
 REVIEW = Call(
     step=StepType.ATTACK_DESIGN,
@@ -150,6 +153,14 @@ def review(finding: Finding, audit: Audit, *, meter: Meter) -> Audit:
     )
     if response.refused:
         return _folded(audit, Verdict.NEEDS_EVIDENCE, "the reviewer declined to answer")
+    if response.truncated:
+        # Before the parse, because a reply cut off just past its closing brace
+        # still parses -- and a verdict the model had not finished is not one.
+        return _folded(
+            audit,
+            Verdict.NEEDS_EVIDENCE,
+            f"the reviewer's reply was cut off at {MAX_TOKENS} tokens and was not read",
+        )
 
     decided = _read(response.text)
     return _folded(audit, decided.verdict, decided.because)

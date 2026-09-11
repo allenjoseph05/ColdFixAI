@@ -32,6 +32,7 @@ from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step
 from coldfix.llm.client import (
     ACCEPTS_SAMPLING,
+    NON_STREAMING_MAX_TOKENS,
     AnthropicClient,
     ModelClientError,
     ModelResponse,
@@ -576,3 +577,13 @@ def test_an_unknown_model_is_refused_before_anything_is_sent() -> None:
         )
 
     assert wire.bodies == []
+
+
+# ================================== output caps sized for thinking (S-26.4)
+
+
+def test_the_cap_is_the_largest_a_non_streaming_request_can_wait_for() -> None:
+    """ADR 179. Pinned exactly, because both directions fail silently: lower, and
+    Opus 5's default thinking eats the answer; higher, and a slow reply outlives
+    the SDK's 10-minute wait -- the API guidance puts the safe ceiling at ~16K."""
+    assert NON_STREAMING_MAX_TOKENS == 16_000

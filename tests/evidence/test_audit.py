@@ -25,7 +25,7 @@ from coldfix.evidence.audit import (
 )
 from coldfix.evidence.auditor import Presented, review
 from coldfix.evidence.ledger import Basis, Citation, Claim, Finding, Ledger, Location, Proof
-from coldfix.llm.client import ModelResponse
+from coldfix.llm.client import NON_STREAMING_MAX_TOKENS, ModelResponse
 from fixtures.metering import metered
 
 HERE = Location(file="app/models.py", line=112, symbol="Author.books")
@@ -360,6 +360,35 @@ def test_a_refusal_is_unproven_rather_than_approved() -> None:
     reviewed = review(finding, attack(finding, ledger=ledger), meter=metered(client))
     assert reviewed.verdict is Verdict.NEEDS_EVIDENCE
     assert "declined" in reviewed.why()
+
+
+class CutOff(Answering):
+    """Answers in full and reports it was cut off -- what a parse-first reader gets wrong."""
+
+    def complete(self, **kwargs: object) -> ModelResponse:
+        self.cap = kwargs["max_tokens"]
+        answered = super().complete(**kwargs)
+        return ModelResponse(
+            model=answered.model, text=answered.text, usage=answered.usage, stop_reason="max_tokens"
+        )
+
+
+def test_a_cut_off_verdict_is_unproven_and_names_the_cap() -> None:
+    """ADR 179. The text is a complete `sound` cut off just past its closing
+    brace, so a review that parsed before checking would approve a verdict the
+    model had not finished. The reason names the cap rather than the reviewer."""
+    ledger, finding = audited()
+    client = CutOff('{"verdict": "sound", "because": "the count grows with rows"}')
+    reviewed = review(finding, attack(finding, ledger=ledger), meter=metered(client))
+    assert reviewed.verdict is Verdict.NEEDS_EVIDENCE
+    assert f"cut off at {NON_STREAMING_MAX_TOKENS} tokens" in reviewed.why()
+
+
+def test_the_review_is_asked_with_room_to_think() -> None:
+    ledger, finding = audited()
+    client = CutOff('{"verdict": "sound", "because": "ok"}')
+    review(finding, attack(finding, ledger=ledger), meter=metered(client))
+    assert client.cap == NON_STREAMING_MAX_TOKENS
 
 
 # ------------------------------------------------ S-26.1, the review is metered
