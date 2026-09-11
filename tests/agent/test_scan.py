@@ -38,7 +38,12 @@ from coldfix.cost.accounting import Ledger as Bill
 from coldfix.cost.accounting import Phase as Spending
 from coldfix.cost.routing import DEFAULT_TIER_MODELS, Tier
 from coldfix.evidence.ledger import FabricatedValueError, Ledger
-from coldfix.llm.client import ModelResponse, NoRecordingError, ReplayingClient
+from coldfix.llm.client import (
+    NON_STREAMING_MAX_TOKENS,
+    ModelResponse,
+    NoRecordingError,
+    ReplayingClient,
+)
 from fixtures.metering import metered
 
 MODEL = "claude-opus-5"
@@ -54,12 +59,14 @@ class Scripted:
     asked: list[Sequence[Mapping[str, Any]]] = field(default_factory=list)
     models: list[str] = field(default_factory=list)
     ttls: list[str] = field(default_factory=list)
+    caps: list[int] = field(default_factory=list)
     stop_reason: str = "end_turn"
 
     def complete(self, **kwargs: Any) -> ModelResponse:
         self.asked.append(list(kwargs["messages"]))
         self.models.append(str(kwargs["model"]))
         self.ttls.append(str(kwargs.get("cache_ttl")))
+        self.caps.append(int(kwargs["max_tokens"]))
         text = self.replies.pop(0) if self.replies else '{"tool": "submit", "arguments": {}}'
         return ModelResponse(
             model=MODEL,
@@ -350,6 +357,34 @@ def test_a_refusal_ends_the_run_rather_than_being_read_as_an_answer() -> None:
     client = Scripted([""], stop_reason="refusal")
     outcome = scan(metered(client), toolbox=FakeTools(), ledger=Ledger(), system=SYSTEM)
     assert outcome.stopped_by == "refused"
+
+
+# ------------------------------------------ S-26.4, room to think; a cut-off reply
+
+
+def test_a_cut_off_reply_ends_the_run_without_being_read() -> None:
+    """ADR 179. The reply is a whole, valid action cut off just past its closing
+    brace -- so a loop that parsed before checking would run the tool."""
+    client = Scripted([act("bash", command="ls")], stop_reason="max_tokens")
+    tools = FakeTools()
+    outcome = scan(metered(client), toolbox=tools, ledger=Ledger(), system=SYSTEM)
+    assert outcome.stopped_by == "truncated"
+    assert tools.called == []
+    assert outcome.transcript.turns == []
+
+
+def test_a_cut_off_reply_is_not_retried() -> None:
+    """A retry runs at the same cap on the same prefix, and bills up to the cap
+    again. One request, then the run ends."""
+    client = Scripted(['{"tool": "ba'] * 3, stop_reason="max_tokens")
+    scan(metered(client), toolbox=FakeTools(), ledger=Ledger(), system=SYSTEM)
+    assert len(client.asked) == 1
+
+
+def test_every_turn_is_asked_with_room_to_think() -> None:
+    client = Scripted([act("bash", command="ls"), act("submit", findings=[])])
+    scan(metered(client), toolbox=FakeTools(), ledger=Ledger(), system=SYSTEM)
+    assert client.caps == [NON_STREAMING_MAX_TOKENS, NON_STREAMING_MAX_TOKENS]
 
 
 # ----------------------------------------------- the submission goes to the ledger
