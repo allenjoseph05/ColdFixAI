@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from coldfix.agent import prompt
-from coldfix.evidence import auditor, optimizer
+from coldfix.evidence import adversary, auditor, optimizer
 
 V3_PACKAGES = ("agent", "collect", "evidence", "pipeline")
 """The packages this registry is complete over.
@@ -30,11 +30,12 @@ covers. Two hardcoded lists would agree until somebody added a package to one.
 
 
 class Agent(StrEnum):
-    """The v3 roles. The Adversary arrives with S-27.2."""
+    """The v3 roles: one per agent in the pipeline, and four in all."""
 
     SCAN = "scan"
     FINDING_AUDITOR = "finding_auditor"
     OPTIMIZER = "optimizer"
+    ADVERSARY = "adversary"
 
 
 @dataclass(frozen=True)
@@ -78,7 +79,7 @@ ROLES: Mapping[Agent, Role] = {
             "go and look at anything -- it is given no tools, so there is nothing to call, and "
             "pre-loading everything is what makes that the isolation rather than an instruction",
             "see the reasoning that produced the finding -- `Presented` has no field for it, the "
-            "same way the Adversary will have none for the Surgeon's",
+            "same way the Adversary has none for the Optimizer's",
             "be reached at all by a finding the four code attacks already rejected",
         ),
     ),
@@ -100,6 +101,26 @@ ROLES: Mapping[Agent, Role] = {
             "explain itself to the Adversary -- a candidate has no field for a reason",
             "be asked for anything before a test has failed -- it is built with a `Falsified`, "
             "which only the gate mints",
+        ),
+    ),
+    Agent.ADVERSARY: Role(
+        agent=Agent.ADVERSARY,
+        purpose="find an input on which the patched program does what the original did not",
+        prompts=(adversary.SYSTEM,),
+        receives=(
+            "the diff, the test it was written to pass, and how the program is run -- "
+            "`PatchUnderAudit`, which refuses a sixth field",
+            "what both revisions did with every input it has tried, each run twice",
+        ),
+        cannot=(
+            "read the repository -- its one tool runs the program and returns what it did, never "
+            "what it is",
+            "see why the patch was written -- nothing it is built from has a field for a reason, "
+            "and `PatchUnderAudit` refuses one passed in",
+            "declare a verdict -- the harness compares outputs byte for byte, and `PatchReview` "
+            "refuses a verdict its comparisons contradict",
+            "run the test suite -- the suite already ran when the candidate was measured, and a "
+            "failing test prints source into a reviewer that must not read it",
         ),
     ),
 }

@@ -254,3 +254,54 @@ def test_what_the_adversary_is_given_is_exactly_five_things(tmp_path: Path) -> N
         "patched",
         "command",
     }
+
+
+# ------------------------------------ a difference must reproduce (S-27.2)
+
+RANDOM = "import os\nprint(os.urandom(8).hex())\n"
+"""Different output on every run -- a timestamp, a uuid, an unordered set."""
+
+
+def test_an_original_that_varies_on_its_own_has_found_nothing(
+    under_audit: PatchUnderAudit,
+) -> None:
+    """ADR 181. `measure` already knew the two repeats disagreed, and the tool
+    used to drop that -- so this program read as broken on every input, sending
+    the Optimizer to rewrite code that was right."""
+    (under_audit.baseline / "app.py").write_text(RANDOM, encoding="utf-8")
+    (under_audit.patched / "app.py").write_text(RANDOM, encoding="utf-8")
+    comparison = run(["hello"], under_audit)
+    assert not comparison.baseline.stable
+    assert comparison.unstable
+    assert not comparison.broke
+    assert "varied across repeats" in comparison.why()
+
+
+def test_a_patch_that_makes_the_output_vary_has_broken_it(under_audit: PatchUnderAudit) -> None:
+    """The other direction: the original prints the same thing twice, and the
+    patched revision does not. That is a change in what the program does."""
+    (under_audit.patched / "app.py").write_text(RANDOM, encoding="utf-8")
+    comparison = run(["hello"], under_audit)
+    assert comparison.baseline.stable
+    assert not comparison.patched.stable
+    assert comparison.broke
+    assert "where the original's did not" in comparison.why()
+
+
+def test_a_deterministic_program_is_stable_on_both_sides(under_audit: PatchUnderAudit) -> None:
+    """The control: stability is measured, not assumed false."""
+    comparison = run(["hello"], under_audit)
+    assert comparison.baseline.stable
+    assert comparison.patched.stable
+
+
+def test_patched_output_that_varies_is_a_break_even_when_its_last_run_matches() -> None:
+    """The digest is the last repeat's, and it can match the original's by chance.
+    The variation itself is the change -- so it is judged, not the digest alone."""
+    steady = Side(
+        ran=True, output_digest="d", output_bytes=1, wall_s=1.0, peak_rss_bytes=1, stable=True
+    )
+    varying = Side(
+        ran=True, output_digest="d", output_bytes=1, wall_s=1.0, peak_rss_bytes=1, stable=False
+    )
+    assert Comparison(given=("x",), baseline=steady, patched=varying).broke

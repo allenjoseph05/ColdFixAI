@@ -18,6 +18,12 @@ invites exactly that.
 **There is no field for the author's reasoning.** `PatchUnderAudit` forbids extra
 keys, so passing one is an error rather than a value quietly dropped. A reviewer
 handed a justification reviews the justification.
+
+**A difference must reproduce before it is a break.** S-27.2, ADR 181. Each side
+runs `PROBE_REPEATS` times, and `measure` reports when those runs printed
+different output. That signal used to be dropped here, so a program printing a
+timestamp read as broken on every input -- a verdict that sends the Optimizer to
+rewrite code that was right. `Side.stable` keeps it.
 """
 
 from __future__ import annotations
@@ -31,9 +37,9 @@ from coldfix.collect.measurement import BareMeasurement, Clock, measure
 from coldfix.collect.usage import ChildRunner, MeasurementError
 
 PROBE_REPEATS = 2
-"""Enough for a spread, and no more: an attack input may be pathological on
-purpose, and running it five times is paying four times over to learn what one
-comparison already showed."""
+"""Enough for a spread and for the output to be seen twice, and no more: an attack
+input may be pathological on purpose, and running it five times is paying four
+times over to learn what one comparison already showed."""
 
 
 class Side(BaseModel, frozen=True):
@@ -48,6 +54,11 @@ class Side(BaseModel, frozen=True):
     output_bytes: int
     wall_s: float
     peak_rss_bytes: int | None
+    stable: bool
+    """Whether every repeat printed the same output. Required, never defaulted: a
+    `Side` built without knowing would be claiming stability nobody checked, and
+    that is the permissive direction. False for a run that did not complete --
+    there is no output to have been stable."""
     detail: str = ""
 
 
@@ -68,21 +79,43 @@ class Comparison(BaseModel, frozen=True):
         return self.baseline.ran and self.patched.ran
 
     @property
+    def unstable(self) -> bool:
+        """The original's own output varied across its repeats on this input, so
+        there is no single output for the patched revision to be held to."""
+        return self.baseline.ran and not self.baseline.stable
+
+    @property
     def broke(self) -> bool:
         """The patch changed what the program does, or stopped it working.
 
-        A baseline that never ran is not the patch's fault, and this says so:
-        an input the original also rejects has found nothing.
+        A baseline that never ran is not the patch's fault: an input the original
+        also rejects has found nothing. A baseline that varied on its own has
+        nothing to be compared against, so that is not a break either. A patched
+        revision that varies where the original did not *is* one -- a patch that
+        makes a deterministic program nondeterministic has changed what it does.
         """
         if not self.baseline.ran:
             return False
-        return not self.patched.ran or not self.outputs_agree
+        if not self.patched.ran:
+            return True
+        if not self.baseline.stable:
+            return False
+        return not self.patched.stable or not self.outputs_agree
 
     def why(self) -> str:
         if not self.baseline.ran:
             return f"the original rejects this input too: {self.baseline.detail}"
         if not self.patched.ran:
             return f"the patched revision stopped working: {self.patched.detail}"
+        if not self.baseline.stable:
+            return (
+                "the original's own output varied across repeats, so nothing can be compared "
+                "on this input"
+            )
+        if not self.patched.stable:
+            return (
+                "the patched revision's output varied across repeats where the original's did not"
+            )
         if not self.outputs_agree:
             return (
                 f"the output changed: {self.baseline.output_bytes} bytes became "
@@ -180,6 +213,7 @@ def _run(
             output_bytes=0,
             wall_s=0.0,
             peak_rss_bytes=None,
+            stable=False,
             detail=str(failed)[:300],
         )
     return Side(
@@ -188,4 +222,5 @@ def _run(
         output_bytes=measured.output_bytes,
         wall_s=measured.wall.median,
         peak_rss_bytes=measured.peak_rss_bytes,
+        stable=not any(item.what == "output_digest" for item in measured.not_measured),
     )
