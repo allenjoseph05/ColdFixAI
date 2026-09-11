@@ -389,3 +389,18 @@ def test_a_review_the_budget_refuses_is_never_asked() -> None:
             meter=metered(client, ceiling_eur=Decimal("0.000001")),
         )
     assert client.calls == 0
+
+
+def test_a_one_shot_review_carries_no_cache_breakpoint() -> None:
+    """ADR 177. The review is one call per finding: a marker would pay the write
+    premium with nothing ever reading it back."""
+
+    class Seen(Answering):
+        def complete(self, **kwargs: object) -> ModelResponse:
+            self.sent = str(kwargs["messages"])
+            return super().complete(**kwargs)
+
+    ledger, finding = audited()
+    client = Seen('{"verdict": "sound", "because": "ok"}')
+    review(finding, attack(finding, ledger=ledger), meter=metered(client))
+    assert "cache_control" not in client.sent
