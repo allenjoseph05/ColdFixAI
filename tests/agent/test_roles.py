@@ -11,6 +11,7 @@ import ast
 from pathlib import Path
 
 from coldfix.agent.roles import ROLES, V3_PACKAGES
+from coldfix.cost.accounting import Agent as CostAgent
 
 ROOT = Path("src/coldfix")
 
@@ -68,3 +69,12 @@ def test_every_role_records_what_it_structurally_cannot_do() -> None:
     for agent, role in ROLES.items():
         assert role.cannot, f"{agent.value} records no limits"
         assert role.receives, f"{agent.value} records nothing it is given"
+
+
+def test_every_v3_role_bills_under_its_own_name() -> None:
+    """A role with no billing agent is a role whose spend lands on somebody else's
+    line in the ledger. S-26.1: the meter bills by `cost.accounting.Agent`, and
+    this registry is matched to it by member name."""
+    billed = {agent.name for agent in CostAgent}
+    missing = sorted(agent.value for agent in ROLES if agent.name not in billed)
+    assert not missing, f"v3 roles with no billing agent: {missing}"

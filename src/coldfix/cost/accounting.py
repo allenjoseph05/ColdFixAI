@@ -104,6 +104,10 @@ class Agent(StrEnum):
     SURGEON = "surgeon"
     FINDING_AUDITOR = "finding auditor"
     ADVERSARY = "adversary"
+    SCAN = "scan"
+    """v3's scan agent (S-26.1). Its boundary is written in `agent/roles.py`, v3's
+    own registry, which uses the same member names; `FINDING_AUDITOR` and
+    `ADVERSARY` bill the role of that name in either pipeline."""
 
 
 class StepClass(StrEnum):

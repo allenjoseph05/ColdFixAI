@@ -13,6 +13,11 @@ view of a repository, and what it was asked to review is a chain of evidence.
 **It cannot be given the reasoning that produced the finding.** There is no field
 for it on the input, the same way the Adversary has none for the Surgeon's. A
 reviewer handed a justification reviews the justification.
+
+**The call goes through the meter.** S-26.1. It is billed as the finding auditor
+in the finding-audit phase, and its step type is `ATTACK_DESIGN`: whether a
+mechanism follows from the numbers is a judgement with no deterministic check, so
+the router keeps it on the frontier tier and nothing may cascade it lower.
 """
 
 from __future__ import annotations
@@ -22,12 +27,23 @@ from enum import StrEnum
 
 from pydantic import BaseModel
 
+from coldfix.cost.accounting import Agent, Phase
+from coldfix.cost.routing import StepType
 from coldfix.evidence.audit import Attack, Audit, Verdict
 from coldfix.evidence.ledger import Finding
-from coldfix.llm.client import ModelClient
+from coldfix.llm.metered import Call, Meter
 
 TEMPERATURE = 0.0
 MAX_TOKENS = 1024
+
+REVIEW = Call(
+    step=StepType.ATTACK_DESIGN,
+    phase=Phase.FINDING_AUDIT,
+    agent=Agent.FINDING_AUDITOR,
+    max_tokens=MAX_TOKENS,
+)
+"""What the review spends on. A constant, because nothing about a finding changes
+which step it is -- and a step type chosen per call is one a caller could lower."""
 
 SYSTEM = """\
 You review one finding about a program's performance and decide whether the
@@ -111,27 +127,25 @@ class Presented(BaseModel, frozen=True):
         return "\n".join(lines)
 
 
-def review(
-    finding: Finding,
-    audit: Audit,
-    *,
-    client: ModelClient,
-    model: str,
-) -> Audit:
+def review(finding: Finding, audit: Audit, *, meter: Meter) -> Audit:
     """Ask once, and only where the attacks left something to ask.
 
     Returns the audit with the model's verdict folded in. A finding the
     arithmetic already rejected is returned untouched and unbilled -- there is
     nothing a reviewer could add to a claim whose payoff is inside the noise.
+
+    Raises:
+        BudgetExhaustedError: the meter refused the call. Not folded into a
+            verdict: a review that was never asked is not one that found the
+            finding unproven, and the graph decides what a halt means.
     """
     if audit.verdict is not Verdict.SOUND:
         return audit
 
-    response = client.complete(
-        model=model,
+    response = meter.complete(
+        REVIEW,
         system=SYSTEM,
         messages=[{"role": "user", "content": Presented.of(finding, audit).render()}],
-        max_tokens=MAX_TOKENS,
         temperature=TEMPERATURE,
     )
     if response.refused:
