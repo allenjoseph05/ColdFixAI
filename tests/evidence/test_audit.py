@@ -7,11 +7,16 @@ mostly about proving each one can.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
+
+import pytest
 
 from coldfix.collect.ablation import AblationMeasurement
 from coldfix.collect.measurement import BareMeasurement, Mode, Spread
-from coldfix.cost.accounting import TokenUsage
+from coldfix.cost.accounting import Agent, Phase, TokenUsage
+from coldfix.cost.budget import BudgetExhaustedError
+from coldfix.cost.routing import DEFAULT_TIER_MODELS, Tier
 from coldfix.evidence.audit import (
     GUARD_MARGIN,
     MINIMUM_MEASUREMENTS,
@@ -21,6 +26,7 @@ from coldfix.evidence.audit import (
 from coldfix.evidence.auditor import Presented, review
 from coldfix.evidence.ledger import Basis, Citation, Claim, Finding, Ledger, Location, Proof
 from coldfix.llm.client import ModelResponse
+from fixtures.metering import metered
 
 HERE = Location(file="app/models.py", line=112, symbol="Author.books")
 
@@ -290,7 +296,7 @@ def test_the_model_is_not_asked_about_a_finding_arithmetic_already_rejected() ->
     claim whose payoff is inside the noise floor."""
     ledger, finding = audited(share=0.02, baseline_spread=0.30)
     client = Answering('{"verdict": "sound", "because": "looks fine"}')
-    reviewed = review(finding, attack(finding, ledger=ledger), client=client, model="m")
+    reviewed = review(finding, attack(finding, ledger=ledger), meter=metered(client))
     assert client.calls == 0
     assert reviewed.verdict is Verdict.UNSOUND
 
@@ -298,7 +304,7 @@ def test_the_model_is_not_asked_about_a_finding_arithmetic_already_rejected() ->
 def test_a_finding_that_survived_the_attacks_is_reviewed_once() -> None:
     ledger, finding = audited()
     client = Answering('{"verdict": "sound", "because": "the counts show the mechanism"}')
-    reviewed = review(finding, attack(finding, ledger=ledger), client=client, model="m")
+    reviewed = review(finding, attack(finding, ledger=ledger), meter=metered(client))
     assert client.calls == 1
     assert reviewed.verdict is Verdict.SOUND
     assert "the counts show the mechanism" in reviewed.why() or reviewed.survived
@@ -312,7 +318,7 @@ def test_the_reviewer_can_overturn_a_finding_the_arithmetic_accepted() -> None:
         '{"verdict": "unsound", "because": "nothing cited is a count, so a per-row claim '
         'is not supported"}'
     )
-    reviewed = review(finding, attack(finding, ledger=ledger), client=client, model="m")
+    reviewed = review(finding, attack(finding, ledger=ledger), meter=metered(client))
     assert reviewed.verdict is Verdict.UNSOUND
     assert "not supported" in reviewed.why()
 
@@ -323,7 +329,7 @@ def test_everything_is_pre_loaded_and_no_tool_is_offered() -> None:
     of evidence."""
     ledger, finding = audited()
     client = Answering('{"verdict": "sound", "because": "ok"}')
-    review(finding, attack(finding, ledger=ledger), client=client, model="m")
+    review(finding, attack(finding, ledger=ledger), meter=metered(client))
     shown = client.shown[0]
     assert "app/models.py:112" in shown
     assert "m-before.cpu_s" in shown
@@ -343,7 +349,7 @@ def test_an_unreadable_reply_is_unproven_rather_than_approved() -> None:
     approving one."""
     ledger, finding = audited()
     client = Answering("I think this one is probably fine.")
-    reviewed = review(finding, attack(finding, ledger=ledger), client=client, model="m")
+    reviewed = review(finding, attack(finding, ledger=ledger), meter=metered(client))
     assert reviewed.verdict is Verdict.NEEDS_EVIDENCE
     assert "could not be read" in reviewed.why()
 
@@ -351,6 +357,35 @@ def test_an_unreadable_reply_is_unproven_rather_than_approved() -> None:
 def test_a_refusal_is_unproven_rather_than_approved() -> None:
     ledger, finding = audited()
     client = Answering("", refused=True)
-    reviewed = review(finding, attack(finding, ledger=ledger), client=client, model="m")
+    reviewed = review(finding, attack(finding, ledger=ledger), meter=metered(client))
     assert reviewed.verdict is Verdict.NEEDS_EVIDENCE
     assert "declined" in reviewed.why()
+
+
+# ------------------------------------------------ S-26.1, the review is metered
+
+
+def test_the_review_runs_on_the_frontier_and_is_billed_as_the_finding_auditor() -> None:
+    """Whether a mechanism follows from the numbers has no deterministic check,
+    so the router keeps it on the frontier tier and nothing may cascade it."""
+    ledger, finding = audited()
+    meter = metered(Answering('{"verdict": "sound", "because": "ok"}'))
+    review(finding, attack(finding, ledger=ledger), meter=meter)
+    [call] = meter.budget.ledger.calls
+    assert call.model == DEFAULT_TIER_MODELS[Tier.FRONTIER]
+    assert call.agent is Agent.FINDING_AUDITOR
+    assert call.phase is Phase.FINDING_AUDIT
+
+
+def test_a_review_the_budget_refuses_is_never_asked() -> None:
+    """Raised rather than folded into a verdict: a review that was never asked
+    is not one that found the finding unproven."""
+    ledger, finding = audited()
+    client = Answering('{"verdict": "sound", "because": "ok"}')
+    with pytest.raises(BudgetExhaustedError):
+        review(
+            finding,
+            attack(finding, ledger=ledger),
+            meter=metered(client, ceiling_eur=Decimal("0.000001")),
+        )
+    assert client.calls == 0

@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from coldfix.agent.roles import ROLES as V3_ROLES
 from coldfix.agent.roles import V3_PACKAGES
 from coldfix.agents.roles import (
     ENFORCEMENTS,
@@ -77,8 +78,18 @@ def defined_prompts() -> dict[str, str]:
 
 def test_every_agent_in_the_enum_has_a_declared_role() -> None:
     """An agent in the enum and not in the index is one whose boundary nobody has
-    written down — and the enum is about cost, not about what may be seen."""
-    assert set(ROLES) == set(Agent)
+    written down — and the enum is about cost, not about what may be seen.
+
+    **S-26.1: v3 bills through the same enum.** A v3 agent's boundary is written
+    in v3's own registry, keyed by the same member names, so the rule is that
+    every billed agent is declared in one of the two -- not that v1's index lists
+    them all. Listing the scan agent against v1's phases would be a row that reads
+    as true and describes nothing."""
+    v3 = {agent.name for agent in V3_ROLES}
+    undeclared = sorted(
+        agent.value for agent in Agent if agent not in ROLES and agent.name not in v3
+    )
+    assert not undeclared, f"billed with no written boundary: {undeclared}"
     assert all(role.agent is agent for agent, role in ROLES.items())
 
 
@@ -284,5 +295,5 @@ def test_the_index_renders_the_gap_and_the_boundaries() -> None:
     assert "no call site names this agent" not in rendered
     assert "cannot be given" in rendered
     assert "Where the boundaries are enforced" in rendered
-    for agent in Agent:
+    for agent in ROLES:
         assert agent.value in rendered

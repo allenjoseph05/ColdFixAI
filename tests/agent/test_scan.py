@@ -5,6 +5,9 @@ the loop's behaviour can be driven from the test. `ReplayingClient` is the
 project's own double, and one test uses it to assert what a real unrecorded
 request does: it is refused, never answered. Nothing here can reach the network,
 and the last test says so about the module rather than about itself.
+
+Every call goes through a real meter (S-26.1): the router, the budget and the
+ledger are the production ones, and only the token count is supplied.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -29,11 +33,17 @@ from coldfix.agent.scan import (
     scan,
 )
 from coldfix.collect.measurement import BareMeasurement, Mode, Spread
-from coldfix.cost.accounting import TokenUsage
+from coldfix.cost.accounting import Agent, TokenUsage
+from coldfix.cost.accounting import Ledger as Bill
+from coldfix.cost.accounting import Phase as Spending
+from coldfix.cost.routing import DEFAULT_TIER_MODELS, Tier
 from coldfix.evidence.ledger import FabricatedValueError, Ledger
 from coldfix.llm.client import ModelResponse, NoRecordingError, ReplayingClient
+from fixtures.metering import metered
 
 MODEL = "claude-opus-5"
+FRONTIER = DEFAULT_TIER_MODELS[Tier.FRONTIER]
+CHEAP = DEFAULT_TIER_MODELS[Tier.CHEAP]
 
 
 @dataclass
@@ -42,10 +52,12 @@ class Scripted:
 
     replies: list[str]
     asked: list[Sequence[Mapping[str, Any]]] = field(default_factory=list)
+    models: list[str] = field(default_factory=list)
     stop_reason: str = "end_turn"
 
     def complete(self, **kwargs: Any) -> ModelResponse:
         self.asked.append(list(kwargs["messages"]))
+        self.models.append(str(kwargs["model"]))
         text = self.replies.pop(0) if self.replies else '{"tool": "submit", "arguments": {}}'
         return ModelResponse(
             model=MODEL,
@@ -87,14 +99,19 @@ def measured(identifier: str = "m-1", value: float = 2.41) -> BareMeasurement:
     )
 
 
+def verifying() -> FakeTools:
+    return FakeTools(
+        results={"measure": ToolResult(content="ok", measurement_id="m-1", verified=True)}
+    )
+
+
 def run(replies: list[str], tools: FakeTools | None = None, **kwargs: Any) -> Outcome:
     ledger = kwargs.pop("ledger", None) or Ledger()
     return scan(
-        Scripted(replies),
+        metered(Scripted(replies)),
         toolbox=tools or FakeTools(),
         ledger=ledger,
         system=SYSTEM,
-        model=MODEL,
         **kwargs,
     )
 
@@ -120,9 +137,7 @@ def test_asking_for_a_locked_tool_is_refused_and_says_why() -> None:
 
 
 def test_a_verified_measurement_opens_the_second_phase() -> None:
-    tools = FakeTools(
-        results={"measure": ToolResult(content="ok", measurement_id="m-1", verified=True)}
-    )
+    tools = verifying()
     outcome = run([act("measure"), act("profile"), act("submit", findings=[])], tools)
     assert outcome.transcript.phase is Phase.MEASURING
     assert tools.called == ["measure", "profile"]
@@ -139,19 +154,30 @@ def test_only_measure_can_open_the_phase() -> None:
 def test_the_agent_is_told_what_is_available_every_turn() -> None:
     """The list changes. Being told twice is cheaper than a turn spent asking for
     something that is not there yet."""
-    tools = FakeTools(
-        results={"measure": ToolResult(content="ok", measurement_id="m-1", verified=True)}
-    )
     client = Scripted([act("measure"), act("submit", findings=[])])
-    scan(
-        client,
-        toolbox=tools,
-        ledger=Ledger(),
-        system=SYSTEM,
-        model=MODEL,
-    )
+    scan(metered(client), toolbox=verifying(), ledger=Ledger(), system=SYSTEM)
     last = client.asked[-1][-1]["content"]
     assert "profile" in last and "ablate" in last
+
+
+# ------------------------------------------------- routing and billing, S-26.1
+
+
+def test_each_turn_is_routed_by_what_the_agent_is_doing() -> None:
+    """Making the program run is checked by the harness, so it runs cheap;
+    choosing an experiment is not checkable, so it runs on the frontier. The
+    phase decides, and the phase is changed only by a verified `measure`."""
+    client = Scripted([act("measure"), act("profile"), act("submit", findings=[])])
+    scan(metered(client), toolbox=verifying(), ledger=Ledger(), system=SYSTEM)
+    assert client.models == [CHEAP, FRONTIER, FRONTIER]
+
+
+def test_every_turn_is_billed_to_the_scan_agent() -> None:
+    bill = Bill()
+    client = Scripted([act("measure"), act("submit", findings=[])])
+    scan(metered(client, ledger=bill), toolbox=verifying(), ledger=Ledger(), system=SYSTEM)
+    assert [call.agent for call in bill.calls] == [Agent.SCAN, Agent.SCAN]
+    assert [call.phase for call in bill.calls] == [Spending.GROUND, Spending.INVESTIGATE]
 
 
 # ------------------------------------------------------------- the bounds
@@ -190,27 +216,21 @@ def test_the_wall_clock_stops_a_run_that_will_not_finish() -> None:
     assert outcome.stopped_by == "wall_clock"
 
 
-UNSPENT = "nothing should have been spent once the budget refused"
+UNSPENT = "nothing should have been sent once the budget refused"
 
 
 def test_the_budget_is_checked_before_the_call_not_after() -> None:
-    """After would mean the call that broke the budget was already paid for."""
-
-    @dataclass
-    class Broke:
-        checks: int = 0
-
-        def affordable(self) -> bool:
-            self.checks += 1
-            return False
-
-        def spend(self, tokens: int) -> None:
-            raise AssertionError(UNSPENT)
-
-    budget = Broke()
-    outcome = run([act("bash")], budget=budget)
+    """After would mean the call that broke the budget was already paid for. The
+    run ends with `budget`, as every bound does, rather than raising."""
+    client = Scripted([act("bash")])
+    outcome = scan(
+        metered(client, ceiling_eur=Decimal("0.000001")),
+        toolbox=FakeTools(),
+        ledger=Ledger(),
+        system=SYSTEM,
+    )
     assert outcome.stopped_by == "budget"
-    assert budget.checks == 1
+    assert client.asked == [], UNSPENT
 
 
 # ------------------------------------------------------ reading the reply
@@ -236,13 +256,7 @@ def test_a_reply_missing_the_tool_is_refused() -> None:
 
 def test_a_refusal_ends_the_run_rather_than_being_read_as_an_answer() -> None:
     client = Scripted([""], stop_reason="refusal")
-    outcome = scan(
-        client,
-        toolbox=FakeTools(),
-        ledger=Ledger(),
-        system=SYSTEM,
-        model=MODEL,
-    )
+    outcome = scan(metered(client), toolbox=FakeTools(), ledger=Ledger(), system=SYSTEM)
     assert outcome.stopped_by == "refused"
 
 
@@ -302,11 +316,10 @@ def test_the_projects_own_double_refuses_a_request_it_has_no_recording_for() -> 
     default."""
     with pytest.raises(NoRecordingError, match="no recording"):
         scan(
-            ReplayingClient(),
+            metered(ReplayingClient()),
             toolbox=FakeTools(),
             ledger=Ledger(),
             system=SYSTEM,
-            model=MODEL,
             bounds=Bounds(turns=1),
         )
 

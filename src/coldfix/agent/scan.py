@@ -16,6 +16,12 @@ are absent from what the agent is offered until a `measure` has returned a
 repeatable measurement. A profile of a workload that will not run the same way
 twice is a profile of the machine, and an ablation against an unrepeatable
 baseline is a comparison with nothing.
+
+**Every turn goes through the meter, and the phase decides the model.** S-26.1.
+The loop used to take a model from its caller and a budget that defaulted to
+counting nothing. Now each turn is a `Call` whose step type is fixed by the phase
+-- see `STEPS` -- so the router, not the caller, picks the tier, and the budget
+refuses a turn before it is sent rather than noticing it afterwards.
 """
 
 from __future__ import annotations
@@ -29,8 +35,12 @@ from typing import Any, Protocol
 from pydantic import BaseModel
 
 from coldfix.agent.protocol import SUBMIT, Action, JsonReader, ProtocolError, Reader
+from coldfix.cost.accounting import Agent
+from coldfix.cost.accounting import Phase as Spending
+from coldfix.cost.budget import BudgetExhaustedError
+from coldfix.cost.routing import StepType
 from coldfix.evidence.ledger import Claim, Finding, Ledger
-from coldfix.llm.client import ModelClient
+from coldfix.llm.metered import Call, Meter
 
 TEMPERATURE = 0.0
 """The loop proposes experiments and the harness judges them. Variety in what is
@@ -83,6 +93,23 @@ class Phase(StrEnum):
 EXPLORING_TOOLS = ("bash", "read_file", "write_file", "measure", SUBMIT)
 MEASURING_TOOLS = (*EXPLORING_TOOLS, "profile", "ablate")
 
+STEPS: Mapping[Phase, tuple[StepType, Spending]] = {
+    Phase.EXPLORING: (StepType.EXPLORER_ACTION, Spending.GROUND),
+    Phase.MEASURING: (StepType.HYPOTHESIS_GENERATION, Spending.INVESTIGATE),
+}
+"""What kind of step a turn is, by phase. **This is what routes the turn.** ADR 176.
+
+*Exploring* is making the program run, and the harness decides when it is done:
+only a `measure` that proves the workload repeatable ends the phase. That makes it
+the mechanical `EXPLORER_ACTION` of `04-cost.md` §3, billed to grounding, which
+routes below the frontier by default.
+
+*Measuring* is choosing which experiment to run next, and nothing deterministic
+can say a choice was wrong -- it is hypothesis generation. The router sends it to
+the frontier tier and refuses any configuration that would send it lower (ADR
+059). Both rows are `04-cost.md`'s existing step types; neither needed inventing.
+"""
+
 
 @dataclass(frozen=True)
 class Bounds:
@@ -95,25 +122,6 @@ class Bounds:
     spending money on a decision it already had the evidence for."""
 
     max_tokens: int = 2048
-
-
-class Budget(Protocol):
-    """Checked *before* each call, so a halt writes what it has."""
-
-    def affordable(self) -> bool: ...
-
-    def spend(self, tokens: int) -> None: ...
-
-
-@dataclass
-class NoBudget:
-    """The default: nothing is counted and nothing is refused."""
-
-    def affordable(self) -> bool:
-        return True
-
-    def spend(self, tokens: int) -> None:
-        return None
 
 
 class ToolResult(BaseModel, frozen=True):
@@ -167,17 +175,15 @@ class Outcome:
     """`submitted`, or the bound that ended it. Both are answers."""
 
 
-def scan(  # noqa: PLR0913 - who to ask, what it may do, what to check claims
-    # against, how far it may go, what it may spend, and how to read a reply.
-    # Every one is a decision the caller makes; a config object would hide them.
-    client: ModelClient,
+def scan(  # noqa: PLR0913 - what pays for the calls, what it may do, what to check
+    # claims against, how far it may go, and how to read a reply. Every one is a
+    # decision the caller makes; a config object would hide them.
+    meter: Meter,
     *,
     toolbox: Toolbox,
     ledger: Ledger,
     system: str,
-    model: str,
     bounds: Bounds | None = None,
-    budget: Budget | None = None,
     reader: Reader | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> Outcome:
@@ -186,27 +192,31 @@ def scan(  # noqa: PLR0913 - who to ask, what it may do, what to check claims
     Every ending returns an `Outcome`. A bound reached is not an exception here
     because a scan that ran out of turns still knows things, and throwing away
     what it proved to signal *how* it stopped would be the expensive kind of tidy.
+    The budget is one of those bounds: the meter refuses a turn *before* it is
+    sent, and the run ends with `budget` rather than with a call it could not pay
+    for.
     """
     bounds = bounds or Bounds()
-    budget = budget or NoBudget()
     reader = reader or JsonReader()
     transcript = Transcript()
     started = clock()
     messages: list[dict[str, Any]] = [{"role": "user", "content": _opening(transcript)}]
 
     for turn in range(bounds.turns):
-        exceeded = _exceeded(turn, transcript, bounds, started, clock, budget)
+        exceeded = _exceeded(turn, transcript, bounds, started, clock)
         if exceeded:
             return Outcome((), transcript, exceeded)
 
-        response = client.complete(
-            model=model,
-            system=system,
-            messages=messages,  # type: ignore[arg-type]
-            max_tokens=bounds.max_tokens,
-            temperature=TEMPERATURE,
-        )
-        budget.spend(response.usage.total if hasattr(response.usage, "total") else 0)
+        step, spending = STEPS[transcript.phase]
+        try:
+            response = meter.complete(
+                Call(step=step, phase=spending, agent=Agent.SCAN, max_tokens=bounds.max_tokens),
+                system=system,
+                messages=messages,  # type: ignore[arg-type]
+                temperature=TEMPERATURE,
+            )
+        except BudgetExhaustedError:
+            return Outcome((), transcript, "budget")
         if response.refused:
             return Outcome((), transcript, "refused")
 
@@ -254,18 +264,19 @@ def _attest(action: Action, ledger: Ledger) -> tuple[Finding, ...]:
     return tuple(ledger.attest(Claim.model_validate(claim)) for claim in raw)
 
 
-def _exceeded(  # noqa: PLR0913, PLR0917 - five separate bounds and the clock
-    # that reads three of them. Bundling them would hide that each is a distinct
-    # reason a run can stop, and each stop is a different thing to tell somebody.
+def _exceeded(
     turn: int,
     transcript: Transcript,
     bounds: Bounds,
     started: float,
     clock: Callable[[], float],
-    budget: Budget,
 ) -> str | None:
-    if not budget.affordable():
-        return "budget"
+    """The bounds that can be read before a turn. The budget is the meter's.
+
+    Checked here, before the meter is asked, because none of them costs anything
+    to read -- and a turn refused for the wall clock should not first have been
+    counted by the API.
+    """
     if clock() - started > bounds.wall_seconds:
         return "wall_clock"
     if turn and transcript.since_last_measurement() >= bounds.stall_turns:

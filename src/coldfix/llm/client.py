@@ -240,6 +240,19 @@ class AnthropicClient:
         )
         return translate(message, cache_ttl=cache_ttl)
 
+    def count_tokens(self, *, model: str, system: str, messages: Sequence[MessageParam]) -> int:
+        """The prompt's size, measured by the API that will bill it. **S-26.1.**
+
+        The endpoint is free and model-specific, so the count is taken against the
+        model the router chose. Never `tiktoken` or a character ratio: an estimate
+        of a prompt's size is the number a budget ceiling is enforced against, and
+        an estimate presented as a measurement is the thing `CLAUDE.md` forbids.
+        """
+        counted = self.client.messages.count_tokens(
+            model=model, system=system, messages=list(messages)
+        )
+        return counted.input_tokens
+
 
 def connect(api_key: str) -> AnthropicClient:
     """The only place a live client is built. **S-17.1.**
