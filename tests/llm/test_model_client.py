@@ -14,10 +14,13 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
+from anthropic import Anthropic
 from anthropic.types import MessageParam
 
 from coldfix.cost.accounting import (
+    PRICE_BOOK,
     Agent,
     ExchangeRate,
     Phase,
@@ -28,6 +31,8 @@ from coldfix.cost.context import Block
 from coldfix.cost.routing import StepType
 from coldfix.cost.session import Session, Step
 from coldfix.llm.client import (
+    ACCEPTS_SAMPLING,
+    AnthropicClient,
     ModelClientError,
     ModelResponse,
     NoRecordingError,
@@ -477,3 +482,97 @@ def test_a_response_carries_its_own_model_back() -> None:
     reply: ModelResponse = translate(recording(model="claude-haiku-4-5").message)
 
     assert reply.model == "claude-haiku-4-5"
+
+
+# ============================== sampling parameters the model rejects (S-26.3)
+
+REJECTING = (
+    "claude-opus-5",
+    "claude-opus-5/fast",
+    "claude-opus-4-8",
+    "claude-fable-5",
+    "claude-sonnet-5",
+)
+"""Written out rather than read from the table, so a wrong table entry is caught.
+
+Opus 4.8, Opus 5 and Fable 5 reject `temperature` at any value; Sonnet 5 at any
+non-default one (API migration guidance, read 2026-09-11)."""
+
+
+class Wire:
+    """The real SDK, whose transport keeps each request body and answers it.
+
+    What these tests assert is what would have left the machine. A fake SDK would
+    show the keyword arguments `complete` passed, which is exactly the rendering
+    the tracker's rule says not to trust: `omit` is an argument and not a field.
+    """
+
+    def __init__(self) -> None:
+        self.bodies: list[dict[str, Any]] = []
+
+    def client(self) -> AnthropicClient:
+        def answer(request: httpx.Request) -> httpx.Response:
+            body: dict[str, Any] = json.loads(request.content)
+            self.bodies.append(body)
+            return httpx.Response(200, json=payload(model=body["model"]))
+
+        transport = httpx.MockTransport(answer)
+        return AnthropicClient(
+            client=Anthropic(
+                api_key="not-a-key", max_retries=0, http_client=httpx.Client(transport=transport)
+            )
+        )
+
+
+def test_the_sampling_table_names_every_priced_model() -> None:
+    """A model the router can reach and the table does not name would fail at its
+    first live call; this makes it fail here instead."""
+    assert set(ACCEPTS_SAMPLING) == set(PRICE_BOOK)
+
+
+@pytest.mark.parametrize("model", REJECTING)
+def test_a_model_that_rejects_sampling_is_sent_no_temperature(model: str) -> None:
+    wire = Wire()
+
+    wire.client().complete(
+        model=model, system=SYSTEM, messages=MESSAGES, max_tokens=1_000, temperature=0.8
+    )
+
+    (body,) = wire.bodies
+    assert body["model"] == model
+    assert body["max_tokens"] == 1_000
+    assert {"temperature", "top_p", "top_k"}.isdisjoint(body)
+
+
+def test_a_model_that_accepts_sampling_is_sent_what_was_asked() -> None:
+    """The control: Haiku 4.5 honours it, and the intent must reach it."""
+    wire = Wire()
+
+    reply = wire.client().complete(
+        model="claude-haiku-4-5",
+        system=SYSTEM,
+        messages=MESSAGES,
+        max_tokens=1_000,
+        temperature=0.8,
+    )
+
+    (body,) = wire.bodies
+    assert body["temperature"] == 0.8
+    assert reply.text.startswith("Queries grow linearly")
+
+
+def test_an_unknown_model_is_refused_before_anything_is_sent() -> None:
+    """A default in either direction is a guess: `True` risks a 400 mid-run, and
+    `False` silently drops a temperature a model would have honoured."""
+    wire = Wire()
+
+    with pytest.raises(ModelClientError, match="not in the sampling table"):
+        wire.client().complete(
+            model="claude-opus-9",
+            system=SYSTEM,
+            messages=MESSAGES,
+            max_tokens=1_000,
+            temperature=0.0,
+        )
+
+    assert wire.bodies == []
