@@ -46,7 +46,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Protocol
 
-from anthropic import Anthropic
+from anthropic import Anthropic, omit
 from anthropic.types import Message, MessageParam
 
 from coldfix.cost.accounting import TokenUsage
@@ -55,6 +55,28 @@ from coldfix.cost.accounting import TokenUsage
 # `end_turn`, `stop_sequence`, `tool_use`, `pause_turn` — are ordinary outcomes.
 REFUSAL = "refusal"
 TRUNCATED = "max_tokens"
+
+ACCEPTS_SAMPLING: Mapping[str, bool] = {
+    "claude-opus-5": False,
+    "claude-opus-5/fast": False,
+    "claude-opus-4-8": False,
+    "claude-fable-5": False,
+    "claude-sonnet-5": False,
+    "claude-haiku-4-5": True,
+}
+"""Whether each model the router can choose accepts `temperature`. **S-26.3, ADR 178.**
+
+Opus 4.8, Opus 5 and Fable 5 reject `temperature`, `top_p` and `top_k` at any
+value with a 400; Sonnet 5 rejects any non-default value; Haiku 4.5 accepts them
+(API migration guidance, read 2026-09-11). Omitting is accepted by every one of
+them, so a `False` model is sent no temperature at all rather than its default —
+sending the default would mean tracking each model's default, for nothing.
+
+A test holds the keys equal to the price book's, so a model the router can reach
+and this table does not name fails the suite rather than a live run. On the
+frontier and mid tiers a caller's temperature therefore records intent and changes
+nothing; ADR 178 says what carries each property that temperature was guarding.
+"""
 
 
 class ModelClientError(Exception):
@@ -231,12 +253,31 @@ class AnthropicClient:
         temperature: float,
         cache_ttl: str = "5m",
     ) -> ModelResponse:
+        """Send the request, with `temperature` only if the model accepts it.
+
+        Decided here because this is the one place a request leaves the system and
+        the one place that knows which model the router chose (ADR 178). `omit` is
+        the SDK's own way to leave a field out of the body, not a value sent in it.
+
+        Raises:
+            ModelClientError: the model is not in `ACCEPTS_SAMPLING`. Refused before
+                anything is sent — a default would be a guess about a 400.
+        """
+        accepts = ACCEPTS_SAMPLING.get(model)
+        if accepts is None:
+            reason = (
+                f"{model} is not in the sampling table ({', '.join(sorted(ACCEPTS_SAMPLING))}), "
+                "so whether it rejects `temperature` with a 400 is unknown. Refused before "
+                "anything is sent: a default here would be a guess about what the API accepts"
+            )
+            raise ModelClientError(reason)
+
         message = self.client.messages.create(
             model=model,
             max_tokens=max_tokens,
             system=system,
             messages=list(messages),
-            temperature=temperature,
+            temperature=temperature if accepts else omit,
         )
         return translate(message, cache_ttl=cache_ttl)
 
