@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from coldfix.agent import prompt
-from coldfix.evidence import auditor
+from coldfix.evidence import auditor, optimizer
 
 V3_PACKAGES = ("agent", "collect", "evidence", "pipeline")
 """The packages this registry is complete over.
@@ -30,10 +30,11 @@ covers. Two hardcoded lists would agree until somebody added a package to one.
 
 
 class Agent(StrEnum):
-    """The v3 roles. Two more arrive with E22 and E23."""
+    """The v3 roles. The Adversary arrives with S-27.2."""
 
     SCAN = "scan"
     FINDING_AUDITOR = "finding_auditor"
+    OPTIMIZER = "optimizer"
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,26 @@ ROLES: Mapping[Agent, Role] = {
             "see the reasoning that produced the finding -- `Presented` has no field for it, the "
             "same way the Adversary will have none for the Surgeon's",
             "be reached at all by a finding the four code attacks already rejected",
+        ),
+    ),
+    Agent.OPTIMIZER: Role(
+        agent=Agent.OPTIMIZER,
+        purpose="write several candidate fixes for one proven finding, so measurement can choose",
+        prompts=(optimizer.SYSTEM,),
+        receives=(
+            "one proven finding, and the source of the one file it names",
+            "the test that already failed against that source",
+            "what earlier rounds measured, with their numbers, and why any candidate was refused",
+        ),
+        cannot=(
+            "run, apply or measure anything -- it has no tools; the harness applies every "
+            "candidate and measures it",
+            "choose the winner -- the archive does, by measurement, and reads nothing it wrote",
+            "change a file other than the finding's, or a test, fixture or harness file -- such a "
+            "candidate is refused before it is measured",
+            "explain itself to the Adversary -- a candidate has no field for a reason",
+            "be asked for anything before a test has failed -- it is built with a `Falsified`, "
+            "which only the gate mints",
         ),
     ),
 }

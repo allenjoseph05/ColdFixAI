@@ -108,6 +108,10 @@ class Agent(StrEnum):
     """v3's scan agent (S-26.1). Its boundary is written in `agent/roles.py`, v3's
     own registry, which uses the same member names; `FINDING_AUDITOR` and
     `ADVERSARY` bill the role of that name in either pipeline."""
+    OPTIMIZER = "optimizer"
+    """v3's candidate writer (S-27.1, ADR 180). Not `SURGEON`: the Surgeon writes one
+    patch and argues for it, the Optimizer writes several and measurement chooses,
+    and a bill that merged the two could not say which one a run paid for."""
 
 
 class StepClass(StrEnum):
