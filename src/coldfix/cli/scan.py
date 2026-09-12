@@ -30,11 +30,13 @@ nobody has walked.
 from __future__ import annotations
 
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+
+from pydantic import JsonValue
 
 from coldfix.agent.toolbox import SandboxedToolbox
 from coldfix.cli.config import ConfigError, _Reader
@@ -45,14 +47,17 @@ from coldfix.cost.accounting import Ledger as Bill
 from coldfix.cost.budget import Budget
 from coldfix.cost.routing import Router
 from coldfix.evidence.ledger import Ledger
+from coldfix.evidence.memory import Remembers
 from coldfix.llm.client import ModelClient, connect
 from coldfix.llm.metered import Meter, TokenCounter
 from coldfix.orchestrator.checkpointing import for_development, thread
 from coldfix.pipeline.graph import build
 from coldfix.pipeline.nodes import Resources, bind
 from coldfix.pipeline.state import PipelineState
+from coldfix.sandbox.production import VerifiedDatabase
 from coldfix.sandbox.runner import Sandbox
 from coldfix.sandbox.worktrees import Repository
+from coldfix.state.persistent import Collection, PersistentStore, refuse_shared_store
 
 CHECKPOINTS = "checkpoints.sqlite"
 
@@ -79,6 +84,14 @@ class ScanConfig:
     database_url: str | None = None
     """Only when the subject has one. `refuse` puts it through the production
     guard; absent, there is nothing to guard."""
+
+    journal_url: str | None = None
+    """ColdFix's own append-only journal -- **not the subject's database.**
+
+    Optional because a run without one still answers; what it loses is memory
+    across a rewind (ADR 186), and `--plan` says so rather than leaving the
+    absence to be discovered by paying for the same measurement twice.
+    """
 
 
 def load_scan(path: Path) -> ScanConfig:
@@ -109,6 +122,7 @@ def load_scan(path: Path) -> ScanConfig:
         raise ConfigError(message)
 
     database = raw.get("scan", {}).get("database_url")
+    journal = raw.get("scan", {}).get("journal_url")
     return ScanConfig(
         root=read.folder("scan", "root"),
         revision=read.text("scan", "revision"),
@@ -118,6 +132,7 @@ def load_scan(path: Path) -> ScanConfig:
         rate_eur=read.money("budget", "rate_eur", required=True) or Decimal(0),
         rate_as_of=read.day("budget", "rate_as_of"),
         database_url=read.text("scan", "database_url") if database is not None else None,
+        journal_url=read.text("scan", "journal_url") if journal is not None else None,
     )
 
 
@@ -129,6 +144,48 @@ def run_id_for(config: ScanConfig) -> str:
     again.
     """
     return f"{config.root.name}@{config.revision}"
+
+
+@dataclass(frozen=True)
+class Journal:
+    """The rewind-proof store, as the pipeline's `Remembers`. **S-29.1, ADR 186.**
+
+    The adapter lives here rather than in `evidence/` because `state.persistent`
+    imports a database driver at module scope, and the package that runs inside a
+    container must stay importable with nothing installed. Bound to
+    `FAILURE_MEMORY`, which needs no new collection: *what was tried and did not
+    work, keyed per finding* is exactly what a losing candidate is.
+    """
+
+    store: PersistentStore
+
+    def remember(self, finding: str, entry: Mapping[str, JsonValue]) -> None:
+        self.store.append(Collection.FAILURE_MEMORY, key=finding, entry=entry)
+
+    def recalled(self, finding: str) -> Sequence[Mapping[str, JsonValue]]:
+        return tuple(item.entry for item in self.store.read(Collection.FAILURE_MEMORY, finding))
+
+
+def open_journal(config: ScanConfig) -> Journal | None:
+    """Open the run's failure memory, or report that it has none.
+
+    Opened before the worktree in `run_scan`, so a URL the production guard
+    refuses stops the run while there is nothing to clean up. `initialize` is
+    idempotent, so a run against an existing journal is not a special case.
+
+    Raises:
+        ProductionGuardError: the URL is not one this system may write to.
+        SharedStoreError: it names the checkpoint database, which ADR 003 keeps
+            separate so that dropping checkpoints cannot destroy what a rewind
+            must not discard.
+    """
+    if config.journal_url is None:
+        return None
+    database = VerifiedDatabase(config.journal_url)
+    refuse_shared_store(database, config.worktree_root / CHECKPOINTS)
+    store = PersistentStore(database=database, replay_root=config.worktree_root / "replay")
+    store.initialize()
+    return Journal(store)
 
 
 def source_reader(workspace: Path) -> Callable[[str], str]:
@@ -146,7 +203,12 @@ def source_reader(workspace: Path) -> Callable[[str], str]:
 
 
 def resources_for(
-    config: ScanConfig, *, client: ModelClient, counter: TokenCounter, workspace: Path
+    config: ScanConfig,
+    *,
+    client: ModelClient,
+    counter: TokenCounter,
+    workspace: Path,
+    store: Remembers | None = None,
 ) -> Resources:
     """Everything the seven nodes share. **Opens nothing.**
 
@@ -180,6 +242,7 @@ def resources_for(
         docker=DockerCli(),
         read_source=source_reader(workspace),
         database_url=config.database_url,
+        store=store,
     )
 
 
@@ -192,6 +255,14 @@ def plan_scan(config: ScanConfig) -> list[str]:
         f"(as of {config.rate_as_of.isoformat()})",
         f"database     {config.database_url or 'none declared'}",
         f"run          {run_id_for(config)}",
+        # Named, never printed: the URL carries a password, and a plan is the
+        # output most likely to be pasted into a message.
+        "memory       "
+        + (
+            "a journal outlives a rewind"
+            if config.journal_url
+            else "none declared -- a rewind will re-measure candidates that already lost"
+        ),
         f"checkpoints  {config.worktree_root / CHECKPOINTS}",
         "gate         the run parks before `ship`; nothing reaches a repository unseen",
         "repair       unavailable: applying and measuring a candidate needs a worktree "
@@ -224,6 +295,9 @@ def run_scan(config: ScanConfig, *, spend: bool, credential: str | None) -> list
     # Built first, so an unusable key is refused while nothing is open. `connect`
     # opens no connection; the first completion is what bills.
     client = connect(credential)
+    # Before the worktree, so a journal the guard refuses stops the run while
+    # there is still nothing to clean up.
+    journal = open_journal(config)
 
     run_id = run_id_for(config)
     worktree = Repository(root=config.root).create_worktree(
@@ -231,7 +305,9 @@ def run_scan(config: ScanConfig, *, spend: bool, credential: str | None) -> list
     )
     # Not destroyed here: the run parks at the ship gate, and a resumed run needs
     # the workspace its measurements were taken in.
-    resources = resources_for(config, client=client, counter=client, workspace=worktree.path)
+    resources = resources_for(
+        config, client=client, counter=client, workspace=worktree.path, store=journal
+    )
 
     with for_development(config.worktree_root / CHECKPOINTS) as checkpointer:
         graph = build(bind(resources), checkpointer=checkpointer, gated=True)
