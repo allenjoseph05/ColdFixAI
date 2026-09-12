@@ -26,6 +26,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from coldfix.cli.config import Config, ConfigError, load
+from coldfix.cli.scan import ScanRefusedError, load_scan, plan_scan, run_scan
 from coldfix.cli.wiring import WiringError, adapter_for, supplied_by
 from coldfix.cost.accounting import ExchangeRate
 from coldfix.explorer.compose import Plan
@@ -76,6 +77,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--spend",
         action="store_true",
         help="permit this run to make paid model calls. Required; there is no prompt.",
+    )
+
+    # v3's entry point (S-28.4). Beside `run` rather than replacing it: v1 is what
+    # runs end to end today, and two binaries during the overlap would be a rename
+    # to undo after the cut.
+    scanning = commands.add_parser(
+        "scan",
+        help="find waste by running the subject, and propose fixes. Costs money.",
+    )
+    scanning.add_argument(
+        "--spend",
+        action="store_true",
+        help="permit this scan to make paid model calls. Required; there is no prompt.",
+    )
+    scanning.add_argument(
+        "--plan",
+        action="store_true",
+        help="report what a scan would be given and stop. Spends nothing.",
     )
     return parser
 
@@ -264,12 +283,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     try:
-        config = load(arguments.config)
-        if arguments.command == "plan":
-            report = plan(config)
+        # **`scan` reads its own configuration.** v1's `Config` wants twenty-five
+        # values, most of them a framework's; a v3 run is a repository, an image
+        # and a budget (ADR 184). Loading v1's here would refuse a scan for the
+        # absence of a Django settings module.
+        if arguments.command == "scan":
+            scan_config = load_scan(arguments.config)
+            report = (
+                plan_scan(scan_config)
+                if arguments.plan
+                else run_scan(
+                    scan_config,
+                    spend=arguments.spend,
+                    credential=os.environ.get(CREDENTIAL),
+                )
+            )
         else:
-            report = run(config, spend=arguments.spend, credential=os.environ.get(CREDENTIAL))
-    except (ConfigError, WiringError, CommandError) as error:
+            config = load(arguments.config)
+            report = (
+                plan(config)
+                if arguments.command == "plan"
+                else run(config, spend=arguments.spend, credential=os.environ.get(CREDENTIAL))
+            )
+    except (ConfigError, WiringError, CommandError, ScanRefusedError) as error:
         print(f"coldfix: {error}")
         return 1
 
