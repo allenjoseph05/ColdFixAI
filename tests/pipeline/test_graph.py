@@ -1,4 +1,4 @@
-"""S-24.1 and S-24.2.
+"""S-24.1, S-24.2, and S-28.2's seventh node.
 
 The graph is exercised with steps that do nothing but write a route, so what is
 under test is the wiring and not any node's work. Nothing here calls a model,
@@ -31,6 +31,8 @@ from coldfix.pipeline.graph import (
 )
 from coldfix.pipeline.state import PipelineState
 
+NODES = 7
+
 
 def writes(route: str, **extra: object) -> Step:
     """A step that records it ran and says where to go next."""
@@ -44,6 +46,7 @@ def writes(route: str, **extra: object) -> Step:
 def wiring(**routes: str) -> Wiring:
     defaults = {
         "refuse": "proceed",
+        "ground": "runnable",
         "scan": "nothing_found",
         "audit_finding": "unsound",
         "optimize": "nothing_beat_baseline",
@@ -56,11 +59,11 @@ def wiring(**routes: str) -> Wiring:
 # ------------------------------------------------------------------ the shape
 
 
-def test_there_are_six_nodes_and_every_one_has_a_router() -> None:
-    """Six routers for six nodes: every node in this graph can end the run or
+def test_there_are_seven_nodes_and_every_one_has_a_router() -> None:
+    """Seven routers for seven nodes: every node in this graph can end the run or
     send it somewhere other than the next one along, so none of them has a single
     unconditional successor."""
-    assert len(Node) == 6
+    assert len(Node) == NODES
     assert set(ROUTES) == set(Node)
 
 
@@ -73,16 +76,37 @@ def test_every_destination_is_a_node_or_the_end() -> None:
             assert destination in names, f"{source}/{route} goes nowhere"
 
 
-def test_four_of_the_six_nodes_can_end_the_run() -> None:
-    """Refused, unmeasurable or nothing-found, unsound, nothing-beat-baseline,
+def test_every_node_can_end_the_run() -> None:
+    """Refused, unmeasurable, nothing found, unsound, nothing-beat-baseline,
     escalated, done. Every one of those is an answer."""
     enders = {source.value for source, routes in ROUTES.items() if END in routes.values()}
-    assert enders == {"refuse", "scan", "audit_finding", "optimize", "audit_patch", "ship"}
+    assert enders == {item.value for item in Node}
+
+
+def test_grounding_is_where_a_program_that_cannot_be_measured_ends() -> None:
+    """ADR 175: making a program measurable is its own job, and failing at it is
+    its own ending. `scan` no longer has that route at all."""
+    assert router_for(Node.GROUND)(PipelineState(route="unmeasurable")) == END
+    assert router_for(Node.GROUND)(PipelineState(route="runnable")) == "scan"
+    with pytest.raises(UnknownRouteError):
+        router_for(Node.SCAN)(PipelineState(route="unmeasurable"))
+
+
+def test_grounding_runs_before_the_scan_and_after_the_refusal() -> None:
+    assert reachable()["refuse"] == (END, "ground")
+    assert reachable()["ground"] == (END, "scan")
+
+
+def test_going_back_never_sets_the_project_up_again() -> None:
+    """Both loops return to `scan`. A rewind that re-grounded would reinstall the
+    subject to ask a second question about it (ADR 175)."""
+    assert reachable()["ship"] == (END, "scan")
+    assert "scan" in reachable()["audit_finding"]
+    assert "ground" not in reachable()["audit_finding"]
+    assert "ground" not in reachable()["ship"]
 
 
 def test_the_graph_loops_back_so_one_run_can_chase_several_findings() -> None:
-    assert reachable()["ship"] == (END, "scan")
-    assert "scan" in reachable()["audit_finding"]
     assert "optimize" in reachable()["audit_patch"]
 
 
@@ -126,8 +150,8 @@ def test_a_node_with_nothing_behind_it_is_refused() -> None:
     """It would compile, return an empty update, and the run would pass straight
     through the phase without ever gaining what that phase produces."""
     incomplete = wiring()
-    object.__setattr__(incomplete, "optimize", None)
-    with pytest.raises(MissingStepError, match="optimize"):
+    object.__setattr__(incomplete, "ground", None)
+    with pytest.raises(MissingStepError, match="ground"):
         build(incomplete, gated=False)
 
 
@@ -158,6 +182,14 @@ def test_a_refused_run_ends_without_touching_anything_else(tmp_path: Path) -> No
     graph = build(wiring(refuse="refused"), gated=False)
     final = graph.invoke(PipelineState(route="refused"))
     assert final["route"] == "refused"
+
+
+def test_a_run_that_cannot_be_made_to_measure_ends_at_ground() -> None:
+    """The honest ending for a program nothing here can run: it stops before any
+    money is spent looking for waste in it."""
+    graph = build(wiring(ground="unmeasurable"), gated=False)
+    final = graph.invoke(PipelineState())
+    assert final["route"] == "unmeasurable"
 
 
 def test_a_run_that_finds_nothing_ends_at_scan() -> None:
@@ -244,8 +276,8 @@ def test_a_checkpoint_is_written_after_every_node(tmp_path: Path) -> None:
 
 def test_no_node_in_this_module_calls_a_model() -> None:
     """Orchestration is free, and it stays free by containing no prompt. The
-    whole cost of a run sits inside the three nodes that call a model, and this
-    module knows nothing about them."""
+    whole cost of a run sits inside the nodes that call a model, and this module
+    knows nothing about them."""
     source = (Path("src/coldfix/pipeline/graph.py")).read_text(encoding="utf-8")
     for forbidden in ("anthropic", "ModelClient", "system_prompt", "messages="):
         assert forbidden not in source, f"{forbidden} has no business in the graph"
