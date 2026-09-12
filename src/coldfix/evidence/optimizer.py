@@ -222,15 +222,20 @@ class Optimizer:
 
         edits = {_edit(e.candidate.diff) for e in archive.scored}
         kept: list[Candidate] = []
-        for index, item in enumerate(proposed[:wanted], start=1):
+        for item in proposed[:wanted]:
             objection = self._objection(item, archive, edits)
             if objection is not None:
                 self.refusals.append(Refusal(number, item.approach, objection))
                 continue
             edits.add(_edit(item.diff))
+            # Numbered from what the archive already holds rather than from the
+            # round, so ids continue across a search that was seeded with earlier
+            # candidates instead of colliding with them (S-28.5).
             kept.append(
                 Candidate(
-                    identifier=f"r{number}c{index}", approach=item.approach.strip(), diff=item.diff
+                    identifier=f"c{len(archive.scored) + len(kept) + 1}",
+                    approach=item.approach.strip(),
+                    diff=item.diff,
                 )
             )
         return tuple(kept)

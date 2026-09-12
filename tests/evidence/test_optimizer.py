@@ -200,7 +200,26 @@ def test_the_identifier_is_the_harness_s_not_the_model_s() -> None:
     archive already holds."""
     client = Scripted([reply(("prefetch", diff()), identifier="baseline")])
     _, candidates = first_round(client)
-    assert [c.identifier for c in candidates] == ["r1c1"]
+    assert [c.identifier for c in candidates] == ["c1"]
+
+
+def test_identifiers_continue_from_what_the_archive_already_holds() -> None:
+    """A search seeded with earlier candidates must not mint ids that collide with
+    them: the state keys candidates by id, so a second `c1` overwrites the first.
+
+    Asserted against a seeded archive rather than an empty one, because numbering
+    from the round gives `c1` either way on a first search and proves nothing.
+    """
+    seed = Scored(
+        candidate=Candidate(identifier="c1", approach="prefetch", diff=diff()),
+        measurement_id="m-c1",
+        wall_s=9.0,
+        peak_rss_bytes=1024,
+    )
+    client = Scripted([reply(("cache", diff("        return self._c")))])
+    (offered,) = optimizer(client)(Archive(baseline=BASELINE, scored=(seed,)))
+
+    assert offered.identifier == "c2"
 
 
 def test_a_rationale_in_the_reply_reaches_nothing() -> None:
