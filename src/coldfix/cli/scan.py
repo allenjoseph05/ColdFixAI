@@ -143,8 +143,14 @@ def run_id_for(config: ScanConfig) -> str:
     Stable across invocations on purpose: an id carrying a timestamp would make
     every interrupted run unresumable while looking like it had merely started
     again.
+
+    **Resolved before the name is taken.** `Path(".").name` is the empty string,
+    and `root = "."` is the natural thing to write — so an unresolved root gives
+    every such run the id `@HEAD`, and two different subjects configured the same
+    way would share a checkpoint thread and resume into each other's state. Found
+    by planning the shipped example after S-31.1 (ADR 190).
     """
-    return f"{config.root.name}@{config.revision}"
+    return f"{config.root.resolve().name}@{config.revision}"
 
 
 @dataclass(frozen=True)

@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from datetime import date
-from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -21,15 +19,8 @@ from anthropic.types import MessageParam
 
 from coldfix.cost.accounting import (
     PRICE_BOOK,
-    Agent,
-    ExchangeRate,
-    Phase,
-    StepClass,
     TokenUsage,
 )
-from coldfix.cost.context import Block
-from coldfix.cost.routing import StepType
-from coldfix.cost.session import Session, Step
 from coldfix.llm.client import (
     ACCEPTS_SAMPLING,
     NON_STREAMING_MAX_TOKENS,
@@ -429,52 +420,6 @@ def test_the_digest_is_stable_across_processes() -> None:
     )
 
     assert once == again
-
-
-# ==================================== Epic 5's first real caller
-
-
-def test_a_replayed_call_prices_through_the_ledger() -> None:
-    """Epic 5 built routing, budgets, a ledger and a cost report with no caller.
-
-    This is the seam it was built for: `Session.run` takes a callable handed a
-    model id and returning a result with its usage, which is exactly what a
-    completion is.
-    """
-    client = ReplayingClient([recording()])
-    session = Session(
-        system="You find performance problems by running experiments.",
-        playbook="Django: count queries with force_debug_cursor.",
-        source="def list_books(): ...",
-        rate=ExchangeRate(Decimal("0.90"), date(2026, 8, 11)),
-    )
-
-    def call(model: str, blocks: Sequence[Block]) -> tuple[str, TokenUsage]:
-        del blocks  # this test is about routing and billing, not request shaping
-        reply = client.complete(
-            model=model, system=SYSTEM, messages=MESSAGES, max_tokens=1_000, temperature=TEMPERATURE
-        )
-        return reply.text, reply.usage
-
-    outcome = session.run(
-        Step(
-            step_type=StepType.EVIDENCE_CHAIN,
-            phase=Phase.INVESTIGATE,
-            agent=Agent.DIAGNOSTICIAN,
-            max_output_tokens=1_000,
-            finding_id="F1",
-        ),
-        question="What does the growth table show?",
-        measured_prefix_tokens=2_000,
-        measured_prompt_tokens=2_100,
-        call=call,
-    )
-
-    assert outcome.routed_model == "claude-sonnet-5"
-    assert outcome.value.startswith("Queries grow linearly")
-    assert outcome.cost_usd > 0
-    assert outcome.calls[0].step_class is StepClass.MECHANICAL
-    assert "euros per confirmed finding" in session.report(confirmed_findings=1)
 
 
 def test_a_response_carries_its_own_model_back() -> None:

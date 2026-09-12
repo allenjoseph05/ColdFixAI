@@ -50,14 +50,22 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from coldfix.state.reference import CHECKPOINT_SIZE_LIMIT_BYTES
+MAX_CHECKPOINT_BYTES = 64 * 1024
+"""S-6.3's limit, now owned here. **Relocated by S-31.1.**
 
-MAX_CHECKPOINT_BYTES = CHECKPOINT_SIZE_LIMIT_BYTES
-"""S-6.3's limit, imported rather than restated.
+It was imported from `state/reference.py` so that the cap had one home. That
+module was v1's *results-by-reference* — the 40-experiment log that held hashes
+and summaries instead of measurements — and the cut deleted it. One integer was
+the only thing this module wanted from it, and borrowing it kept `replay/`,
+`contracts/workload` and most of `primitives/` alive behind a single edge.
 
-That story derived it — 40 experiments at 1 KiB each leaves room for the artifacts
-that do not grow with the investigation — and a second copy here would be a second
-answer that drifts the first time the cap moves."""
+The arithmetic it came from still holds and is worth keeping written down: S-5.4
+capped an investigation at 40 experiments and every reference was size-checked
+against 1 KiB, so the log could contribute at most 40 KiB, leaving 24 KiB for the
+artifacts that do not grow with the run. v3's state is shaped differently — the
+`measurements` channel carries records and the `Ledger` holds the detail — so the
+bound is now a ceiling on what a checkpoint may cost rather than a figure derived
+from an experiment log. It is enforced in the same three places as before."""
 
 
 class CheckpointingError(Exception):
