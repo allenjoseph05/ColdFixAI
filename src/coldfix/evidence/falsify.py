@@ -25,7 +25,9 @@ looks right.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import Final
 
+from anthropic.types import MessageParam
 from pydantic import BaseModel, ValidationError
 
 from coldfix.cost.accounting import Agent, Phase
@@ -37,6 +39,15 @@ from coldfix.llm.client import NON_STREAMING_MAX_TOKENS
 from coldfix.llm.metered import Call, Meter
 
 TEMPERATURE = 0.0
+
+CACHE_TTL: Final = "5m"
+"""Five minutes, not the hour `scan` buys. **S-26.5, ADR 192.**
+
+A write costs 1.25x at five minutes and 2x at an hour, and a read 0.1x. Three
+attempts therefore pay 1.45x of one prompt at five minutes and 2.2x at an hour,
+against 3x uncached. The hour only wins on a conversation long enough to amortise
+its premium -- forty turns in `scan`, three here. The Adversary's four turns made
+the same call."""
 
 ATTEMPTS = CHEAP_ATTEMPTS + 1
 """Two on the routed tier, then one rung dearer. §3's cascade, and the validator
@@ -123,8 +134,9 @@ def falsify(
         response = meter.complete(
             WRITE,
             system=SYSTEM,
-            messages=[{"role": "user", "content": question(finding, source, rejected)}],
+            messages=_request(finding, source, rejected),
             temperature=TEMPERATURE,
+            cache_ttl=CACHE_TTL,
             escalation=escalation,
         )
         if response.refused:
@@ -157,21 +169,38 @@ def falsify(
     raise NoTestError(_spent(rejected))
 
 
-def question(finding: Finding, source: str, rejected: Sequence[str]) -> str:
-    """What one attempt is asked: the finding, the source, and what was refused."""
+def brief(finding: Finding, source: str) -> str:
+    """The part of every attempt's question that does not change between attempts.
+
+    Byte-identical across the three attempts, which is what makes it worth a
+    breakpoint: the finding and the source are the bulk of the prompt, and only
+    the refusals after it grow.
+    """
     claim = finding.claim
     where = f"{claim.location.file}:{claim.location.line} {claim.location.symbol}".strip()
-    lines = [
-        "THE FINDING",
-        f"  where: {where}",
-        f"  kind: {claim.kind}",
-        f"  what: {claim.summary}",
-        "  measured:",
-        *(f"    {c.measurement_id}.{c.field} = {c.value}" for c in claim.evidence),
-        "",
-        f"THE SOURCE OF {claim.location.file}",
-        source,
-    ]
+    return "\n".join(
+        [
+            "THE FINDING",
+            f"  where: {where}",
+            f"  kind: {claim.kind}",
+            f"  what: {claim.summary}",
+            "  measured:",
+            *(f"    {c.measurement_id}.{c.field} = {c.value}" for c in claim.evidence),
+            "",
+            f"THE SOURCE OF {claim.location.file}",
+            source,
+        ]
+    )
+
+
+def refused(rejected: Sequence[str]) -> str:
+    """What the earlier attempts were refused for, and the instruction.
+
+    The half that grows, so it carries no breakpoint: a marker on a block that
+    changes every attempt is a write nothing ever reads, which costs more than
+    not caching at all.
+    """
+    lines: list[str] = []
     if rejected:
         lines += [
             "",
@@ -180,6 +209,34 @@ def question(finding: Finding, source: str, rejected: Sequence[str]) -> str:
         ]
     lines += ["", "Write the test."]
     return "\n".join(lines)
+
+
+def question(finding: Finding, source: str, rejected: Sequence[str]) -> str:
+    """The whole of what one attempt is asked, as one string.
+
+    The single definition of the rendered prompt. `_request` sends the same two
+    halves as separate blocks and a test asserts they concatenate to this, because
+    a prompt that changed when caching arrived would be a change to what the model
+    was asked, smuggled in as an optimisation.
+    """
+    return f"{brief(finding, source)}\n{refused(rejected)}"
+
+
+def _request(finding: Finding, source: str, rejected: Sequence[str]) -> list[MessageParam]:
+    """One user message: the brief, cached, then what changed, which is not."""
+    return [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": brief(finding, source),
+                    "cache_control": {"type": "ephemeral", "ttl": CACHE_TTL},
+                },
+                {"type": "text", "text": f"\n{refused(rejected)}"},
+            ],
+        }
+    ]
 
 
 def _spent(rejected: Sequence[str]) -> str:

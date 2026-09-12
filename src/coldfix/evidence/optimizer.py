@@ -28,7 +28,9 @@ the archive the harness wrote, never from the model.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Final
 
+from anthropic.types import MessageParam
 from pydantic import BaseModel, ValidationError
 
 from coldfix.cost.accounting import Agent, Phase
@@ -50,6 +52,14 @@ TEMPERATURE = 0.0
 """Recorded intent (ADR 178): variety comes from asking for approaches that differ
 from each other and from the archive, not from sampling -- which the mid and
 frontier tiers no longer honour."""
+
+CACHE_TTL: Final = "5m"
+"""Five minutes, not the hour `scan` buys. **S-26.5, ADR 192.**
+
+Three rounds pay 1.45x of one prompt at five minutes and 2.2x at an hour, against
+3x uncached: the hour's write premium needs a longer conversation to amortise than
+this loop has. Same arithmetic, and the same answer, as `falsify` and the
+Adversary."""
 
 MAX_ROUNDS = 3
 """`15-full-architecture.md`: 8 candidates, 3 rounds. With `CHEAP_ATTEMPTS` at two,
@@ -200,8 +210,9 @@ class Optimizer:
         response = self.meter.complete(
             PROPOSE,
             system=SYSTEM,
-            messages=[{"role": "user", "content": self.question(archive, wanted)}],
+            messages=self.request(archive, wanted),
             temperature=TEMPERATURE,
+            cache_ttl=CACHE_TTL,
             escalation=escalation,
         )
         if response.refused:
@@ -277,16 +288,43 @@ class Optimizer:
         return None
 
     def question(self, archive: Archive, wanted: int) -> str:
-        """What a round is asked: the brief, what came before, and how many to write."""
-        return "\n\n".join(
-            part
+        """What a round is asked, as one string.
+
+        The single definition of the rendered prompt. `request` sends the same two
+        halves as separate blocks and a test asserts they concatenate to this: a
+        prompt that changed when caching arrived would be a change to what the
+        model was asked, smuggled in as an optimisation.
+        """
+        opening = render_brief(self.finding, self.source, self.falsified)
+        return f"{opening}{self._tail(archive, wanted)}"
+
+    def _tail(self, archive: Archive, wanted: int) -> str:
+        """What came before and how many to write. Grows every round, so it is
+        the half that carries no breakpoint."""
+        return "".join(
+            f"\n\n{part}"
             for part in (
-                render_brief(self.finding, self.source, self.falsified),
                 self._history(archive),
                 f"Write up to {wanted} candidates, each a different approach.",
             )
             if part
         )
+
+    def request(self, archive: Archive, wanted: int) -> list[MessageParam]:
+        """One user message: the brief, cached, then the archive, which is not."""
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": render_brief(self.finding, self.source, self.falsified),
+                        "cache_control": {"type": "ephemeral", "ttl": CACHE_TTL},
+                    },
+                    {"type": "text", "text": self._tail(archive, wanted)},
+                ],
+            }
+        ]
 
     def _history(self, archive: Archive) -> str:
         """Every measured candidate with its numbers, and every refusal with its reason.
