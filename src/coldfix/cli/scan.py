@@ -53,6 +53,7 @@ from coldfix.llm.metered import Meter, TokenCounter
 from coldfix.orchestrator.checkpointing import for_development, thread
 from coldfix.pipeline.graph import build
 from coldfix.pipeline.nodes import Resources, bind
+from coldfix.pipeline.report import awaiting_review, report_for
 from coldfix.pipeline.state import PipelineState
 from coldfix.sandbox.production import VerifiedDatabase
 from coldfix.sandbox.runner import Sandbox
@@ -313,9 +314,16 @@ def run_scan(config: ScanConfig, *, spend: bool, credential: str | None) -> list
         graph = build(bind(resources), checkpointer=checkpointer, gated=True)
         final = graph.invoke(PipelineState(), thread(run_id))
 
-    return [
+    lines = [
         f"run          {run_id}",
         f"workspace    {worktree.path}",
         f"checkpoints  {config.worktree_root / CHECKPOINTS}",
         f"route        {final.get('route', 'none written')}",
     ]
+    # The run parks before `ship` and this is the person it parks in front of.
+    # Asked through `awaiting_review` rather than by testing `repaired` here, so
+    # what counts as being at the gate has one owner (ADR 188).
+    parked = PipelineState.model_validate(final)
+    if awaiting_review(parked):
+        lines.extend(["", *report_for(parked).lines()])
+    return lines

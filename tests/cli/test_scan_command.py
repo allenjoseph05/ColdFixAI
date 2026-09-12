@@ -35,6 +35,8 @@ from coldfix.cli.scan import (
 )
 from coldfix.collect.workspace import PathEscapesWorkspaceError
 from coldfix.cost.accounting import TokenUsage
+from coldfix.evidence.adversary import PatchReview, Verdict
+from coldfix.evidence.revisions import Comparison, Side
 from coldfix.llm.client import ModelResponse
 from coldfix.pipeline.graph import Node, build
 from coldfix.pipeline.nodes import Resources, bind
@@ -342,6 +344,94 @@ def test_the_journal_the_run_opened_is_the_one_the_nodes_are_given(
 
     assert given["store"] is journal, "the run opened a journal the nodes never got"
     assert any("done" in line for line in lines)
+
+
+def parked_state() -> dict[str, Any]:
+    """A run stopped in front of a person, as the graph hands it back."""
+    unchanged = Side(
+        ran=True, output_digest="d", output_bytes=1, wall_s=1.0, peak_rss_bytes=1, stable=True
+    )
+    audited = PatchReview(
+        verdict=Verdict.CLEAN,
+        comparisons=(Comparison(given=("one",), baseline=unchanged, patched=unchanged),),
+        turns=2,
+    )
+    return {
+        "route": "clean",
+        "findings": {
+            "f-1": {
+                "claim": {
+                    "kind": "repeated_query",
+                    "summary": "161 queries for 40 rows",
+                    "location": {"file": "app.py", "line": 12, "symbol": "books"},
+                    "evidence": [{"measurement_id": "m-1", "field": "wall.median", "value": 2.41}],
+                    "basis": "ablation",
+                    "payoff": 0.78,
+                    "proof": {
+                        "measurement_id": "m-1",
+                        "before": 2.41,
+                        "after": 0.53,
+                        "share_removed": 0.78,
+                    },
+                },
+                "attested_against": ["m-1"],
+            }
+        },
+        "coverage": {"grounding": "measured"},
+        "repaired": {
+            "finding": "f-1",
+            "approach": "prefetch the authors",
+            "diff": "--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-slow()\n+fast()\n",
+            "test": "def test_one_query(): assert queries() == 1",
+            "measurement_id": "m-c1",
+            "share_removed": 0.384,
+            "trades": [],
+        },
+        "audited": audited.model_dump(mode="json"),
+    }
+
+
+def test_a_parked_run_prints_the_report_rather_than_a_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gate is the whole reason the run stops here. Found by the same sabotage
+    shape twice already: with the render dropped, `run_scan` still reports a
+    route, every direct test of the report still passes, and the person the run
+    parked in front of is shown nothing."""
+
+    class Parked:
+        def invoke(self, state: object, config: object) -> dict[str, Any]:
+            del state, config
+            return parked_state()
+
+    monkeypatch.setattr(scan, "open_journal", lambda config: None)
+    monkeypatch.setattr(scan, "connect", lambda credential: Silent())
+    monkeypatch.setattr(scan, "Repository", FakeRepository)
+    monkeypatch.setattr(scan, "for_development", lambda path: NoCheckpointer())
+    monkeypatch.setattr(scan, "build", lambda wiring, **options: Parked())
+
+    printed = "\n".join(run_scan(config_of(tmp_path), spend=True, credential="sk-test"))
+
+    assert "READY TO SHIP — f-1: prefetch the authors" in printed
+    assert "PROVEN" in printed and "SUSPECTED" in printed
+    assert "+fast()" in printed
+
+
+def test_a_finished_run_prints_no_report_because_there_is_nothing_parked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ship` clears the handover, so a completed run reaches the same code path.
+    It must not raise, and it must not invent a report."""
+    monkeypatch.setattr(scan, "open_journal", lambda config: None)
+    monkeypatch.setattr(scan, "connect", lambda credential: Silent())
+    monkeypatch.setattr(scan, "Repository", FakeRepository)
+    monkeypatch.setattr(scan, "for_development", lambda path: NoCheckpointer())
+    monkeypatch.setattr(scan, "build", lambda wiring, **options: FakeGraph())
+
+    printed = "\n".join(run_scan(config_of(tmp_path), spend=True, credential="sk-test"))
+
+    assert "route        done" in printed
+    assert "READY TO SHIP" not in printed
 
 
 def test_no_journal_declared_opens_nothing(tmp_path: Path) -> None:
