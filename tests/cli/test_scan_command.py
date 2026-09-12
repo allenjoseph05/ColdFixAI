@@ -473,6 +473,40 @@ def test_the_command_refuses_without_the_flag_and_says_so(
     assert "was not given --spend" in capsys.readouterr().out
 
 
+# ------------------------------------------------------- the shipped example
+
+
+def example_config() -> Path:
+    return Path(__file__).resolve().parents[2] / "coldfix.example.toml"
+
+
+def test_the_example_shipped_with_the_repository_actually_plans(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The one check that the product still starts.
+
+    `coldfix.example.toml` is what a new user copies, and after S-31.1 it is the
+    only configuration in the repository. Nothing else would have caught it still
+    describing v1's twenty-five values, because no test read it -- the command
+    would simply refuse the file the README tells people to copy.
+    """
+    assert main(["--config", str(example_config()), "scan", "--plan"]) == 0
+
+    printed = capsys.readouterr().out
+    assert "python:3.12" in printed
+    assert "parks before `ship`" in printed
+
+
+def test_a_root_of_dot_still_names_the_run_after_the_directory() -> None:
+    """`Path(".").name` is the empty string, so an unresolved root gives every
+    such run the thread id `@HEAD` -- and two subjects configured that way would
+    share a checkpoint and resume into each other's state."""
+    identifier = run_id_for(load_scan(example_config()))
+
+    assert identifier.endswith("@HEAD")
+    assert not identifier.startswith("@"), "the run lost the subject's name"
+
+
 def test_the_source_reader_refuses_a_path_that_leaves_the_workspace(tmp_path: Path) -> None:
     """By resolution, symlinks and all -- not by looking for `..` in a string."""
     workspace = tmp_path / "worktree"

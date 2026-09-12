@@ -1,23 +1,23 @@
 """The package import graph, asserted rather than reviewed.
 
-`docs/walkthrough/04-redesign-brief.md` §6 lists as defect 5 *"a seven-package
+`docs/walkthrough/04-redesign-brief.md` §6 listed as defect 5 *"a seven-package
 import cycle `{audit, diagnosis, explorer, repair, replay, screening, state}`
-contradicts the layering claim"*, and prescribes extracting the shared
-session/surface protocols. `coldfix.contracts` is that extraction.
+contradicts the layering claim"*. S-31.1 deleted six of those seven packages
+along with v1, so that particular component cannot reassemble from the same
+parts.
 
-Two properties are asserted here, and the second one is the load-bearing half.
+**What survives is the assertion that had teeth: the cycle set is exactly empty.**
+Set equality rather than a subset check, over whatever packages exist today — a
+new cycle fails it, and quietly breaking a recorded one fails it too, which forces
+the fix and the record to move in the same commit. `KNOWN_CYCLES` is empty, and
+empty is the strongest form this can take.
 
-**`contracts` is a leaf.** Not "imports little" — nothing it reaches imports it
-back, transitively. A leaf that acquires one edge home stops being able to break
-any cycle, and does so without any test noticing.
-
-**The remaining cycles are named exactly.** A test asserting only "the
-seven-package cycle is gone" would pass while six new ones appeared. So the
-assertion is set equality against `KNOWN_CYCLES`: a new cycle fails, and breaking
-a listed one *also* fails, which forces the fix and the record to move together.
-`KNOWN_CYCLES` is empty today, and it caught its own update — it named
-`audit <-> repair` while that cycle was being removed, and failed until the
-record caught up. The dangerous direction is drift into the permissive half.
+**Three tests were deleted here rather than left passing.** They asserted that
+`coldfix.contracts` was a leaf, and that it imported none of the seven packages it
+had been extracted for. `contracts/` existed to break that cycle; the cycle went
+with v1 and the package went with it. All three would now pass by having no
+subject at all — and a test that cannot fail is worse than no test, because in a
+list of green names it reads exactly like one that can.
 """
 
 from __future__ import annotations
@@ -33,15 +33,9 @@ ROOT = Path(coldfix.__file__).parent
 KNOWN_CYCLES: set[frozenset[str]] = set()
 """Every package-level cycle that still exists. There are none.
 
-The last one was `audit <-> repair`, and it was two imports wide in the return
-direction. `measured_pairs` went to `diagnosis/log.py`, which is where the
-`Experiment` it reads is defined; the four audit invocation primitives went to
-`contracts/auditing.py`, because S-10.3's test auditor lives in `repair/` and is
-as much an auditor as the one in `audit/`.
-
-Empty is the strongest form this can take, and it is why the assertion is set
-equality rather than a subset check: with nothing on record, any cycle at all
-fails, and a contributor who adds one has to write down why here.
+Empty is why the assertion below is set equality rather than a subset check: with
+nothing on record, any cycle at all fails, and whoever adds one has to write down
+here why it is acceptable.
 """
 
 
@@ -120,60 +114,24 @@ def _cycles(graph: dict[str, set[str]]) -> set[frozenset[str]]:
     return found
 
 
-# =================================================== contracts is a leaf
-
-
-def test_contracts_imports_nothing_that_imports_it_back() -> None:
-    """The property that makes the extraction worth anything.
-
-    Asserted transitively: `contracts -> cost -> ... -> contracts` would be a
-    cycle even though `contracts` imports no package that names it directly.
-    """
-    graph = _package_graph()
-
-    reachable: set[str] = set()
-    stack = list(graph.get("contracts", ()))
-    while stack:
-        node = stack.pop()
-        if node in reachable:
-            continue
-        reachable.add(node)
-        stack.extend(graph.get(node, ()))
-
-    offenders = {pkg for pkg in reachable if "contracts" in graph.get(pkg, set())}
-
-    assert offenders == set(), (
-        f"contracts is no longer a leaf: {sorted(offenders)} import it back, "
-        "so it can no longer break a cycle it participates in"
-    )
-
-
-def test_contracts_does_not_import_the_packages_it_was_extracted_for() -> None:
-    """The direct half, which fails earlier and reads better when it does."""
-    graph = _package_graph()
-
-    extracted_for = {"audit", "diagnosis", "explorer", "repair", "replay", "screening", "state"}
-
-    assert graph.get("contracts", set()) & extracted_for == set()
-
-
-# ============================================ the remaining cycles, exactly
-
-
 def test_the_package_cycles_are_exactly_the_ones_on_record() -> None:
     """Set equality, in both directions, and that is the point.
 
-    A new cycle fails this. Breaking `audit <-> repair` *also* fails it, which is
-    intended: the fix and `KNOWN_CYCLES` move in the same commit, so the record
+    A new cycle fails this. Removing one that is on record *also* fails it, which
+    is intended: the fix and `KNOWN_CYCLES` move in the same commit, so the record
     can never quietly describe a graph that is no longer there.
     """
     assert _cycles(_package_graph()) == KNOWN_CYCLES
 
 
-def test_the_seven_package_cycle_is_gone() -> None:
-    """Defect 5 named a specific component. It should not reassemble."""
-    seven = frozenset({"audit", "diagnosis", "explorer", "repair", "replay", "screening", "state"})
+def test_the_graph_is_read_from_something_rather_than_empty() -> None:
+    """The control on the assertion above.
 
-    surviving = {c for c in _cycles(_package_graph()) if c & seven == seven}
+    `_package_graph` returning nothing would make an empty cycle set trivially
+    true, and after a cut that deleted twelve packages that is a real way to be
+    wrong. So: the graph has edges, and the pipeline is one of the things in it.
+    """
+    graph = _package_graph()
 
-    assert surviving == set()
+    assert graph, "no imports were found at all, so the cycle check proves nothing"
+    assert graph["pipeline"], "the pipeline imports nothing, which cannot be right"
