@@ -28,6 +28,10 @@ from coldfix.pipeline.state import PipelineState
 
 UPDATES: Mapping[str, Mapping[str, object]] = {
     "refuse": {"route": "proceed", "project": {"image": "python:3.12-slim", "tier": 1}},
+    "ground": {
+        "route": "runnable",
+        "runnable": {"command": ["python", "coldfix/drive.py"], "digest": "9f2a"},
+    },
     "scan": {
         "route": "findings",
         "measurements": [{"id": "m-1", "wall": 2.41}],

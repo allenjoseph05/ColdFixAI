@@ -1,18 +1,26 @@
-"""Six nodes, six routers, and nothing that costs a token.
+"""Seven nodes, seven routers, and nothing that costs a token.
 
-S-24.1. LangGraph sequences and persists; it never touches a prompt. That is the
-rule that makes it worth having here rather than something to work around: the
-orchestration is free, and the whole cost of a run sits inside the three nodes
-that call a model.
+S-24.1, and S-28.2 for the seventh. LangGraph sequences and persists; it never
+touches a prompt. That is the rule that makes it worth having here rather than
+something to work around: the orchestration is free, and the whole cost of a run
+sits inside the nodes that call a model.
 
 **`StateGraph` only, never a prebuilt agent.** A framework that decides what goes
 into a message list decides the thing this project exists to control. Every node
 is a function supplied from outside, and this module knows what order they run
 in and nothing about what they do.
 
+**`ground` is its own node** (ADR 175). Making a program measurable and finding
+waste in it are two jobs with different bounds, different tiers and different
+failure modes, and the boundary between them was already a hard fact in
+`agent/scan.py` -- it just was not a node, so nothing was checkpointed there and
+nothing could resume or rewind to it. Now a crash during measurement resumes at
+`scan` instead of installing the project again, and the loops back from
+`audit_finding` and `ship` return to `scan` for the same reason.
+
 **Every ending is a real answer.** Refused, unmeasurable, nothing found,
-found-but-not-fixable, escalated, shipped. Four of the six nodes can end a run,
-and none of those endings is a failure -- which is why an unrecognised route
+found-but-not-fixable, escalated, shipped. Every one of the seven nodes can end a
+run, and none of those endings is a failure -- which is why an unrecognised route
 raises instead of quietly falling through to `END`. A run must not stop silently
 at the point somebody was supposed to be told something.
 """
@@ -89,9 +97,15 @@ class Step(Protocol):
 
 
 class Node(StrEnum):
-    """The six, in the order they first run."""
+    """The seven, in the order they first run."""
 
     REFUSE = "refuse"
+    GROUND = "ground"
+    """Make the program measurable: write a driver and measure until the harness
+    says the workload repeats. Only a verified measurement ends this node, and a
+    program that cannot be made to measure ends the run here rather than in
+    `scan` (ADR 175)."""
+
     SCAN = "scan"
     AUDIT_FINDING = "audit_finding"
     OPTIMIZE = "optimize"
@@ -104,6 +118,7 @@ class Wiring:
     """What each node does. Supplied, never built here."""
 
     refuse: Step
+    ground: Step
     scan: Step
     audit_finding: Step
     optimize: Step
@@ -119,12 +134,9 @@ class Wiring:
 # reachable set nobody can see, and an unreachable node looks identical to a
 # correctly wired one.
 ROUTES: Mapping[Node, Mapping[str, str]] = {
-    Node.REFUSE: {"proceed": Node.SCAN.value, "refused": END},
-    Node.SCAN: {
-        "findings": Node.AUDIT_FINDING.value,
-        "unmeasurable": END,
-        "nothing_found": END,
-    },
+    Node.REFUSE: {"proceed": Node.GROUND.value, "refused": END},
+    Node.GROUND: {"runnable": Node.SCAN.value, "unmeasurable": END},
+    Node.SCAN: {"findings": Node.AUDIT_FINDING.value, "nothing_found": END},
     Node.AUDIT_FINDING: {
         "sound": Node.OPTIMIZE.value,
         "needs_evidence": Node.SCAN.value,
@@ -138,6 +150,10 @@ ROUTES: Mapping[Node, Mapping[str, str]] = {
     },
     Node.SHIP: {"more_findings": Node.SCAN.value, "done": END},
 }
+# Both loops back -- `needs_evidence` and `more_findings` -- return to `scan`
+# and never to `ground`. The subject is already installed and its driver already
+# verified; going back means investigating again, not setting the project up
+# again, and the `runnable` channel is what carries that across (ADR 175).
 
 GATEABLE = (Node.OPTIMIZE, Node.SHIP)
 """Where a run may be made to wait for a person. `ship` always, because nothing
@@ -173,7 +189,7 @@ def build(
     gated: bool = True,
     early_review: bool = False,
 ) -> CompiledStateGraph[PipelineState, Any, Any, Any]:
-    """Assemble the six nodes and compile.
+    """Assemble the seven nodes and compile.
 
     Raises:
         MissingStepError: a node has nothing behind it.
