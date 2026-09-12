@@ -55,9 +55,16 @@ class Scripted:
     asked: list[str] = field(default_factory=list)
     models: list[str] = field(default_factory=list)
     caps: list[int] = field(default_factory=list)
+    blocks: list[list[dict[str, Any]]] = field(default_factory=list)
+    ttls: list[str] = field(default_factory=list)
 
     def complete(self, **kwargs: Any) -> ModelResponse:
-        self.asked.append(str(kwargs["messages"]))
+        # The rendered prompt: the blocks as the API concatenates them, which is
+        # what the model is shown. `str()` of the block list would escape every
+        # newline and no multi-line excerpt would ever match.
+        self.asked.append("".join(str(block["text"]) for block in kwargs["messages"][0]["content"]))
+        self.blocks.append([dict(block) for block in kwargs["messages"][0]["content"]])
+        self.ttls.append(str(kwargs["cache_ttl"]))
         self.models.append(str(kwargs["model"]))
         self.caps.append(int(kwargs["max_tokens"]))
         return ModelResponse(
@@ -192,6 +199,50 @@ def test_it_is_shown_the_finding_and_the_source() -> None:
     assert "each row is a SELECT" in asked
     assert SOURCE in asked
     assert "m-1.wall.median = 2.41" in asked
+
+
+def test_the_brief_is_cached_and_the_refusals_are_not() -> None:
+    """S-26.5. One breakpoint, on the half that is byte-identical every attempt.
+
+    The refusals grow, so a marker on them would be a write nothing ever reads --
+    which costs more than not caching at all.
+    """
+    client = Scripted([reply()] * ATTEMPTS)
+    with pytest.raises(NoTestError):
+        write(client, passes)
+
+    first, second = client.blocks[:2]
+    assert first[0]["cache_control"] == {"type": "ephemeral", "ttl": "5m"}
+    assert all("cache_control" not in block for block in (first[1], second[1]))
+    assert first[0]["text"] == second[0]["text"], "the cached half must not move"
+    assert first[1]["text"] != second[1]["text"], "the uncached half is what grows"
+    assert set(client.ttls) == {"5m"}
+
+
+def test_caching_did_not_change_what_the_model_is_asked() -> None:
+    """The blocks concatenate to exactly what `question` renders.
+
+    A caching change that also altered the question would be a change to what the
+    model was asked, smuggled in as an optimisation.
+    """
+    client = Scripted([reply()])
+    write(client)
+
+    assert client.asked[0] == question(finding(), SOURCE, ())
+
+
+def test_the_ledger_is_told_the_lifetime_the_marker_asks_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The two must move together: a write bills 1.25x at five minutes and 2x at
+    an hour, and only the request says which. Checked at a lifetime other than the
+    default, because agreeing with the default proves nothing."""
+    monkeypatch.setattr("coldfix.evidence.falsify.CACHE_TTL", "1h")
+    client = Scripted([reply()])
+    write(client)
+
+    assert client.blocks[0][0]["cache_control"]["ttl"] == "1h"
+    assert set(client.ttls) == {"1h"}
 
 
 def test_the_prompt_asks_for_a_count_and_forbids_a_duration() -> None:
