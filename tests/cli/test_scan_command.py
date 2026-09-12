@@ -150,7 +150,7 @@ def test_plan_says_what_a_run_would_be_given_and_spends_nothing(tmp_path: Path) 
 
 def test_plan_says_repair_is_not_available_yet(tmp_path: Path) -> None:
     """Discovered in `plan` rather than at the node, half an hour into a run."""
-    assert "nothing writes the failing test yet" in "\n".join(plan_scan(config_of(tmp_path)))
+    assert "applying and measuring a candidate" in "\n".join(plan_scan(config_of(tmp_path)))
 
 
 # ----------------------------------------------------------------- assembly
