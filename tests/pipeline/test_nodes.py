@@ -450,6 +450,40 @@ def test_a_winning_candidate_becomes_the_patch_under_audit(repository: Path) -> 
     assert len(list_at(update, "candidates")) == 1
 
 
+def test_a_second_round_writes_only_what_it_added(repository: Path) -> None:
+    """The defect the composition check found. A second `optimize` seeded from the
+    state must not re-measure the candidate that lost, and must not write it into
+    the append-only channel a second time -- which is refused, by name."""
+    client = Scripted([json.dumps({"candidates": [{"approach": "prefetch", "diff": DIFF}]})])
+    state = sound_state()
+    first = optimize(resources(client, repository, repairs=repairs()), state)
+    state.candidates = list(list_at(first, "candidates"))
+
+    # Counted rather than inferred from what was written: measuring the repeat and
+    # then slicing it off the update would leave the channel correct and the run
+    # paying twice, which is half the defect and the half a write-only assertion
+    # cannot see.
+    applied: list[str] = []
+    base = repairs()
+
+    def watching(falsified: Falsified, candidate: Candidate) -> Scored:
+        applied.append(candidate.approach)
+        return base.apply(falsified, candidate)
+
+    again = Scripted([json.dumps({"candidates": [{"approach": "prefetch", "diff": DIFF}]})])
+    watched = Repairs(
+        falsify=base.falsify,
+        apply=watching,
+        under_audit=base.under_audit,
+        compare=base.compare,
+    )
+    second = optimize(resources(again, repository, repairs=watched), state)
+
+    assert applied == [], "the candidate that already lost was not measured again"
+    assert list_at(second, "candidates") == [], "and nothing new was written"
+    assert PipelineState(candidates=state.candidates + list_at(second, "candidates"))
+
+
 def test_nothing_beating_the_baseline_is_an_answer(repository: Path) -> None:
     client = Scripted([json.dumps({"candidates": [{"approach": "slower", "diff": DIFF}]})])
     update = optimize(resources(client, repository, repairs=repairs(wins=False)), sound_state())
@@ -457,11 +491,15 @@ def test_nothing_beating_the_baseline_is_an_answer(repository: Path) -> None:
     assert resolution(update, "f-1")["outcome"]
 
 
-def test_a_pipeline_with_no_test_writer_says_so_rather_than_reporting_a_search(
+def test_a_pipeline_with_no_repair_seams_says_so_rather_than_reporting_a_search(
     repository: Path,
 ) -> None:
     """A search that never ran and a search that found nothing are different facts,
-    and only one of them is an answer."""
+    and only one of them is an answer.
+
+    The failing test has a writer now (S-28.6); what a pipeline can still be
+    assembled without is the half that applies a candidate and measures it, which
+    needs a worktree and a container."""
     with pytest.raises(NodeError, match="misassembled harness"):
         optimize(resources(Scripted([]), repository), sound_state())
 

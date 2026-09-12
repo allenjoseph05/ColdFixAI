@@ -240,21 +240,36 @@ Apply = Callable[[Falsified, Candidate], Scored]
 measured -- or applied -- without a failing test having been proved first."""
 
 
-def search(
+def search(  # noqa: PLR0913 - the proof, the baseline, where candidates come from,
+    # how they are measured, how many there may be, and what was already measured.
+    # Every one is the caller's decision and a config object would hide them.
     *,
     falsified: Falsified,
     baseline: Scored,
     propose: Propose,
     apply: Apply,
     limit: int = MAX_CANDIDATES,
+    already: Sequence[Scored] = (),
 ) -> Archive:
     """Generate, measure, keep, repeat. Selection is by measurement only.
 
     `propose` sees the archive, so a later round knows what already lost. It is
     called until the limit is reached or it offers nothing new; offering a repeat
     is not an error, it is simply not measured again.
+
+    **`already` is what a second search must not forget.** S-28.5 found this at
+    the join: when the patch audit sends a patch back, `optimize` runs again, and
+    a fresh archive has never heard of the candidate that just lost -- so the
+    same approach is proposed, measured a second time, and written into an
+    append-only channel that correctly refuses it. Seeding the archive restores
+    the property E22 built: a search that forgets its failures repeats them, and
+    every repeat is paid for twice.
+
+    The limit therefore bounds the candidates measured **for one finding**, not
+    for one round. Eight attempts is eight attempts however many times the
+    Adversary sends one back.
     """
-    archive = Archive(baseline=baseline)
+    archive = Archive(baseline=baseline, scored=tuple(already))
     while len(archive.scored) < limit:
         fresh = [c for c in propose(archive) if not archive.already_tried(c.approach)]
         if not fresh:

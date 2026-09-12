@@ -199,6 +199,45 @@ def test_a_losing_approach_is_not_proposed_twice() -> None:
     assert len(archive.scored) == 1
 
 
+def test_a_search_seeded_with_earlier_attempts_does_not_measure_them_again() -> None:
+    """S-28.5 found this at the join: when the patch audit sends a patch back,
+    `optimize` searches again, and a fresh archive has never heard of the
+    candidate that just lost -- so it is proposed, measured a second time, and
+    written into an append-only channel that refuses it."""
+    applied: list[str] = []
+
+    def apply(_: Falsified, c: Candidate) -> Scored:
+        applied.append(c.approach)
+        return scored(c.approach, 9.9)
+
+    lost = scored("cache", 9.9)
+    archive = search(
+        falsified=gate(),
+        baseline=BASELINE,
+        propose=lambda _: [candidate("cache"), candidate("hoist")],
+        apply=apply,
+        already=[lost],
+    )
+
+    assert applied == ["hoist"], "the one that already lost was not measured again"
+    assert [entry.candidate.approach for entry in archive.scored] == ["cache", "hoist"]
+
+
+def test_the_limit_counts_the_candidates_for_a_finding_not_for_a_round() -> None:
+    """Eight attempts is eight attempts however many times a patch is sent back."""
+    earlier = [scored(f"try{index}", 9.9) for index in range(MAX_CANDIDATES - 1)]
+
+    archive = search(
+        falsified=gate(),
+        baseline=BASELINE,
+        propose=lambda _: [candidate("late"), candidate("later")],
+        apply=lambda _, c: scored(c.approach, 9.9),
+        already=earlier,
+    )
+
+    assert len(archive.scored) == MAX_CANDIDATES
+
+
 def test_the_proposer_is_shown_what_already_lost() -> None:
     """So a later round can do something different rather than guess again."""
     seen: list[int] = []

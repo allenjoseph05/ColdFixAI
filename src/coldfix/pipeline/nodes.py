@@ -225,6 +225,11 @@ def optimize(resources: Resources, state: PipelineState) -> Mapping[str, object]
 
     falsified = repairs.falsify(finding, source)
     baseline = _baseline(resources, state)
+    # What earlier rounds measured, so a patch the Adversary sent back does not
+    # start a search that has never heard of the candidate that just lost.
+    already = tuple(
+        Scored.model_validate(entry) for entry in state.candidates if isinstance(entry, Mapping)
+    )
     archive = search(
         falsified=falsified,
         baseline=baseline,
@@ -232,9 +237,10 @@ def optimize(resources: Resources, state: PipelineState) -> Mapping[str, object]
             meter=resources.meter, finding=finding, source=source, falsified=falsified
         ),
         apply=repairs.apply,
+        already=already,
     )
 
-    measured = [entry.model_dump(mode="json") for entry in archive.scored]
+    measured = [entry.model_dump(mode="json") for entry in archive.scored[len(already) :]]
     winner = archive.winner
     if winner is None:
         return {
