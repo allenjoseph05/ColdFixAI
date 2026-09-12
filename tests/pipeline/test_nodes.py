@@ -161,6 +161,8 @@ def repairs(*, wins: bool = True, broke: bool = False) -> Repairs:
             measurement_id=f"m-{candidate.identifier}",
             wall_s=0.5 if wins else 9.0,
             peak_rss_bytes=81_234,
+            outputs_match=True,
+            tests_pass=True,
         )
 
     def under_audit(diff: str) -> PatchUnderAudit:
