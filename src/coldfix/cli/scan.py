@@ -241,8 +241,11 @@ def resources_for(
     return Resources(
         meter=meter,
         ledger=measurements,
-        toolbox=SandboxedToolbox(
-            sandbox=Sandbox(image=config.image, workspace=workspace), ledger=measurements
+        # A factory: the image is `refuse`'s to establish, not this function's to
+        # assume (S-28.1b, ADR 191). Still opens nothing -- no container is
+        # started until a node asks for tools.
+        toolbox=lambda image: SandboxedToolbox(
+            sandbox=Sandbox(image=image, workspace=workspace), ledger=measurements
         ),
         repository=workspace,
         image=config.image,

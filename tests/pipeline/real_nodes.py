@@ -149,14 +149,21 @@ def assembled(tmp_path: Path, client: ByCaller, *, breaks: bool = False) -> Reso
     root.mkdir(exist_ok=True, parents=True)
     (root / "app.py").write_text(SOURCE, encoding="utf-8")
     ledger = Ledger()
+    tools = FakeTools(ledger)
     bare = Resources(
         meter=metered(client),
         ledger=ledger,
-        toolbox=FakeTools(ledger),
+        # One toolbox whatever image is asked for: these runs drive the nodes,
+        # and which container they would have used is `refuse`'s business.
+        toolbox=lambda _image: tools,
         repository=root,
         image="subject:latest",
         docker=FakeDocker(),
         read_source=lambda _: SOURCE,
+        # Named, never built. `refuse` asks for the wheel, and the real one
+        # shells out to `uv build` -- which would put a package build inside
+        # every composition and crash-resume run.
+        wheel=lambda: root / "coldfix-0.1.0-py3-none-any.whl",
         ground_bounds=Bounds(turns=4, until_phase=Phase.MEASURING),
         scan_bounds=Bounds(turns=4),
     )
