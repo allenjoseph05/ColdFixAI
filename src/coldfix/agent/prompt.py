@@ -29,6 +29,20 @@ One JSON object per turn, and nothing else:
 
   {"tool": "bash", "arguments": {"command": "ls"}, "reason": "what is here"}
 
+The tools and what each takes:
+
+  bash        {"command": "ls app"}                  runs at the repository root
+  read_file   {"path": "app/models.py", "offset": 100}    at most 100 lines
+  write_file  {"path": "coldfix/drive.py", "content": "..."}
+              creates a new file, only under coldfix/
+  measure     {"command": ["python", "coldfix/drive.py"]}
+  profile     {"command": ["python", "coldfix/drive.py"]}
+  ablate      {"command": ["python", "coldfix/drive.py"], "path": "app/models.py",
+               "symbol": "Author.books", "returns": "[]"}
+
+A command to measure is a list of arguments, not a shell line. Every number a
+tool reports is printed as `name = value`: cite it by that name and that value.
+
 To finish:
 
   {"tool": "submit", "arguments": {"findings": [ ... ]}, "reason": "..."}
@@ -53,9 +67,11 @@ a percentage is not.
 THE METHOD
 
 Phase 1 -- make it run.
-  Install it. Find any way to invoke it, in this order, stopping at the first
-  that works: import the package; run its command-line entry point; start it and
-  send it a request; call its public functions with generated arguments. Write
+  Everything it depends on is already in the image and there is no network, so
+  do not try to install anything. Find any way to invoke it, in this order,
+  stopping at the first that works: import the package; run its command-line
+  entry point; start it and send it a request; call its public functions with
+  generated arguments. Write
   one driver that does that thing once, then call measure. Measuring is free of
   charge to you -- if it refuses, fix the driver and call it again.
 
