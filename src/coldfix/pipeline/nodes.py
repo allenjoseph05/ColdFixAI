@@ -35,6 +35,7 @@ from typing import Any
 from coldfix.agent.prompt import SYSTEM as SCAN_SYSTEM
 from coldfix.agent.scan import Bounds, Outcome, Phase, Toolbox, scan
 from coldfix.collect.tiers import Docker, Tier, detect
+from coldfix.collect.wheel import build_wheel
 from coldfix.evidence.adversary import Compare, review_patch
 from coldfix.evidence.audit import Verdict, attack
 from coldfix.evidence.auditor import review
@@ -95,11 +96,34 @@ class Resources:
 
     meter: Meter
     ledger: Ledger
-    toolbox: Toolbox
+
+    toolbox: Callable[[str], Toolbox]
+    """Given the image to run in, the tools for a container of it. **S-28.1b.**
+
+    A factory rather than a `Toolbox`, because *which* image a tool call runs in
+    is not known when the resources are assembled. It is what `refuse`
+    establishes by probing, and the collector image it builds is `FROM` the
+    operator's -- so an object frozen before the probe would be a type claiming to
+    know something nobody has established yet.
+    """
+
     repository: Path
     image: str
+    """The operator's image, as configured. What a tool call actually runs in is
+    `project["runs_in"]`, which `refuse` writes after probing."""
+
     docker: Docker
     read_source: Callable[[str], str]
+
+    wheel: Callable[[], Path] = build_wheel
+    """The ColdFix wheel the collector image installs, built on demand.
+
+    A thunk so that assembling the resources still opens nothing: the build
+    happens inside `refuse`, *after* the real-time screen and the production
+    guard have had their say. Building it at assembly time would put an image
+    build ahead of the two refusals that exist to stop one.
+    """
+
     database_url: str | None = None
     store: Remembers | None = None
     """Where what was tried survives a rewind (ADR 186).
@@ -135,7 +159,12 @@ def refuse(resources: Resources, state: PipelineState) -> Mapping[str, object]:
     except (RealTimeSystemError, IncompleteScreeningError, ProductionGuardError) as declined:
         return _refused(project, str(declined))
 
-    capabilities = detect(resources.image, root=resources.repository, docker=resources.docker)
+    capabilities = detect(
+        resources.image,
+        root=resources.repository,
+        docker=resources.docker,
+        wheel=resources.wheel(),
+    )
     if capabilities.tier is Tier.UNMEASURABLE:
         return _refused(project, capabilities.statement())
 
@@ -144,6 +173,12 @@ def refuse(resources: Resources, state: PipelineState) -> Mapping[str, object]:
         "project": {
             **project,
             "image": resources.image,
+            # The image a tool call runs in, written to the state rather than
+            # held in a closure (S-28.1b). It is a fact the probe discovered, and
+            # facts are what a checkpoint carries -- so a resumed run in a fresh
+            # process uses the image this run built, instead of re-probing or
+            # quietly falling back to one with no collector in it.
+            "runs_in": capabilities.entry_image,
             "tier": int(capabilities.tier),
             "available": list(capabilities.available),
             "unavailable": list(capabilities.unavailable),
@@ -157,7 +192,7 @@ def ground(resources: Resources, state: PipelineState) -> Mapping[str, object]:
     _restore(resources, state)
     outcome = scan(
         resources.meter,
-        toolbox=resources.toolbox,
+        toolbox=resources.toolbox(_entry_image(resources, state)),
         ledger=resources.ledger,
         system=resources.system,
         bounds=resources.ground_bounds,
@@ -182,7 +217,7 @@ def scan_for_waste(resources: Resources, state: PipelineState) -> Mapping[str, o
     _restore(resources, state)
     outcome = scan(
         resources.meter,
-        toolbox=resources.toolbox,
+        toolbox=resources.toolbox(_entry_image(resources, state)),
         ledger=resources.ledger,
         system=resources.system,
         bounds=resources.scan_bounds,
@@ -370,6 +405,19 @@ def _step(
 
 def _refused(project: dict[str, Any], because: str) -> Mapping[str, object]:
     return {"route": "refused", "project": {**project, "refused": because}}
+
+
+def _entry_image(resources: Resources, state: PipelineState) -> str:
+    """The image a tool call runs in: what `refuse` probed, or the configured one.
+
+    The fallback is reachable only where `refuse` has not run, which in the
+    compiled graph is nowhere -- `START` goes to `refuse` and every path to the
+    agent passes through it. It exists so a node can be driven directly in a
+    test without staging a probe result, and it is the operator's image because
+    that is the only image such a test can mean.
+    """
+    runs_in = state.project.get("runs_in")
+    return str(runs_in) if isinstance(runs_in, str) and runs_in else resources.image
 
 
 def _restore(resources: Resources, state: PipelineState) -> None:

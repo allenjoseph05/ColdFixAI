@@ -11,9 +11,16 @@ a capability, and a capability is established by *exercising* it:
 
 | Tier | Question | How it is answered |
 |---|---|---|
-| 0 | can a process run at all? | run one and see |
-| 1 | can instrumentation be added? | **build the derived image and see if the build succeeds** |
+| — | can a process run at all? | run one and see |
+| — | **can it carry the collector?** | build `FROM` it with this package's wheel |
+| 0 | both of the above | nothing further is needed to time a process |
+| 1 | can instrumentation be added? | build again, `FROM` the collector, and see |
 | 2 | is there a composed environment? | ask Docker to read one |
+
+The second row is a precondition rather than a tier, and it is why an image that
+refuses this package is `UNMEASURABLE` rather than tier 0 (S-28.1b, ADR 191):
+every tool call is `python -m coldfix.collect.run` *inside* the container, so an
+image that will not have it cannot deliver even the elapsed time tier 0 claims.
 
 Building an image to find out whether an image can be built is slower than
 matching a string, and it is the only method that is right about an image nobody
@@ -28,7 +35,7 @@ the operator built stays exactly as they built it.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
@@ -82,8 +89,25 @@ class Capabilities(BaseModel, frozen=True):
     """The tier reached, how it was established, and what it cannot see."""
 
     image: str
+    """The operator's image, as configured. Never modified."""
+
     tier: Tier
     probes: tuple[Probe, ...]
+
+    runs_in: str = ""
+    """The image a tool call should actually run in. **S-28.1b.**
+
+    The derived tag once one was built, and the operator's image otherwise. It
+    exists because every tool call is `python -m coldfix.collect.run` inside the
+    container, so a run that used `image` here would be running an image with no
+    collector in it -- which is what happened before this field: `detect` built a
+    derived tag as a probe and then discarded it.
+    """
+
+    @property
+    def entry_image(self) -> str:
+        """Where to run, falling back to the operator's image when nothing was built."""
+        return self.runs_in or self.image
 
     @property
     def available(self) -> tuple[str, ...]:
@@ -121,31 +145,84 @@ class Docker(Protocol):
 
     Narrow on purpose: three questions, none of which is *"what kind of image is
     this"*, because that question has no reliable answer.
+
+    `context` is the build context: filenames mapped to the files that supply
+    them, copied in beside the Dockerfile. It exists because the collector
+    reaches the image as a wheel, and a `COPY` needs something to copy.
     """
 
     def can_run(self, image: str) -> BuildResult: ...
 
-    def build(self, dockerfile: str, tag: str) -> BuildResult: ...
+    def build(
+        self, dockerfile: str, tag: str, context: Mapping[str, Path] | None = None
+    ) -> BuildResult: ...
 
     def reads_compose(self, root: Path) -> BuildResult: ...
 
 
-def derived_dockerfile(image: str, packages: Sequence[str] = TOOL_PACKAGES) -> str:
-    """A layer on top of the operator's image. Never a change to it.
+def collector_dockerfile(image: str, wheel: str) -> str:
+    """The image every tool call runs in: theirs, plus this package.
+
+    **Required, not an upgrade.** `agent/toolbox.py` runs
+    `python -m coldfix.collect.run` inside the container, so without this there
+    is no `measure`, no `bash`, and no `read_file` -- an image that cannot take
+    it cannot be measured at all, which is why `detect` treats a failure here as
+    `UNMEASURABLE` rather than as tier 0.
+
+    **`--no-deps`, plus pydantic and nothing else.** This package declares
+    `anthropic`, `langgraph`, two checkpointers and `psycopg`, and every one of
+    them belongs to the half that runs on the *host*. Nothing under `collect/`
+    imports anything but the standard library and pydantic, so installing the
+    declared set would push the whole agent stack into somebody else's image --
+    slow, pointless, and a real chance of moving a pin the subject depends on.
 
     `USER root` is set for the install and left there: the derived image exists
     only to be measured in and is discarded with the run, and an image that
-    cannot write to its own site-packages cannot receive a profiler.
+    cannot write to its own site-packages cannot receive anything.
+    """
+    return (
+        f"FROM {image}\n"
+        "USER root\n"
+        f"COPY {wheel} /tmp/{wheel}\n"
+        f'RUN pip install --no-cache-dir --no-deps "/tmp/{wheel}" && '
+        'pip install --no-cache-dir "pydantic>=2.9"\n'
+    )
+
+
+def derived_dockerfile(image: str, packages: Sequence[str] = TOOL_PACKAGES) -> str:
+    """The collector image, plus the instruments. A layer on a layer.
+
+    `image` here is the *collector* tag, not the operator's: built `FROM` that
+    rather than repeating its install, so a failure is unambiguously about the
+    instruments. The collector already installed, or this build would never have
+    been attempted.
     """
     return f"FROM {image}\nUSER root\nRUN pip install --no-cache-dir {' '.join(packages)}\n"
 
 
-def detect(image: str, *, root: Path, docker: Docker, tag: str = "coldfix-derived") -> Capabilities:
+def detect(  # noqa: PLR0913 - the image, the repository, the docker seam, the wheel
+    # and the two tags are six independent decisions of the caller's, and none is
+    # derivable from another. A config object holding them would be an abstraction
+    # with one implementation whose only purpose is to be unpacked here.
+    image: str,
+    *,
+    root: Path,
+    docker: Docker,
+    wheel: Path,
+    collector_tag: str = "coldfix-collector",
+    tag: str = "coldfix-derived",
+) -> Capabilities:
     """Establish the tier by exercising each capability in turn.
 
     Stops climbing at the first thing that does not work, because the tiers are
     cumulative: an image that cannot run a process will not build either, and
     trying would only turn one honest answer into two confusing ones.
+
+    **The collector is the second probe and it is not optional (S-28.1b, ADR
+    191).** Every tool call runs `python -m coldfix.collect.run` in the
+    container, so an image that cannot take this package cannot be measured at
+    all -- not even for elapsed time. Reporting that as tier 0 would advertise
+    exactly the measurements it cannot deliver.
     """
     probes: list[Probe] = []
 
@@ -154,18 +231,24 @@ def detect(image: str, *, root: Path, docker: Docker, tag: str = "coldfix-derive
     if not runs.ok:
         return Capabilities(image=image, tier=Tier.UNMEASURABLE, probes=tuple(probes))
 
-    built = docker.build(derived_dockerfile(image), tag)
-    probes.append(
-        Probe(
-            name="accepts_instrumentation",
-            achieved=built.ok,
-            detail=built.detail,
-        )
+    carries = docker.build(
+        collector_dockerfile(image, wheel.name), collector_tag, {wheel.name: wheel}
     )
+    probes.append(Probe(name="carries_the_collector", achieved=carries.ok, detail=carries.detail))
+    if not carries.ok:
+        return Capabilities(image=image, tier=Tier.UNMEASURABLE, probes=tuple(probes))
+
+    built = docker.build(derived_dockerfile(collector_tag), tag)
+    probes.append(Probe(name="accepts_instrumentation", achieved=built.ok, detail=built.detail))
     if not built.ok:
-        return Capabilities(image=image, tier=Tier.OS_ONLY, probes=tuple(probes))
+        # Tier 0 runs in the collector image: the operator's image plus this
+        # package and nothing else. That is what makes tier 0's own list --
+        # elapsed time, memory, I/O, ablation -- true rather than advertised.
+        return Capabilities(
+            image=image, tier=Tier.OS_ONLY, probes=tuple(probes), runs_in=collector_tag
+        )
 
     composed = docker.reads_compose(root)
     probes.append(Probe(name="composed_environment", achieved=composed.ok, detail=composed.detail))
     tier = Tier.ORCHESTRATED if composed.ok else Tier.INSTRUMENTED
-    return Capabilities(image=image, tier=tier, probes=tuple(probes))
+    return Capabilities(image=image, tier=tier, probes=tuple(probes), runs_in=tag)

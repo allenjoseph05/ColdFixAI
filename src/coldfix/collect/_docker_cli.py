@@ -6,8 +6,10 @@ so a test can exercise every tier without Docker running.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 
 from coldfix.collect.tiers import BuildResult
@@ -33,21 +35,29 @@ class DockerCli:
             return BuildResult(True, "the image's own entrypoint ran")
         return BuildResult(False, completed.detail)
 
-    def build(self, dockerfile: str, tag: str) -> BuildResult:
+    def build(
+        self, dockerfile: str, tag: str, context: Mapping[str, Path] | None = None
+    ) -> BuildResult:
+        """Build one image from a Dockerfile and the files it copies.
+
+        The context is assembled in a temporary directory rather than pointed at
+        the repository: a `docker build` whose context is the subject's own tree
+        uploads it to the daemon, which is slow, and would let a `COPY` in a
+        Dockerfile this system generated reach a file this system did not intend
+        to send.
+        """
         directory = Path(tempfile.mkdtemp(prefix="coldfix-derived-"))
         try:
             (directory / "Dockerfile").write_text(dockerfile, encoding="utf-8")
+            for name, source in (context or {}).items():
+                shutil.copyfile(source, directory / name)
             completed = _run(["docker", "build", "-q", "-t", tag, str(directory)], BUILD_TIMEOUT)
             return BuildResult(
                 completed.ok,
-                "instrumentation installed into a derived image"
-                if completed.ok
-                else completed.detail,
+                f"built {tag}" if completed.ok else completed.detail,
             )
         finally:
-            for leftover in directory.glob("*"):
-                leftover.unlink()
-            directory.rmdir()
+            shutil.rmtree(directory, ignore_errors=True)
 
     def reads_compose(self, root: Path) -> BuildResult:
         """Ask Docker whether there is a composed environment here.

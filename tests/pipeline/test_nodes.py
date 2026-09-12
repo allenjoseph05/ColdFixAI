@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 from pydantic import JsonValue
 
-from coldfix.agent.scan import Bounds, Phase, ToolResult
+from coldfix.agent.scan import Bounds, Phase, Toolbox, ToolResult
 from coldfix.collect.measurement import BareMeasurement, Mode, Spread
 from coldfix.collect.tiers import BuildResult, Tier
 from coldfix.cost.accounting import TokenUsage
@@ -98,17 +98,29 @@ class FakeTools:
 
 
 class FakeDocker:
-    """A `Docker` that reaches whichever tier the test asks for."""
+    """A `Docker` that reaches whichever tier the test asks for.
 
-    def __init__(self, *, runs: bool = True, builds: bool = True) -> None:
-        self.runs, self.builds = runs, builds
+    `carries` answers the collector build and `builds` the instrument build, so a
+    test can ask for an image that takes this package and not a profiler --
+    which is tier 0 -- separately from one that takes neither, which is
+    unmeasurable (S-28.1b).
+    """
+
+    def __init__(self, *, runs: bool = True, carries: bool = True, builds: bool = True) -> None:
+        self.runs, self.carries, self.builds = runs, carries, builds
+        self.tags: list[str] = []
 
     def can_run(self, image: str) -> BuildResult:
         del image
         return BuildResult(self.runs, "a process started" if self.runs else "nothing ran")
 
-    def build(self, dockerfile: str, tag: str) -> BuildResult:
-        del dockerfile, tag
+    def build(
+        self, dockerfile: str, tag: str, context: Mapping[str, Path] | None = None
+    ) -> BuildResult:
+        del dockerfile, context
+        self.tags.append(tag)
+        if len(self.tags) == 1:
+            return BuildResult(self.carries, "collector installed" if self.carries else "no pip")
         return BuildResult(self.builds, "instrumented" if self.builds else "no package manager")
 
     def reads_compose(self, root: Path) -> BuildResult:
@@ -209,14 +221,18 @@ def resources(
     client: Scripted, tmp_path: Path, *, tools: FakeTools | None = None, **extra: Any
 ) -> Resources:
     ledger = extra.pop("ledger", None) or Ledger()
+    box = tools or FakeTools(ledger)
     return Resources(
         meter=metered(client),
         ledger=ledger,
-        toolbox=tools or FakeTools(ledger),
+        # The factory ignores the image: what these tests drive is the node, and
+        # which container it would have used is `refuse`'s business.
+        toolbox=lambda _image: box,
         repository=tmp_path,
         image="subject:latest",
         docker=FakeDocker(),
         read_source=lambda _: SOURCE,
+        wheel=lambda: tmp_path / "coldfix-0.1.0-py3-none-any.whl",
         ground_bounds=Bounds(turns=4, until_phase=Phase.MEASURING),
         scan_bounds=Bounds(turns=4),
         **extra,
@@ -258,6 +274,34 @@ def test_a_repository_that_is_nothing_special_proceeds(repository: Path) -> None
     assert "stacks_with_line_numbers" in project["available"]
 
 
+def test_the_image_a_tool_call_runs_in_reaches_the_state(repository: Path) -> None:
+    """**S-28.1b.** Every tool call is `python -m coldfix.collect.run` inside the
+    container, so it has to run in the image carrying this package -- not the
+    operator's. The probe establishes which, and it travels in the state rather
+    than in a closure, so a resumed run in a fresh process uses the image this
+    run built instead of re-probing for it."""
+    update = refuse(resources(Scripted([]), repository), PipelineState())
+    project = mapping_at(update, "project")
+
+    assert project["image"] == "subject:latest", "the operator's image is recorded unchanged"
+    assert project["runs_in"] == "coldfix-derived"
+    assert project["runs_in"] != project["image"]
+
+
+def test_an_image_that_cannot_take_the_collector_is_declined(repository: Path) -> None:
+    """Not tier 0. Tier 0 advertises elapsed time, memory, I/O and ablation, and
+    every one of those is this package running inside the container -- so an
+    image that will not have it cannot deliver them, and saying otherwise would
+    promise measurements that cannot be taken."""
+    at_hand = resources(Scripted([]), repository)
+    refused = refuse(
+        Resources(**{**at_hand.__dict__, "docker": FakeDocker(carries=False)}), PipelineState()
+    )
+
+    assert refused["route"] == "refused"
+    assert "nothing was measured" in str(refused["project"])
+
+
 def test_a_real_time_system_is_declined_before_anything_is_built(repository: Path) -> None:
     """The one category where running this system could make things worse while
     reporting success."""
@@ -288,6 +332,29 @@ def test_an_image_nothing_runs_in_is_declined(repository: Path) -> None:
 
 
 # ------------------------------------------------------------------- ground
+
+
+def test_the_agent_runs_in_the_image_the_probe_built(repository: Path) -> None:
+    """**S-28.1b.** Both halves, because the dangerous direction is the fallback:
+    a node that always used the configured image would pass every other test in
+    this file and run `python -m coldfix.collect.run` in an image with no
+    collector in it.
+    """
+    asked: list[str] = []
+    at_hand = resources(Scripted([act("measure", command=DRIVER)]), repository)
+    box = at_hand.toolbox("whichever")
+
+    def factory(image: str) -> Toolbox:
+        asked.append(image)
+        return box
+
+    probed = Resources(**{**at_hand.__dict__, "toolbox": factory})
+    ground(probed, PipelineState(project={"runs_in": "coldfix-derived"}))
+    assert asked == ["coldfix-derived"], "the probed image is what a tool call runs in"
+
+    asked.clear()
+    ground(probed, PipelineState())
+    assert asked == ["subject:latest"], "and with no probe, the configured one"
 
 
 def test_grounding_stops_at_the_measurement_and_hands_over_how_to_drive(repository: Path) -> None:
