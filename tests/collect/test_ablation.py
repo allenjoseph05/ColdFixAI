@@ -282,6 +282,13 @@ def test_output_unchanged_after_stubbing_is_itself_a_result(tmp_path: Path) -> N
 
 
 def test_a_count_can_be_compared_across_the_two_sides(tmp_path: Path) -> None:
+    """What is under test is the comparison of two counts, not two durations -- so
+    the clock is fixed, as it is in every other test here that runs a real child.
+
+    Without it this asks two real subprocesses to agree on wall time within 20%,
+    which a busy machine decides rather than the code: it failed once in the gate
+    at 78% and passed four times in a row afterwards, unchanged.
+    """
     result = ablate(
         workload(tmp_path),
         cwd=tmp_path,
@@ -290,6 +297,7 @@ def test_a_count_can_be_compared_across_the_two_sides(tmp_path: Path) -> None:
         returns="0",
         repeats=2,
         runner=RealRunner(),
+        clock=FixedClock(),
     )
     assert result.removed("output_bytes") is not None
     assert result.removed("measurement_id") is None
