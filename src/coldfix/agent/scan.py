@@ -149,6 +149,14 @@ class Bounds:
     """Thinking and the reply together (ADR 179). Opus 5 thinks unless told not to,
     and 2,048 -- sized for one JSON action -- could be spent before the action."""
 
+    until_phase: Phase | None = None
+    """Stop when the transcript reaches this phase. **S-28.3, ADR 183.**
+
+    `ground` passes `MEASURING`: its job is done the moment a measurement verifies,
+    and the node boundary is where the model changes and the conversation restarts.
+    `None` runs the loop to a submission or another bound, which is what a scan
+    does."""
+
 
 class ToolResult(BaseModel, frozen=True):
     """What a tool returned, and whether it produced a measurement."""
@@ -215,9 +223,12 @@ class Outcome:
     """`submitted`, or the bound that ended it. Both are answers."""
 
 
-def scan(  # noqa: PLR0913 - what pays for the calls, what it may do, what to check
-    # claims against, how far it may go, and how to read a reply. Every one is a
-    # decision the caller makes; a config object would hide them.
+def scan(  # noqa: PLR0911, PLR0913 - what pays for the calls, what it may do, what
+    # to check claims against, how far it may go, and how to read a reply. Every one
+    # is a decision the caller makes; a config object would hide them. The seven
+    # returns are the seven endings this loop is documented to have -- submitted,
+    # grounded, budget, refused, truncated, a bound, out of turns -- and each is an
+    # answer rather than a failure, so collapsing them would lose which one happened.
     meter: Meter,
     *,
     toolbox: Toolbox,
@@ -226,6 +237,8 @@ def scan(  # noqa: PLR0913 - what pays for the calls, what it may do, what to ch
     bounds: Bounds | None = None,
     reader: Reader | None = None,
     clock: Callable[[], float] = time.monotonic,
+    phase: Phase = Phase.EXPLORING,
+    brief: str = "",
 ) -> Outcome:
     """Run the loop until it submits or runs out of room.
 
@@ -235,15 +248,24 @@ def scan(  # noqa: PLR0913 - what pays for the calls, what it may do, what to ch
     The budget is one of those bounds: the meter refuses a turn *before* it is
     sent, and the run ends with `budget` rather than with a call it could not pay
     for.
+
+    **`phase` and `brief` are the two nodes.** S-28.3, ADR 183. `ground` runs from
+    `EXPLORING` with `bounds.until_phase=MEASURING` and ends with `grounded` the
+    turn a measurement verifies; `scan` starts at `MEASURING` with a brief saying
+    how to drive the subject. The phase gate itself is untouched: what a phase
+    offers is still `Transcript.tools`, and only a verified `measure` moves the
+    transcript's own phase.
     """
     bounds = bounds or Bounds()
     reader = reader or JsonReader()
-    transcript = Transcript()
+    transcript = Transcript(phase=phase)
     started = clock()
-    conversation: list[dict[str, Any]] = [_turn("user", _opening(transcript))]
+    conversation: list[dict[str, Any]] = [_turn("user", _opening(transcript, brief))]
 
     for turn in range(bounds.turns):
         now = clock()
+        if bounds.until_phase is not None and transcript.phase is bounds.until_phase:
+            return Outcome((), transcript, "grounded")
         exceeded = _exceeded(turn, transcript, bounds, started, now)
         if exceeded:
             return Outcome((), transcript, exceeded)
@@ -359,11 +381,18 @@ def _exceeded(
     return None
 
 
-def _opening(transcript: Transcript) -> str:
-    return (
-        "Begin. Reply with one JSON object: "
-        '{"tool": ..., "arguments": {...}, "reason": "..."}.\n'
-        f"Available now: {', '.join(transcript.tools())}."
+def _opening(transcript: Transcript, brief: str = "") -> str:
+    """The first turn. `brief` is how one node's result reaches the next one's
+    conversation -- fresh rather than continued, so the prefix is the node's own."""
+    return "\n".join(
+        part
+        for part in (
+            brief,
+            "Begin. Reply with one JSON object: "
+            '{"tool": ..., "arguments": {...}, "reason": "..."}.\n'
+            f"Available now: {', '.join(transcript.tools())}.",
+        )
+        if part
     )
 
 

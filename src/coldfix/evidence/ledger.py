@@ -198,8 +198,17 @@ class Ledger:
         self._kinds: dict[str, str] = {}
 
     def record(self, measurement: Any) -> str:  # noqa: ANN401 - any measurement model
-        """Keep a measurement so claims can be checked against it."""
-        data = measurement.model_dump()
+        """Keep a measurement so claims can be checked against it.
+
+        **Dumped as JSON, not as Python.** A record holds tuples in Python mode --
+        a command, an empty `not_measured` -- and a checkpoint is JSON (ADR 003),
+        so those are values the state refuses to carry. Recording them in the form
+        a checkpoint can hold is what lets `entries` be written to it and
+        `restore` read it back identical; dumping one way and checkpointing
+        another would leave a resumed ledger holding lists where this one holds
+        tuples, and a citation checked against the wrong one.
+        """
+        data = measurement.model_dump(mode="json")
         identifier = str(data["measurement_id"])
         self._records[identifier] = _flatten(data)
         self._kinds[identifier] = type(measurement).__name__
@@ -219,6 +228,58 @@ class Ledger:
         """
         record = self._records.get(measurement_id)
         return None if record is None else dict(record)
+
+    def entries(self) -> tuple[Mapping[str, Any], ...]:
+        """Every record, in the shape a checkpoint carries. **S-28.3, ADR 183.**
+
+        Id, kind and flattened fields -- exactly what `restore` reads back, and
+        exactly what `attest` checks against. A checkpoint that carried less would
+        restore a ledger that answers some citations and not others.
+        """
+        return tuple(
+            {
+                "measurement_id": identifier,
+                "kind": self._kinds[identifier],
+                "fields": dict(self._records[identifier]),
+            }
+            for identifier in self.known
+        )
+
+    def restore(self, entries: Iterable[Mapping[str, Any]]) -> None:
+        """Rebuild from what a checkpoint carried.
+
+        **A resumed run must be able to re-check what it already proved.** The
+        finding audit's first attack re-attests every cited number against the
+        ledger as it stands, which is right -- a `Finding` survives a rewind and
+        the measurements behind it may not. But a resumed run starts with an empty
+        ledger, so without this that attack fails *fatally*: `unsound`, the one
+        verdict that does not send the run back for more evidence, for a finding
+        nothing was ever wrong with.
+
+        Nothing is re-measured. Running the workload again to rebuild this would
+        spend the run's money to learn what it already wrote down, and would get
+        slightly different numbers for it.
+
+        Raises:
+            EvidenceError: an entry is not one `entries` produced.
+        """
+        for entry in entries:
+            try:
+                identifier = str(entry["measurement_id"])
+                fields = entry["fields"]
+                kind = str(entry["kind"])
+            except (KeyError, TypeError) as malformed:
+                message = (
+                    f"this is not a measurement a checkpoint wrote: {entry!r}. A restored ledger "
+                    "is what a resumed run re-checks its findings against, so a record it cannot "
+                    "read is refused rather than skipped"
+                )
+                raise EvidenceError(message) from malformed
+            if not isinstance(fields, Mapping):
+                message = f"{identifier} carries {type(fields).__name__} where its fields should be"
+                raise EvidenceError(message)
+            self._records[identifier] = dict(fields)
+            self._kinds[identifier] = kind
 
     def attest(self, claim: Claim) -> Finding:
         """Check every cited number, or raise. There is no third outcome."""

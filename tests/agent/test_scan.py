@@ -387,6 +387,77 @@ def test_every_turn_is_asked_with_room_to_think() -> None:
     assert client.caps == [NON_STREAMING_MAX_TOKENS, NON_STREAMING_MAX_TOKENS]
 
 
+# ------------------------------------- S-28.3, ADR 183: two nodes, one loop
+
+
+def measuring() -> FakeTools:
+    return FakeTools(
+        results={"measure": ToolResult(content="ok", measurement_id="m-1", verified=True)}
+    )
+
+
+def test_grounding_stops_the_turn_the_workload_measures() -> None:
+    """`ground` is done the moment a measurement verifies. Running on would spend
+    the investigation's turns inside the node that installs things."""
+    client = Scripted([act("measure", command=["python", "drive.py"]), act("bash", command="ls")])
+    outcome = scan(
+        metered(client),
+        toolbox=measuring(),
+        ledger=Ledger(),
+        system=SYSTEM,
+        bounds=Bounds(until_phase=Phase.MEASURING),
+    )
+    assert outcome.stopped_by == "grounded"
+    assert outcome.transcript.phase is Phase.MEASURING
+    assert len(client.asked) == 1
+
+
+def test_without_that_bound_the_loop_runs_on_as_it_always_did() -> None:
+    """The control: the same script, unbounded by phase, keeps going."""
+    client = Scripted([act("measure", command=["python", "drive.py"]), act("submit", findings=[])])
+    outcome = scan(metered(client), toolbox=measuring(), ledger=Ledger(), system=SYSTEM)
+    assert outcome.stopped_by == "submitted"
+    assert len(client.asked) == 2
+
+
+def test_a_scan_can_start_already_measuring() -> None:
+    """Grounding proved the workload measures, and the runnable artifact is that
+    proof -- so the second node is offered the instruments from its first turn."""
+    client = Scripted([act("profile", command=["python", "drive.py"]), act("submit", findings=[])])
+    tools = FakeTools()
+    outcome = scan(
+        metered(client),
+        toolbox=tools,
+        ledger=Ledger(),
+        system=SYSTEM,
+        phase=Phase.MEASURING,
+    )
+    assert tools.called == ["profile"], "profile was offered on turn one"
+    assert outcome.transcript.phase is Phase.MEASURING
+
+
+def test_a_scan_that_starts_exploring_still_cannot_profile() -> None:
+    """The phase gate is unchanged: the tools are what enforce it, not the caller."""
+    client = Scripted([act("profile", command=["python", "drive.py"]), act("submit", findings=[])])
+    tools = FakeTools()
+    scan(metered(client), toolbox=tools, ledger=Ledger(), system=SYSTEM)
+    assert tools.called == [], "profile is not offered until a measurement verifies"
+
+
+def test_the_brief_opens_the_conversation() -> None:
+    """How the runnable reaches a conversation that is deliberately fresh."""
+    client = Scripted([act("submit", findings=[])])
+    scan(
+        metered(client),
+        toolbox=FakeTools(),
+        ledger=Ledger(),
+        system=SYSTEM,
+        phase=Phase.MEASURING,
+        brief="Drive it with: python drive.py",
+    )
+    assert "Drive it with: python drive.py" in text_of(client.asked[0][0])
+
+
 # ----------------------------------------------- the submission goes to the ledger
 
 
