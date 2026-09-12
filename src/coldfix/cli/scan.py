@@ -194,8 +194,9 @@ def plan_scan(config: ScanConfig) -> list[str]:
         f"run          {run_id_for(config)}",
         f"checkpoints  {config.worktree_root / CHECKPOINTS}",
         "gate         the run parks before `ship`; nothing reaches a repository unseen",
-        "repair       unavailable: nothing writes the failing test yet, so a run that "
-        "proves a finding will stop at `optimize` rather than invent one",
+        "repair       unavailable: applying and measuring a candidate needs a worktree "
+        "and a container this command does not open yet, so a run that proves a finding "
+        "will stop at `optimize` rather than pretend a search happened",
     ]
 
 

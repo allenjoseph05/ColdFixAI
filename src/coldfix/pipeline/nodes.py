@@ -38,9 +38,10 @@ from coldfix.collect.tiers import Docker, Tier, detect
 from coldfix.evidence.adversary import Compare, review_patch
 from coldfix.evidence.audit import Verdict, attack
 from coldfix.evidence.auditor import review
+from coldfix.evidence.falsify import Falsify
 from coldfix.evidence.ledger import Claim, Finding, Ledger
 from coldfix.evidence.optimizer import Optimizer
-from coldfix.evidence.repair import Apply, Candidate, Falsified, Scored, must_fail, search
+from coldfix.evidence.repair import Apply, Candidate, Falsified, Scored, search
 from coldfix.evidence.revisions import PatchUnderAudit
 from coldfix.llm.metered import Meter
 from coldfix.pipeline.graph import Step, Wiring
@@ -64,10 +65,6 @@ class NodeError(Exception):
     """A node was asked to run without what it needs. Never an answer."""
 
 
-WriteTest = Callable[[Finding, str], str]
-"""A finding and the source of the file it names in; a test that should fail out."""
-
-
 @dataclass(frozen=True)
 class Repairs:
     """What the repair half needs and cannot build for itself.
@@ -77,10 +74,12 @@ class Repairs:
     without Docker.
     """
 
-    write_test: WriteTest
-    run_test: Callable[[str], tuple[int, str]]
-    """Run a test against unpatched code: exit code and detail. Only a failure
-    mints the token that lets a patch exist at all."""
+    falsify: Falsify
+    """A finding and its source in; the proof a test failed on unpatched code out.
+
+    One seam rather than a writer and a runner (ADR 185), so `must_fail` stays the
+    only thing that can mint a `Falsified` and this node cannot assemble one from
+    a string it liked the look of."""
 
     apply: Apply
     under_audit: Callable[[str], PatchUnderAudit]
@@ -224,7 +223,7 @@ def optimize(resources: Resources, state: PipelineState) -> Mapping[str, object]
     identifier, finding = _next_sound(state)
     source = resources.read_source(finding.claim.location.file)
 
-    falsified = must_fail(repairs.write_test(finding, source), repairs.run_test)
+    falsified = repairs.falsify(finding, source)
     baseline = _baseline(resources, state)
     archive = search(
         falsified=falsified,

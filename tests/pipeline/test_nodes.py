@@ -22,8 +22,8 @@ from coldfix.agent.scan import Bounds, Phase, ToolResult
 from coldfix.collect.measurement import BareMeasurement, Mode, Spread
 from coldfix.collect.tiers import BuildResult, Tier
 from coldfix.cost.accounting import TokenUsage
-from coldfix.evidence.ledger import Ledger
-from coldfix.evidence.repair import Candidate, Falsified, Scored
+from coldfix.evidence.ledger import Finding, Ledger
+from coldfix.evidence.repair import Candidate, Falsified, Scored, must_fail
 from coldfix.evidence.revisions import Comparison, PatchUnderAudit, Side
 from coldfix.llm.client import ModelResponse
 from coldfix.pipeline.graph import Node, build
@@ -189,9 +189,14 @@ def repairs(*, wins: bool = True, broke: bool = False) -> Repairs:
 
         return run
 
+    def falsify(finding: Finding, source: str) -> Falsified:
+        return must_fail(
+            f"def test_{finding.claim.kind}(): assert {len(source)}",
+            lambda _: (1, "AssertionError: expected 1 query, got 161"),
+        )
+
     return Repairs(
-        write_test=lambda finding, source: f"def test_{finding.claim.kind}(): assert {len(source)}",
-        run_test=lambda _: (1, "AssertionError: expected 1 query, got 161"),
+        falsify=falsify,
         apply=apply,
         under_audit=under_audit,
         compare=compare,

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from coldfix.agent import prompt
-from coldfix.evidence import adversary, auditor, optimizer
+from coldfix.evidence import adversary, auditor, falsify, optimizer
 
 V3_PACKAGES = ("agent", "collect", "evidence", "pipeline")
 """The packages this registry is complete over.
@@ -85,8 +85,8 @@ ROLES: Mapping[Agent, Role] = {
     ),
     Agent.OPTIMIZER: Role(
         agent=Agent.OPTIMIZER,
-        purpose="write several candidate fixes for one proven finding, so measurement can choose",
-        prompts=(optimizer.SYSTEM,),
+        purpose="write the failing test, then several candidate fixes, so measurement can choose",
+        prompts=(falsify.SYSTEM, optimizer.SYSTEM),
         receives=(
             "one proven finding, and the source of the one file it names",
             "the test that already failed against that source",
