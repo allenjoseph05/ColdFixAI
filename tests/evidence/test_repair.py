@@ -8,12 +8,14 @@ generation.
 from __future__ import annotations
 
 import inspect
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import pytest
+from pydantic import ValidationError
 
 from coldfix.evidence.repair import (
     MAX_CANDIDATES,
+    WALL,
     Archive,
     Candidate,
     Falsified,
@@ -21,11 +23,32 @@ from coldfix.evidence.repair import (
     NoFailingTestError,
     Outcome,
     Scored,
+    UnmeasuredCandidateError,
+    UntimedCandidateError,
     must_fail,
+    score,
     search,
 )
 
 FAILED = (1, "AssertionError: expected 1 query, got 161")
+
+
+class Records:
+    """A ledger's read side, holding whatever a test puts in it.
+
+    `Mapping` rather than `dict` in the value type, because `dict` is invariant:
+    a literal record is a `dict[str, float]`, which is not a `dict[str, object]`.
+    """
+
+    def __init__(self, **records: Mapping[str, object]) -> None:
+        self._records = records
+
+    @property
+    def known(self) -> tuple[str, ...]:
+        return tuple(sorted(self._records))
+
+    def recorded(self, measurement_id: str) -> Mapping[str, object] | None:
+        return self._records.get(measurement_id)
 
 
 def gate(result: tuple[int, str] = FAILED) -> Falsified:
@@ -44,6 +67,12 @@ def scored(
     outputs_match: bool = True,
     tests_pass: bool = True,
 ) -> Scored:
+    """A measured candidate. The helper defaults; `Scored` itself does not.
+
+    The defaults live here because most of these tests are about selection and
+    say so by varying one field. The model requires both, so a caller that has
+    not run the suite cannot quietly claim it passed (S-30.1).
+    """
     return Scored(
         candidate=candidate(name),
         measurement_id=f"m-{name}",
@@ -62,6 +91,65 @@ def archive_of(*entries: Scored) -> Archive:
     for entry in entries:
         archive = archive.record(entry)
     return archive
+
+
+# ------------------------------------- S-30.1, a score minted from a measurement
+
+
+def test_a_candidates_time_is_the_one_the_harness_recorded() -> None:
+    """The whole story. `wall_s` is not a parameter, so there is nothing to pass
+    that could disagree with the measurement the id names."""
+    records = Records(**{"m-1": {WALL: 2.41, "peak_rss_bytes": 81_234}})
+
+    minted = score(records, candidate("prefetch"), "m-1", outputs_match=True, tests_pass=True)
+
+    assert minted.wall_s == 2.41
+    assert minted.peak_rss_bytes == 81_234
+    assert minted.measurement_id == "m-1"
+
+
+def test_a_score_citing_a_measurement_nobody_took_is_refused() -> None:
+    """The repair half of *no finding without a measurement*. Before this the id
+    was decoration: a candidate could carry a real one beside an invented time."""
+    with pytest.raises(UnmeasuredCandidateError, match="not a measurement this run recorded"):
+        score(Records(), candidate("prefetch"), "m-9", outputs_match=True, tests_pass=True)
+
+
+def test_a_measurement_with_no_wall_time_scores_nothing() -> None:
+    """A field absent from a measurement was not measured. Choosing a winner on
+    it would be choosing on a number nobody took."""
+    records = Records(**{"m-1": {"peak_rss_bytes": 81_234}})
+
+    with pytest.raises(UntimedCandidateError, match="has no"):
+        score(records, candidate("prefetch"), "m-1", outputs_match=True, tests_pass=True)
+
+
+def test_a_measurement_without_a_peak_scores_without_one() -> None:
+    """Absent is absent. A guard nobody measured is unverified, not satisfied --
+    and `_paid_for_elsewhere` already declines to judge on a missing number."""
+    records = Records(**{"m-1": {WALL: 2.41}})
+
+    minted = score(records, candidate("prefetch"), "m-1", outputs_match=True, tests_pass=True)
+
+    assert minted.peak_rss_bytes is None
+
+
+@pytest.mark.parametrize("observation", ["outputs_match", "tests_pass"])
+def test_a_score_cannot_be_built_without_saying_what_was_observed(observation: str) -> None:
+    """`Side.stable`'s rule, applied to the object with the same shape: a default
+    would claim the suite passed and the output held on behalf of a check nobody
+    ran, which is the permissive direction."""
+    fields = {
+        "candidate": candidate("prefetch"),
+        "measurement_id": "m-1",
+        "wall_s": 2.41,
+        "outputs_match": True,
+        "tests_pass": True,
+    }
+    del fields[observation]
+
+    with pytest.raises(ValidationError, match=observation):
+        Scored(**fields)  # type: ignore[arg-type]
 
 
 # --------------------------------------------- S-22.1, the failing-test gate

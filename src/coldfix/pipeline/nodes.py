@@ -42,7 +42,7 @@ from coldfix.evidence.falsify import Falsify
 from coldfix.evidence.ledger import Claim, Finding, Ledger
 from coldfix.evidence.memory import Remembers, recall, record_all
 from coldfix.evidence.optimizer import Optimizer
-from coldfix.evidence.repair import Apply, Candidate, Falsified, Scored, search
+from coldfix.evidence.repair import Apply, Candidate, Falsified, Scored, score, search
 from coldfix.evidence.revisions import PatchUnderAudit
 from coldfix.llm.metered import Meter
 from coldfix.pipeline.graph import Step, Wiring
@@ -480,12 +480,15 @@ def _baseline(resources: Resources, state: PipelineState) -> Scored:
             "records one and `runnable` names it"
         )
         raise NodeError(message)
-    peak = record.get("peak_rss_bytes")
-    return Scored(
-        candidate=Candidate(identifier="baseline", approach="baseline", diff=""),
-        measurement_id=str(identifier),
-        wall_s=float(record["wall.median"]),
-        peak_rss_bytes=int(peak) if isinstance(peak, (int, float)) else None,
+    # Minted from the record rather than read out here, so *taking numbers off a
+    # measurement* has one owner (S-30.1). The baseline is the unpatched run: its
+    # output is itself and its suite is the one every candidate is held to.
+    return score(
+        resources.ledger,
+        Candidate(identifier="baseline", approach="baseline", diff=""),
+        str(identifier),
+        outputs_match=True,
+        tests_pass=True,
     )
 
 

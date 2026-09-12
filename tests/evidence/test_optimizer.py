@@ -125,6 +125,8 @@ def one(round_number: int) -> str:
 BASELINE = Scored(
     candidate=Candidate(identifier="baseline", approach="baseline", diff=""),
     measurement_id="m-base",
+    outputs_match=True,
+    tests_pass=True,
     wall_s=8.42,
     peak_rss_bytes=1024,
 )
@@ -139,6 +141,7 @@ def measured(wall: float, *, tests_pass: bool = True) -> Apply:
             measurement_id=f"m-{candidate.identifier}",
             wall_s=wall,
             peak_rss_bytes=1024,
+            outputs_match=True,
             tests_pass=tests_pass,
         )
 
@@ -213,6 +216,8 @@ def test_identifiers_continue_from_what_the_archive_already_holds() -> None:
     seed = Scored(
         candidate=Candidate(identifier="c1", approach="prefetch", diff=diff()),
         measurement_id="m-c1",
+        outputs_match=True,
+        tests_pass=True,
         wall_s=9.0,
         peak_rss_bytes=1024,
     )

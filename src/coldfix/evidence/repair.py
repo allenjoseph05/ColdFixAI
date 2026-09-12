@@ -23,10 +23,14 @@ but because there is no other way to obtain the value it requires.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from enum import StrEnum
+from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, model_validator
+
+WALL = "wall.median"
+"""The field a candidate is scored on, as the ledger flattens it."""
 
 MAX_CANDIDATES = 8
 """Enough for the search to be a search. Beyond this the cost of measuring grows
@@ -121,14 +125,29 @@ class Candidate(BaseModel, frozen=True):
 
 
 class Scored(BaseModel, frozen=True):
-    """A candidate, and what running it actually showed."""
+    """A candidate, and what running it actually showed.
+
+    **`Ledger.score` is the door.** S-30.1: the numbers here are read off the
+    measurement `measurement_id` names rather than supplied beside it, so a
+    candidate cannot carry a real id and an invented time. Constructing one
+    directly is still possible and has to be -- this value crosses a checkpoint,
+    and a minted token like `Falsified`'s cannot survive JSON -- so the guarantee
+    is the same one `Finding` has: one door, documented and tested, plus a
+    re-check where the value is read back.
+
+    **`outputs_match` and `tests_pass` are required, never defaulted.** They are
+    observations the harness makes, not numbers in a record, and a `Scored` built
+    without knowing would claim the suite passed and the output held when nobody
+    checked -- the permissive direction, and the same argument `Side.stable`
+    makes for the same reason.
+    """
 
     candidate: Candidate
     measurement_id: str
     wall_s: float
+    outputs_match: bool
+    tests_pass: bool
     peak_rss_bytes: int | None = None
-    outputs_match: bool = True
-    tests_pass: bool = True
 
     def outcome(self, *, baseline: Scored) -> Outcome:
         """What this candidate is, judged only against measurements."""
@@ -205,6 +224,86 @@ class Archive(BaseModel):
             f"{head}  ({len(self.scored)} measured, {len(self.trades)} trade(s), "
             f"{len(self.losers)} rejected)"
         )
+
+
+class UnmeasuredCandidateError(RepairError):
+    """A candidate was scored against a measurement the run does not hold."""
+
+    def __init__(self, measurement_id: str, known: Sequence[str]) -> None:
+        super().__init__(
+            f"this candidate cites {measurement_id!r}, which is not a measurement this run "
+            f"recorded. Known: {', '.join(sorted(known)) or 'none'}. A score names something "
+            "the harness measured; there is no other way to put a number on a patch."
+        )
+        self.measurement_id = measurement_id
+
+
+class UntimedCandidateError(RepairError):
+    """The measurement exists and holds no wall time, so nothing can be scored."""
+
+    def __init__(self, measurement_id: str, available: Sequence[str]) -> None:
+        super().__init__(
+            f"{measurement_id} has no {WALL!r}. It recorded: "
+            f"{', '.join(sorted(available))}. A candidate is chosen on time, and a time that "
+            "was not measured is not one this search may read."
+        )
+        self.measurement_id = measurement_id
+
+
+class Records(Protocol):
+    """Somewhere measurements can be read back by id.
+
+    A protocol rather than the `Ledger` itself, for the reason `memory.Remembers`
+    gives one story earlier: this module is the leaf of `evidence/` and nothing in
+    it imports a sibling. Depending on the concrete ledger would invert that and
+    put `ledger -> repair -> ledger` one import away.
+    """
+
+    @property
+    def known(self) -> tuple[str, ...]: ...
+
+    def recorded(self, measurement_id: str) -> Mapping[str, Any] | None: ...
+
+
+def score(
+    records: Records,
+    candidate: Candidate,
+    measurement_id: str,
+    *,
+    outputs_match: bool,
+    tests_pass: bool,
+) -> Scored:
+    """Mint a candidate's score from the measurement it names. **S-30.1, ADR 189.**
+
+    The counterpart of `Ledger.attest`, and for its reason: a `Finding` may not
+    carry a number nobody measured, and neither may a candidate. The time is
+    **read out of the record** rather than accepted beside its id, so there is no
+    argument a caller could pass that disagrees with what the harness saw.
+
+    `outputs_match` and `tests_pass` stay parameters because they are not numbers
+    in a measurement -- they come from comparing digests and from running the
+    suite -- and they are required for `Side.stable`'s reason: a default would
+    claim the flattering answer on behalf of a check nobody ran.
+
+    Raises:
+        UnmeasuredCandidateError: nothing was recorded under that id.
+        UntimedCandidateError: the measurement exists and carries no wall time.
+    """
+    record = records.recorded(measurement_id)
+    if record is None:
+        raise UnmeasuredCandidateError(measurement_id, records.known)
+    if WALL not in record:
+        raise UntimedCandidateError(measurement_id, tuple(record))
+
+    peak = record.get("peak_rss_bytes")
+    return Scored(
+        candidate=candidate,
+        measurement_id=measurement_id,
+        wall_s=float(record[WALL]),
+        peak_rss_bytes=int(peak) if isinstance(peak, (int, float)) else None,
+        outputs_match=outputs_match,
+        tests_pass=tests_pass,
+    )
 
 
 def must_fail(test: str, run: Callable[[str], tuple[int, str]]) -> Falsified:

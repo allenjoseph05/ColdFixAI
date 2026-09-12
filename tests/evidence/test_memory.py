@@ -45,6 +45,7 @@ def scored(approach: str, *, wall: float = 9.0, tests_pass: bool = True) -> Scor
         measurement_id=f"m-{approach}",
         wall_s=wall,
         peak_rss_bytes=1024,
+        outputs_match=True,
         tests_pass=tests_pass,
     )
 
@@ -90,17 +91,50 @@ def test_the_winner_is_recorded_too() -> None:
     assert [item.candidate.approach for item in recall(journal, "f-1")] == ["lost", "won"]
 
 
+def row(**changes: JsonValue) -> dict[str, JsonValue]:
+    """A well-formed journal row, with one thing done to it.
+
+    Built by removing or replacing a field of a complete entry rather than by
+    listing a few keys: since S-30.1 made `outputs_match` and `tests_pass`
+    required, a sparse literal is refused for *those* whatever else is wrong with
+    it, and each case below would pass while testing something it does not name.
+    """
+    entry = dict(as_entry(scored("prefetch")))
+    for name, value in changes.items():
+        if value is None:
+            del entry[name]
+        else:
+            entry[name] = value
+    return entry
+
+
+def test_a_complete_row_is_accepted() -> None:
+    """The positive control for the refusals below. Without it they would all
+    still pass against a `from_entry` that refused everything."""
+    assert from_entry(row()).candidate.approach == "prefetch"
+
+
 @pytest.mark.parametrize(
-    "entry",
+    ("entry", "because"),
     [
-        {},
-        {"candidate": {"identifier": "c-1"}},
-        {"measurement_id": "m-1", "wall_s": 1.0},
-        {"candidate": "not a candidate", "measurement_id": "m-1", "wall_s": 1.0},
+        ({}, "nothing at all"),
+        (row(candidate=None), "no candidate"),
+        (row(measurement_id=None), "no measurement cited"),
+        (row(candidate="not a candidate"), "a candidate that is not one"),
+        (row(tests_pass=None), "no record of whether the suite passed"),
+        (row(outputs_match=None), "no record of whether the output held"),
     ],
 )
-def test_a_row_this_system_did_not_write_is_refused_by_name(entry: dict[str, JsonValue]) -> None:
+def test_a_row_this_system_did_not_write_is_refused_by_name(
+    entry: dict[str, JsonValue], because: str
+) -> None:
     """The caller's question is *can I trust this memory*, and a validation error
-    from three layers down answers a narrower one."""
+    from three layers down answers a narrower one.
+
+    The last two are S-30.1: a row written before the observations were required
+    is not a row this system would write now, and reading it back would restore a
+    candidate claiming a check nobody ran.
+    """
+    assert because
     with pytest.raises(RememberedEntryError, match="not a candidate this system measured"):
         from_entry(entry)
