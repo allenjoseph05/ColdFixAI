@@ -40,6 +40,7 @@ from coldfix.evidence.audit import Verdict, attack
 from coldfix.evidence.auditor import review
 from coldfix.evidence.falsify import Falsify
 from coldfix.evidence.ledger import Claim, Finding, Ledger
+from coldfix.evidence.memory import Remembers, recall, record_all
 from coldfix.evidence.optimizer import Optimizer
 from coldfix.evidence.repair import Apply, Candidate, Falsified, Scored, search
 from coldfix.evidence.revisions import PatchUnderAudit
@@ -100,6 +101,13 @@ class Resources:
     docker: Docker
     read_source: Callable[[str], str]
     database_url: str | None = None
+    store: Remembers | None = None
+    """Where what was tried survives a rewind (ADR 186).
+
+    `None` is a pipeline assembled without a journal: the behaviour is then
+    checkpoint-only seeding, which is correct across a loop back and forgetful
+    across a restore. `coldfix scan --plan` says which of the two a run will be."""
+
     repairs: Repairs | None = None
     ground_bounds: Bounds = GROUND_BOUNDS
     scan_bounds: Bounds = SCAN_BOUNDS
@@ -226,10 +234,10 @@ def optimize(resources: Resources, state: PipelineState) -> Mapping[str, object]
     falsified = repairs.falsify(finding, source)
     baseline = _baseline(resources, state)
     # What earlier rounds measured, so a patch the Adversary sent back does not
-    # start a search that has never heard of the candidate that just lost.
-    already = tuple(
-        Scored.model_validate(entry) for entry in state.candidates if isinstance(entry, Mapping)
-    )
+    # start a search that has never heard of the candidate that just lost. The
+    # state carries it across a loop; only the journal carries it across a rewind,
+    # which restores the very ignorance that caused the rewind (ADR 186).
+    already = _remembered(resources, state, identifier)
     archive = search(
         falsified=falsified,
         baseline=baseline,
@@ -240,7 +248,13 @@ def optimize(resources: Resources, state: PipelineState) -> Mapping[str, object]
         already=already,
     )
 
-    measured = [entry.model_dump(mode="json") for entry in archive.scored[len(already) :]]
+    # Written before either route is chosen: a candidate is worth remembering
+    # because it was measured, not because of what the measurement said.
+    fresh = archive.scored[len(already) :]
+    if resources.store is not None:
+        record_all(resources.store, identifier, fresh)
+
+    measured = [entry.model_dump(mode="json") for entry in fresh]
     winner = archive.winner
     if winner is None:
         return {
@@ -473,6 +487,29 @@ def _baseline(resources: Resources, state: PipelineState) -> Scored:
         wall_s=float(record["wall.median"]),
         peak_rss_bytes=int(peak) if isinstance(peak, (int, float)) else None,
     )
+
+
+def _remembered(resources: Resources, state: PipelineState, finding: str) -> tuple[Scored, ...]:
+    """Every candidate already measured for this finding, oldest first.
+
+    **Two sources, because they are absent in different situations.**
+    `state.candidates` is the channel a loop writes and a rewind rolls back; the
+    journal is outside the checkpoint and survives one, but is absent whenever the
+    pipeline is assembled without a store -- `--plan`, and every test that does not
+    care. Merged rather than one preferred, so neither absence loses a lesson.
+
+    Deduplicated by candidate id because after a normal loop the same candidate is
+    in both, and a duplicate would make `search` skip a proposal slot it never used.
+    """
+    seen: dict[str, Scored] = {}
+    if resources.store is not None:
+        for remembered in recall(resources.store, finding):
+            seen[remembered.candidate.identifier] = remembered
+    for payload in state.candidates:
+        if isinstance(payload, Mapping):
+            scored = Scored.model_validate(payload)
+            seen.setdefault(scored.candidate.identifier, scored)
+    return tuple(seen.values())
 
 
 def _repairs(resources: Resources) -> Repairs:

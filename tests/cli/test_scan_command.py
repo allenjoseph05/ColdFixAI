@@ -8,19 +8,25 @@ what it hands the seven nodes when it does not decline.
 
 from __future__ import annotations
 
-from datetime import date
+from collections.abc import Mapping, Sequence
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
+from pydantic import JsonValue
 
+from coldfix.cli import scan
 from coldfix.cli.config import ConfigError
 from coldfix.cli.main import main
 from coldfix.cli.scan import (
     CHECKPOINTS,
+    Journal,
     ScanConfig,
     ScanRefusedError,
     load_scan,
+    open_journal,
     plan_scan,
     resources_for,
     run_id_for,
@@ -31,7 +37,11 @@ from coldfix.collect.workspace import PathEscapesWorkspaceError
 from coldfix.cost.accounting import TokenUsage
 from coldfix.llm.client import ModelResponse
 from coldfix.pipeline.graph import Node, build
-from coldfix.pipeline.nodes import bind
+from coldfix.pipeline.nodes import Resources, bind
+from coldfix.sandbox.production import ProductionGuardError
+from coldfix.state.persistent import Collection, Entry, PersistentStore
+
+JOURNAL_URL = "postgresql://coldfix:hunter2@localhost/coldfix_memory"
 
 COMPLETE = """
 [scan]
@@ -60,6 +70,17 @@ class Silent:
 
     def count_tokens(self, **kwargs: object) -> int:
         return 0
+
+
+class Forgetful:
+    """An empty `Remembers`. Nothing here runs a search, so nothing is recorded."""
+
+    def remember(self, finding: str, entry: Mapping[str, JsonValue]) -> None:
+        del finding, entry
+
+    def recalled(self, finding: str) -> Sequence[Mapping[str, JsonValue]]:
+        del finding
+        return ()
 
 
 def written(tmp_path: Path, body: str = COMPLETE) -> Path:
@@ -167,6 +188,175 @@ def test_what_the_nodes_are_given_carries_the_ceiling_and_the_image(tmp_path: Pa
     assert resources.repairs is None, "nothing writes the failing test yet"
     assert build(bind(resources), gated=False) is not None
     assert set(bind(resources).steps()) == set(Node)
+    assert resources.store is None, "a run without a journal declares none"
+
+
+# --------------------------------------------------------------- the journal
+
+
+def journalled(tmp_path: Path) -> ScanConfig:
+    body = COMPLETE.replace(
+        'image = "subject:latest"', f'image = "subject:latest"\njournal_url = "{JOURNAL_URL}"'
+    )
+    return load_scan(written(tmp_path, body))
+
+
+def test_a_run_may_declare_a_journal_and_a_run_without_one_still_runs(tmp_path: Path) -> None:
+    """Optional on purpose: what a run without one loses is memory across a
+    rewind, not the ability to answer."""
+    assert config_of(tmp_path).journal_url is None
+    assert journalled(tmp_path).journal_url == JOURNAL_URL
+
+
+def test_the_plan_says_whether_a_rewind_will_cost_the_run_its_memory(tmp_path: Path) -> None:
+    """Discovered in `plan` rather than by paying twice for one measurement."""
+    assert "re-measure candidates that already lost" in "\n".join(plan_scan(config_of(tmp_path)))
+    assert "a journal outlives a rewind" in "\n".join(plan_scan(journalled(tmp_path)))
+
+
+def test_the_plan_never_prints_the_journal_credential(tmp_path: Path) -> None:
+    """A plan is the output most likely to be pasted into a message."""
+    assert "hunter2" not in "\n".join(plan_scan(journalled(tmp_path)))
+
+
+def test_a_journal_the_run_declares_reaches_the_nodes(tmp_path: Path) -> None:
+    """The seam is only worth having if the composition root binds it: `optimize`
+    reads `resources.store`, and nothing else in the run can supply it."""
+    workspace = tmp_path / "worktree"
+    workspace.mkdir()
+    resources = resources_for(
+        config_of(tmp_path),
+        client=Silent(),
+        counter=Silent(),
+        workspace=workspace,
+        store=Forgetful(),
+    )
+    assert resources.store is not None
+
+
+class Recording:
+    """Stands in for the Postgres half of the journal.
+
+    What needs a database is the append-only trigger, and its tests skip without
+    Docker. What needs none is the adapter's own decision: which collection it
+    writes to, and whether it keys by finding.
+    """
+
+    def __init__(self) -> None:
+        self.appended: list[tuple[Collection, str]] = []
+        self.asked: list[tuple[Collection, str | None]] = []
+        self.rows: list[Entry] = []
+
+    def append(self, collection: Collection, key: str, entry: Mapping[str, JsonValue]) -> Entry:
+        self.appended.append((collection, key))
+        row = Entry(
+            id=len(self.rows) + 1,
+            collection=collection,
+            key=key,
+            entry=entry,
+            written_at=datetime(2026, 9, 12, tzinfo=UTC),
+        )
+        self.rows.append(row)
+        return row
+
+    def read(self, collection: Collection, key: str | None = None) -> Sequence[Entry]:
+        self.asked.append((collection, key))
+        return tuple(row for row in self.rows if key is None or row.key == key)
+
+
+def test_the_adapter_writes_failure_memory_and_keys_it_by_the_finding() -> None:
+    """A bug here hands one finding another finding's failures, which looks like
+    a search that mysteriously refuses to try the obvious fix."""
+    recording = Recording()
+    journal = Journal(store=cast("PersistentStore", recording))
+
+    journal.remember("f-1", {"candidate": {"approach": "prefetch"}})
+    journal.remember("f-2", {"candidate": {"approach": "an index"}})
+
+    assert recording.appended == [
+        (Collection.FAILURE_MEMORY, "f-1"),
+        (Collection.FAILURE_MEMORY, "f-2"),
+    ]
+    assert [entry["candidate"] for entry in journal.recalled("f-1")] == [{"approach": "prefetch"}]
+    assert recording.asked == [(Collection.FAILURE_MEMORY, "f-1")], "it asked for one finding"
+
+
+class FakeWorktree:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+
+class FakeRepository:
+    """A `Repository` that creates a directory instead of a git worktree."""
+
+    def __init__(self, root: Path) -> None:
+        del root
+
+    def create_worktree(self, path: Path, revision: str) -> FakeWorktree:
+        del revision
+        path.mkdir(parents=True, exist_ok=True)
+        return FakeWorktree(path)
+
+
+class NoCheckpointer:
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, *exception: object) -> None:
+        return None
+
+
+class FakeGraph:
+    """A compiled graph that reports a route without running a node."""
+
+    def invoke(self, state: object, config: object) -> dict[str, str]:
+        del state, config
+        return {"route": "done"}
+
+
+def test_the_journal_the_run_opened_is_the_one_the_nodes_are_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one line in `run_scan` no direct test reaches.
+
+    Found by the sabotage pass: with `store=None` written there, the journal is
+    opened, the plan still says memory is on, and every other test in this file
+    passes -- while no node can reach it. The four things the run opens are faked
+    because none of them is what is under test here.
+    """
+    journal = Forgetful()
+    given: dict[str, Any] = {}
+
+    def recording(config: ScanConfig, **passed: Any) -> Resources:
+        given.update(passed)
+        return resources_for(config, **passed)
+
+    monkeypatch.setattr(scan, "open_journal", lambda config: journal)
+    monkeypatch.setattr(scan, "connect", lambda credential: Silent())
+    monkeypatch.setattr(scan, "Repository", FakeRepository)
+    monkeypatch.setattr(scan, "for_development", lambda path: NoCheckpointer())
+    monkeypatch.setattr(scan, "build", lambda wiring, **options: FakeGraph())
+    monkeypatch.setattr(scan, "resources_for", recording)
+
+    lines = run_scan(journalled(tmp_path), spend=True, credential="sk-test")
+
+    assert given["store"] is journal, "the run opened a journal the nodes never got"
+    assert any("done" in line for line in lines)
+
+
+def test_no_journal_declared_opens_nothing(tmp_path: Path) -> None:
+    assert open_journal(config_of(tmp_path)) is None
+
+
+def test_a_journal_pointed_at_production_is_refused_before_it_is_opened(tmp_path: Path) -> None:
+    """The guard is the constructor, so the refusal happens while there is still
+    no connection, no worktree and no container."""
+    body = COMPLETE.replace(
+        'image = "subject:latest"',
+        'image = "subject:latest"\njournal_url = "postgresql://app@prod-db/customers"',
+    )
+    with pytest.raises(ProductionGuardError):
+        open_journal(load_scan(written(tmp_path, body)))
 
 
 def test_the_command_reads_v3s_configuration_and_not_v1s(

@@ -484,6 +484,142 @@ def test_a_second_round_writes_only_what_it_added(repository: Path) -> None:
     assert PipelineState(candidates=state.candidates + list_at(second, "candidates"))
 
 
+class Journal:
+    """A `Remembers` a rewind cannot reach, in memory."""
+
+    def __init__(self) -> None:
+        self.entries: dict[str, list[Mapping[str, Any]]] = {}
+
+    def remember(self, finding: str, entry: Mapping[str, Any]) -> None:
+        self.entries.setdefault(finding, []).append(entry)
+
+    def recalled(self, finding: str) -> Sequence[Mapping[str, Any]]:
+        return tuple(self.entries.get(finding, ()))
+
+
+def edit_for(approach: str) -> str:
+    """A distinct edit per approach.
+
+    The archive's repeat check compares **edits**, not labels -- F12, because the
+    label is the one part a model can rename while changing nothing. So two
+    approaches sharing a diff are one attempt, by design, and a test that wants
+    two attempts has to offer two edits.
+    """
+    return DIFF.replace("self._books", f"self._{approach}")
+
+
+def offer(approach: str) -> str:
+    """One candidate, as the Optimizer would answer with it."""
+    return json.dumps({"candidates": [{"approach": approach, "diff": edit_for(approach)}]})
+
+
+def watched(applied: list[str]) -> Repairs:
+    """`repairs()`, with every candidate that actually gets measured recorded.
+
+    Counted rather than inferred from what was written: measuring the repeat and
+    then slicing it off the update would leave the channel correct and the run
+    paying twice, which a write-only assertion cannot see.
+    """
+    base = repairs()
+
+    def watching(falsified: Falsified, candidate: Candidate) -> Scored:
+        applied.append(candidate.approach)
+        return base.apply(falsified, candidate)
+
+    return Repairs(
+        falsify=base.falsify,
+        apply=watching,
+        under_audit=base.under_audit,
+        compare=base.compare,
+    )
+
+
+def searched_once(repository: Path, *, store: Journal | None = None) -> PipelineState:
+    """A finding whose first search measured one candidate, with the update
+    written back to the state exactly as the graph's reducer would."""
+    state = sound_state()
+    extra: dict[str, Any] = {"store": store} if store is not None else {}
+    update = optimize(
+        resources(Scripted([offer("prefetch")]), repository, repairs=repairs(), **extra), state
+    )
+    state.candidates = list(list_at(update, "candidates"))
+    return state
+
+
+def rewound(state: PipelineState) -> PipelineState:
+    """The same state as a checkpoint restore hands it back: the candidates
+    channel rolled back to before the search that measured them."""
+    return state.model_copy(update={"candidates": []})
+
+
+def test_a_rewind_re_measures_what_already_lost(repository: Path) -> None:
+    """**F5, reproduced.** A restore puts back the state at checkpoint T, and the
+    reason for rewinding was learned at T+n -- so it also puts back the ignorance
+    that caused it, and the run pays a second time for the same answer."""
+    applied: list[str] = []
+    state = searched_once(repository)
+
+    second = optimize(
+        resources(Scripted([offer("prefetch")]), repository, repairs=watched(applied)),
+        rewound(state),
+    )
+
+    assert applied == ["prefetch"], "the rewind lost what the first search measured"
+    assert len(list_at(second, "candidates")) == 1
+
+
+def test_a_rewind_does_not_when_the_search_was_journalled(repository: Path) -> None:
+    """The fix. What the restore discarded, the journal still holds -- so the
+    repeat is refused by the archive rather than measured again."""
+    journal = Journal()
+    applied: list[str] = []
+    state = searched_once(repository, store=journal)
+
+    second = optimize(
+        resources(
+            Scripted([offer("prefetch")]), repository, repairs=watched(applied), store=journal
+        ),
+        rewound(state),
+    )
+
+    assert applied == [], "the journal remembered what the checkpoint forgot"
+    assert list_at(second, "candidates") == []
+    assert len(journal.entries["f-1"]) == 1, "a recalled candidate was written back a second time"
+
+
+def test_a_loop_back_with_a_journal_counts_each_candidate_once(repository: Path) -> None:
+    """After a normal loop the same candidate is in both places. Seeded from each,
+    the archive would believe it holds two attempts -- so the next candidate is
+    numbered past the gap it should fill, and the eight-attempt limit that bounds
+    a finding is spent at half speed."""
+    journal = Journal()
+    state = searched_once(repository, store=journal)
+
+    second = optimize(
+        resources(
+            Scripted([offer("select_related")]), repository, repairs=repairs(), store=journal
+        ),
+        state,
+    )
+
+    (measured,) = list_at(second, "candidates")
+    assert measured["candidate"]["identifier"] == "c2", "the seed was counted twice"
+
+
+def test_what_a_search_measured_is_written_where_a_rewind_cannot_reach(
+    repository: Path,
+) -> None:
+    """The whole candidate, including the winner: a patch that passed its own test
+    and then failed the audit is the one most likely to be proposed again, and the
+    archive's repeat check compares edits rather than the approach label."""
+    journal = Journal()
+    searched_once(repository, store=journal)
+
+    (remembered,) = journal.entries["f-1"]
+    assert remembered["candidate"]["approach"] == "prefetch"
+    assert remembered["candidate"]["diff"] == edit_for("prefetch")
+
+
 def test_nothing_beating_the_baseline_is_an_answer(repository: Path) -> None:
     client = Scripted([json.dumps({"candidates": [{"approach": "slower", "diff": DIFF}]})])
     update = optimize(resources(client, repository, repairs=repairs(wins=False)), sound_state())
