@@ -136,8 +136,25 @@ class Resources:
     ground_bounds: Bounds = GROUND_BOUNDS
     scan_bounds: Bounds = SCAN_BOUNDS
     system: str = SCAN_SYSTEM
-    findings_per_scan: int = 8
-    """A cap on ids minted in one pass, so a runaway submission cannot fill the state."""
+    findings_per_scan: int = 1
+    """How many findings one scan pass may mint. **One, and that is a correctness
+    bound before it is a cost one (S-28.7, ADR 193).**
+
+    `ship` routes `more_findings` back to `scan`, not to `audit_finding`, because
+    removing the top bottleneck changes the profile and the next question is worth
+    re-measuring rather than reading off a stale ranking. Given that, a pass that
+    mints *n* findings leaves *n-1* of them queued behind a patch that has since
+    shipped: `_next_unaudited` drains in insertion order, so the second finding is
+    repaired from citations measured against a program that no longer exists, and
+    `Ledger.attest` bound it to exactly those measurement ids. Minting one is what
+    keeps the backlog empty, so no finding can outlive its own evidence.
+
+    It remains the cap against a runaway submission it always was -- a scan
+    submitting thirty claims still mints one. Raising it stays possible in code,
+    for a caller that accepts the staleness and builds its own `Resources`;
+    `ScanConfig` and `coldfix.example.toml` deliberately do not expose it, so it
+    is not a setting an operator can trip over.
+    """
 
 
 # ------------------------------------------------------------------ the nodes

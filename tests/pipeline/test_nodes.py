@@ -454,6 +454,27 @@ def test_a_second_pass_keeps_the_findings_the_first_one_made(repository: Path) -
     assert list(mapping_at(update, "findings")) == ["f-1", "f-2"]
 
 
+def test_one_pass_mints_one_finding_however_many_were_submitted(repository: Path) -> None:
+    """S-28.7, ADR 193. The cap is a correctness bound before it is a cost one.
+
+    `ship` routes `more_findings` back to `scan`, so a second finding minted here
+    would wait behind a patch that ships before it -- and then be repaired from
+    citations measured against a program that no longer exists. Both submissions
+    are attestable, so what stops the second is the cap and nothing else.
+    """
+    ledger = Ledger()
+    ledger.record(bare("m-1"))
+    ledger.record(bare("m-2"))
+    client = Scripted([act("submit", findings=[finding_payload("m-1"), finding_payload("m-2")])])
+
+    update = scan_for_waste(
+        resources(client, repository, tools=FakeTools(ledger), ledger=ledger),
+        PipelineState(runnable={"command": DRIVER, "measurement_id": "m-1"}),
+    )
+
+    assert list(mapping_at(update, "findings")) == ["f-1"]
+
+
 def test_finding_nothing_is_an_answer(repository: Path) -> None:
     client = Scripted([act("submit", findings=[])])
     update = scan_for_waste(

@@ -206,11 +206,31 @@ def saved(checkpointer: BaseCheckpointSaver[Any], thread: str) -> Sequence[Mappi
     return [item.checkpoint["channel_values"] for item in written]
 
 
+RECURSION_LIMIT = 25
+"""How many super-steps one run may take. **S-28.7, ADR 193.**
+
+Derived, not inherited. A clean run is seven steps -- `refuse`, `ground`, `scan`,
+`audit_finding`, `optimize`, `audit_patch`, `ship` -- and two edges loop back.
+`another_round` is already bounded: `optimize` seeds its archive from
+`_remembered`, so `MAX_CANDIDATES` retires the search however many times the
+Adversary sends a patch back. **`needs_evidence` is bounded by nothing but the
+budget**, and it is what this number exists for; 25 leaves room for roughly nine
+of them after a full run.
+
+LangGraph applies a default when none is given, and the arithmetic here happens to
+land on the same figure. Stating it makes the bound this project's own, so a
+change to the framework's default is not a silent change to how long a run may go.
+"""
+
+
 def thread(run_id: str) -> RunnableConfig:
     """The config a compiled graph needs to write a run's checkpoints under one id.
 
     A helper because the nesting — `configurable.thread_id` — is the sort of thing
     that gets spelled two ways in two call sites, and the second one silently
-    starts a new run rather than resuming the first.
+    starts a new run rather than resuming the first. The recursion limit rides
+    here for the same reason: a resumed run re-enters the same loops as a fresh
+    one, and `resume` invoking without it would be bounded by whatever the
+    framework happened to default to.
     """
-    return {"configurable": {"thread_id": run_id}}
+    return {"configurable": {"thread_id": run_id}, "recursion_limit": RECURSION_LIMIT}
