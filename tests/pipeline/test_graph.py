@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from langgraph.graph import END
 
-from coldfix.orchestrator.checkpointing import for_development, thread
+from coldfix.orchestrator.checkpointing import RECURSION_LIMIT, for_development, thread
 from coldfix.pipeline.graph import (
     GATEABLE,
     ROUTES,
@@ -234,6 +234,22 @@ def test_the_run_parks_before_ship_and_waits(tmp_path: Path) -> None:
         graph.invoke(PipelineState(), config)
         parked = graph.get_state(config)
         assert parked.next == ("ship",), "the run should be waiting to enter ship"
+
+
+def test_a_run_carries_a_recursion_limit_this_project_chose() -> None:
+    """S-28.7, ADR 193. How long a run may loop is a decision, and one left to a
+    framework default is a decision nobody made.
+
+    `another_round` is already bounded -- `optimize` seeds its archive from
+    `_remembered`, so `MAX_CANDIDATES` retires the search however many times the
+    Adversary sends a patch back. `needs_evidence` loops `audit_finding` to `scan`
+    and nothing but the budget bounds it, which is what the limit is for.
+
+    Asserted on `thread` rather than at one call site, because `resume` invokes
+    through it too and would otherwise inherit whatever the framework defaulted to.
+    """
+    assert thread("run")["recursion_limit"] == RECURSION_LIMIT
+    assert RECURSION_LIMIT > NODES, "a clean run plus its loops must fit inside it"
 
 
 def test_a_parked_run_continues_when_a_person_lets_it(tmp_path: Path) -> None:
